@@ -8,10 +8,14 @@ struct CodeEditor: NSViewRepresentable {
     @Binding var text: String
     var language: Language?
     var theme: Theme
+    var fontSize: CGFloat = 13
+    var softWrap: Bool = true
     var onCursorChange: (Int) -> Void
 
-    /// SF Mono 13 default.
-    static let defaultFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    /// SF Mono at the given point size.
+    static func font(size: CGFloat) -> NSFont {
+        NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -22,13 +26,13 @@ struct CodeEditor: NSViewRepresentable {
         coord.textView = textView
 
         textView.textDelegate = coord
-        textView.font = Self.defaultFont
         textView.showsLineNumbers = true
         textView.highlightSelectedLine = true
-        textView.isHorizontallyResizable = false // wrap long lines
 
         textView.text = text
         coord.rebuildHighlighter(languageID: language?.id)
+        coord.applyFontSize(fontSize)
+        coord.applySoftWrap(softWrap)
         coord.applyTheme(theme) // sets colors + immediate first highlight paint
         return scrollView
     }
@@ -50,6 +54,8 @@ struct CodeEditor: NSViewRepresentable {
             coord.scheduleHighlight()
         }
 
+        coord.applyFontSize(fontSize)
+        coord.applySoftWrap(softWrap)
         coord.applyTheme(theme)
     }
 
@@ -60,6 +66,8 @@ struct CodeEditor: NSViewRepresentable {
         private(set) var languageID: String?
         private var highlighter: Highlighter?
         private var lastTheme: Theme?
+        private var lastFontSize: CGFloat?
+        private var lastSoftWrap: Bool?
         private var pendingHighlight: DispatchWorkItem?
 
         init(_ parent: CodeEditor) { self.parent = parent }
@@ -86,6 +94,22 @@ struct CodeEditor: NSViewRepresentable {
             applyHighlight()
         }
 
+        /// Setting `.font` recolors the whole document (same as `applyTheme`), so guard
+        /// on actual change to avoid a per-keystroke reset; re-run highlighting after so
+        /// token colors land on top of the new font run.
+        func applyFontSize(_ size: CGFloat) {
+            guard lastFontSize != size, let textView else { return }
+            lastFontSize = size
+            textView.font = CodeEditor.font(size: size)
+            applyHighlight()
+        }
+
+        func applySoftWrap(_ wrap: Bool) {
+            guard lastSoftWrap != wrap, let textView else { return }
+            lastSoftWrap = wrap
+            textView.isHorizontallyResizable = !wrap // wrap == view width tracks text width
+        }
+
         func scheduleHighlight() {
             pendingHighlight?.cancel()
             let work = DispatchWorkItem { [weak self] in
@@ -105,7 +129,7 @@ struct CodeEditor: NSViewRepresentable {
 
             highlighter.setText(source)
             textView.setAttributes(
-                [.foregroundColor: NSColor(parent.theme.editorForeground), .font: CodeEditor.defaultFont],
+                [.foregroundColor: NSColor(parent.theme.editorForeground), .font: CodeEditor.font(size: parent.fontSize)],
                 range: full
             )
             for span in highlighter.highlights(in: full) {

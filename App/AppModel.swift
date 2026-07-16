@@ -12,6 +12,12 @@ final class AppModel: ObservableObject {
     @Published var theme: Theme {
         didSet { UserDefaults.standard.set(theme.id, forKey: Self.themeDefaultsKey) }
     }
+    @Published var fontSize: CGFloat {
+        didSet { UserDefaults.standard.set(Double(fontSize), forKey: Self.fontSizeDefaultsKey) }
+    }
+    @Published var softWrap: Bool {
+        didSet { UserDefaults.standard.set(softWrap, forKey: Self.softWrapDefaultsKey) }
+    }
 
     /// Bridge to SwiftUI's `openWindow` action, captured once from `MeatPadApp.body`
     /// (which runs before AppKit's `applicationDidFinishLaunching`) so the
@@ -24,6 +30,8 @@ final class AppModel: ObservableObject {
     private let sessionDebouncer = Debouncer(delay: 0.5)
 
     private static let themeDefaultsKey = "themeID"
+    private static let fontSizeDefaultsKey = "editorFontSize"
+    private static let softWrapDefaultsKey = "softWrap"
 
     /// Sibling of the Notes directory (not inside it, so it's never mistaken for a note).
     private static var sessionURL: URL {
@@ -38,6 +46,12 @@ final class AppModel: ObservableObject {
         }
         let savedID = UserDefaults.standard.string(forKey: Self.themeDefaultsKey)
         theme = savedID.flatMap { id in BuiltinThemes.all.first { $0.id == id } } ?? BuiltinThemes.defaultDark
+
+        let savedFontSize = UserDefaults.standard.object(forKey: Self.fontSizeDefaultsKey) as? Double
+        fontSize = savedFontSize.map { CGFloat($0) } ?? 13
+
+        let savedSoftWrap = UserDefaults.standard.object(forKey: Self.softWrapDefaultsKey) as? Bool
+        softWrap = savedSoftWrap ?? true
     }
 
     // MARK: - Session tracking

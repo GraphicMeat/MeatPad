@@ -53,6 +53,11 @@ struct MeatPadApp: App {
                 .environmentObject(AppModel.shared)
         }
         .menuBarExtraStyle(.window)
+
+        Settings {
+            SettingsView()
+                .environmentObject(AppModel.shared)
+        }
     }
 
     private func createNote() {

@@ -19,6 +19,8 @@ struct NoteWindow: View {
                     text: Binding(get: { viewModel.text }, set: viewModel.textDidChange),
                     language: viewModel.language,
                     theme: appModel.theme,
+                    fontSize: appModel.fontSize,
+                    softWrap: appModel.softWrap,
                     onCursorChange: viewModel.cursorDidChange
                 )
             } else {
