@@ -1,0 +1,27 @@
+name: MeatPad
+options:
+  bundleIdPrefix: com.thecoldzero
+  deploymentTarget:
+    macOS: "14.0"
+packages:
+  MeatPadKit:
+    path: MeatPadKit
+targets:
+  MeatPad:
+    type: application
+    platform: macOS
+    sources: [App]
+    dependencies:
+      - package: MeatPadKit
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: MeatPad
+        LSMinimumSystemVersion: "14.0"
+        NSHumanReadableCopyright: "© 2026 Rokas"
+    settings:
+      base:
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_APP_SANDBOX: NO
+        SWIFT_VERSION: "5.10"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
