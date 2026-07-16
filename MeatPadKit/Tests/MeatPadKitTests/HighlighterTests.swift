@@ -48,6 +48,28 @@ final class HighlighterTests: XCTestCase {
         XCTAssertFalse(keyword.isEmpty, "expected a keyword span covering 'func'; got \(spans)")
     }
 
+    func testAllWiredLanguagesLoadGrammarAndQuery() {
+        // Every language in the registry except markdown (dropped for P1) must
+        // yield a working Highlighter — the bundle locator fails silently (nil),
+        // so this is the only signal for a broken registry entry.
+        for language in Languages.all where language.id != "markdown" {
+            XCTAssertNotNil(Highlighter(languageID: language.id), "grammar failed to load for \(language.id)")
+        }
+    }
+
+    func testNonASCIITextYieldsCorrectUTF16Offsets() throws {
+        let hl = try XCTUnwrap(Highlighter(languageID: "python"))
+        let text = "s = \"🎉\"\ndef f(): pass"
+        // UTF-16: s=0 ' '=1 ==2 ' '=3 "=4 🎉=5,6 "=7 \n=8 def=9..11
+        hl.setText(text)
+        let all = hl.highlights(in: NSRange(location: 0, length: (text as NSString).length))
+        XCTAssertFalse(spans(all, containing: "string", covering: 5).isEmpty, "expected string span over emoji; got \(all)")
+        let keyword = spans(all, containing: "keyword", covering: 9)
+        XCTAssertFalse(keyword.isEmpty, "expected keyword span at UTF-16 offset 9 ('def'); got \(all)")
+        XCTAssertTrue(keyword.contains { $0.range.location == 9 && $0.range.length == 3 },
+                      "keyword span should be exactly {9,3} in UTF-16; got \(keyword)")
+    }
+
     func testCaptureNamesHaveNoLeadingAt() throws {
         let hl = try XCTUnwrap(Highlighter(languageID: "json"))
         hl.setText(#"{"a": 1}"#)

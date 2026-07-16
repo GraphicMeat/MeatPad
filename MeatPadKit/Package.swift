@@ -27,7 +27,9 @@ let package = Package(
         .package(url: "https://github.com/tree-sitter-grammars/tree-sitter-yaml", exact: "0.7.0"),
         // Swift grammar has no checked-in generated parser on its release tags; the
         // `with-generated-files` branch ships them plus a working Package.swift.
-        .package(url: "https://github.com/alex-pinkus/tree-sitter-swift", branch: "with-generated-files"),
+        // Pinned to an immutable commit of that branch so `swift package update`
+        // can't re-resolve it and a force-push/branch-delete can't break us.
+        .package(url: "https://github.com/alex-pinkus/tree-sitter-swift", revision: "31d17fe7e818a2048c808b5c6fdc2dc792f4f5b5"),
     ],
     targets: [
         .target(
