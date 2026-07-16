@@ -4,12 +4,13 @@ import MeatPadKit
 
 /// Content view for the `MenuBarExtra("MeatPad")` `.window`-style popover: a title
 /// search over the 15 most recently modified notes, plus "New Note" / "All Notes"
-/// footer actions. Rows and footer buttons dismiss the popover after acting, matching
-/// how a menu bar quick-access panel is expected to behave.
+/// footer actions.
+// ponytail: MenuBarExtra(.window) has no first-party API for a control inside it to
+// close the popover (Apple feedback FB11984872; `@Environment(\.dismiss)` is a no-op
+// here). Clicking outside dismisses it natively, which is an acceptable P1 fallback.
 struct MenuBarNotesView: View {
     @EnvironmentObject private var appModel: AppModel
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismiss) private var dismiss
     @State private var query = ""
 
     // ponytail: title-only substring match, no full-text scan. Good enough at P1 note
@@ -63,7 +64,6 @@ struct MenuBarNotesView: View {
     private func open(_ id: UUID) {
         openWindow(value: id)
         NSApp.activate(ignoringOtherApps: true)
-        dismiss()
     }
 
     private func createAndOpen() {
@@ -74,6 +74,5 @@ struct MenuBarNotesView: View {
     private func openBrowser() {
         openWindow(id: "all-notes")
         NSApp.activate(ignoringOtherApps: true)
-        dismiss()
     }
 }
