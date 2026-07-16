@@ -65,6 +65,17 @@ public final class NoteStore: ObservableObject {
         updateInMemory(note)
     }
 
+    /// Persists the note window's frame. Sidecar-only: does NOT touch `modified` or
+    /// re-sort — moving a window isn't an edit.
+    public func setWindowFrame(id: UUID, frame: String?) throws {
+        guard var note = notes.first(where: { $0.id == id }) else { throw NoteStoreError.notFound(id) }
+        note.windowFrame = frame
+        try writeSidecar(note)
+        if let idx = notes.firstIndex(where: { $0.id == id }) {
+            notes[idx] = note
+        }
+    }
+
     public func trash(id: UUID) throws {
         guard notes.contains(where: { $0.id == id }) else { throw NoteStoreError.notFound(id) }
         let fm = FileManager.default

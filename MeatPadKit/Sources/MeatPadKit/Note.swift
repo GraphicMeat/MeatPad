@@ -9,14 +9,18 @@ public struct Note: Identifiable, Equatable, Sendable, Codable {
     public var modified: Date
     public var cursor: Int              // UTF-16 offset
     public var title: String            // derived: first non-empty line, else "New Note"
+    // NSStringFromRect(window.frame); nil = never positioned (legacy sidecars decode
+    // fine — synthesized Codable treats a missing key on an optional as nil).
+    public var windowFrame: String?
 
-    public init(id: UUID, languageID: String?, created: Date, modified: Date, cursor: Int, title: String) {
+    public init(id: UUID, languageID: String?, created: Date, modified: Date, cursor: Int, title: String, windowFrame: String? = nil) {
         self.id = id
         self.languageID = languageID
         self.created = created
         self.modified = modified
         self.cursor = cursor
         self.title = title
+        self.windowFrame = windowFrame
     }
 }
 

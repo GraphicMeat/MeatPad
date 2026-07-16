@@ -200,6 +200,57 @@ final class NoteStoreTests: XCTestCase {
         XCTAssertThrowsError(try store.trash(id: bogus)) { XCTAssertEqual($0 as? NoteStoreError, .notFound(bogus)) }
     }
 
+    // MARK: - window frame
+
+    func testWindowFrameRoundTripsThroughSidecar() throws {
+        let store1 = try makeStore()
+        let note = try store1.createNote()
+
+        try store1.setWindowFrame(id: note.id, frame: "{{100, 200}, {800, 600}}")
+
+        XCTAssertEqual(store1.notes.first(where: { $0.id == note.id })?.windowFrame, "{{100, 200}, {800, 600}}")
+        let store2 = try makeStore()
+        XCTAssertEqual(store2.notes.first(where: { $0.id == note.id })?.windowFrame, "{{100, 200}, {800, 600}}")
+    }
+
+    func testLegacySidecarWithoutWindowFrameDecodes() throws {
+        _ = try makeStore() // creates dirs
+        let id = UUID()
+        let legacy = """
+        {"id":"\(id.uuidString)","created":"2026-01-01T00:00:00Z","modified":"2026-01-02T00:00:00Z","cursor":4,"title":"Legacy"}
+        """
+        try Data(legacy.utf8).write(to: tempDir.appendingPathComponent("\(id.uuidString).json"))
+        try Data("Legacy".utf8).write(to: tempDir.appendingPathComponent("\(id.uuidString).txt"))
+
+        let store = try makeStore()
+        let note = store.notes.first(where: { $0.id == id })
+        XCTAssertNotNil(note)
+        XCTAssertNil(note?.windowFrame)
+        XCTAssertEqual(note?.title, "Legacy") // decoded, not regenerated from txt fallback
+        XCTAssertEqual(note?.cursor, 4)
+    }
+
+    func testSetWindowFrameDoesNotBumpModifiedOrResort() throws {
+        let store = try makeStore()
+        let older = try store.createNote()
+        let newer = try store.createNote()
+        try store.save(id: newer.id, contents: "newer", cursor: 0) // newer is first
+        let modifiedBefore = store.notes.first(where: { $0.id == older.id })?.modified
+
+        try store.setWindowFrame(id: older.id, frame: "{{0, 0}, {640, 420}}")
+
+        XCTAssertEqual(store.notes.first(where: { $0.id == older.id })?.modified, modifiedBefore)
+        XCTAssertEqual(store.notes.first?.id, newer.id) // order unchanged
+    }
+
+    func testSetWindowFrameUnknownIDThrowsNotFound() throws {
+        let store = try makeStore()
+        let bogus = UUID()
+        XCTAssertThrowsError(try store.setWindowFrame(id: bogus, frame: nil)) {
+            XCTAssertEqual($0 as? NoteStoreError, .notFound(bogus))
+        }
+    }
+
     // MARK: - defaultRoot
 
     func testDefaultRootPointsAtApplicationSupportMeatPadNotes() {

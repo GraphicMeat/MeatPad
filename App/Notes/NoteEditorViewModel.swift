@@ -21,9 +21,10 @@ final class NoteEditorViewModel: ObservableObject {
 
     private let store: NoteStore
     private let debouncer = Debouncer(delay: 1)
+    private let frameDebouncer = Debouncer(delay: 0.5)
     private var cursor: Int = 0
     private var loaded = false
-    private var closeObserver: NSObjectProtocol?
+    private var windowObservers: [NSObjectProtocol] = []
 
     /// `languageOverride` wins; otherwise re-detected live from contents. Detection is
     /// cheap enough to run on every keystroke rather than debouncing it separately.
@@ -39,8 +40,8 @@ final class NoteEditorViewModel: ObservableObject {
     }
 
     deinit {
-        if let closeObserver {
-            NotificationCenter.default.removeObserver(closeObserver)
+        for observer in windowObservers {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
 
@@ -85,16 +86,44 @@ final class NoteEditorViewModel: ObservableObject {
     /// otherwise lose the last second of edits.
     func flush() {
         debouncer.flush()
+        frameDebouncer.flush()
     }
 
-    /// Observes this note's hosting window so closing it flushes the pending autosave
-    /// instead of waiting out the debounce.
+    /// Hooks into this note's hosting window: restores the persisted frame once, then
+    /// observes close (flush pending autosave) and move/resize (persist the new frame,
+    /// debounced — window drags fire these notifications continuously).
     func attach(window: NSWindow) {
-        guard closeObserver == nil else { return }
-        closeObserver = NotificationCenter.default.addObserver(
+        guard windowObservers.isEmpty else { return }
+
+        if let saved = store.notes.first(where: { $0.id == noteID })?.windowFrame {
+            let frame = NSRectFromString(saved)
+            if !frame.isEmpty { window.setFrame(frame, display: true) }
+        }
+
+        let center = NotificationCenter.default
+        windowObservers.append(center.addObserver(
             forName: NSWindow.willCloseNotification, object: window, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.flush() }
+        })
+        // didResize (not didEndLiveResize): also catches non-live resizes like the zoom
+        // button; the debounce absorbs the continuous stream during a live drag.
+        for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification] {
+            windowObservers.append(center.addObserver(
+                forName: name, object: window, queue: .main
+            ) { [weak self, weak window] _ in
+                MainActor.assumeIsolated { self?.windowFrameDidChange(window) }
+            })
+        }
+    }
+
+    private func windowFrameDidChange(_ window: NSWindow?) {
+        guard exists else { return }
+        frameDebouncer.call { [weak self, weak window] in
+            guard let self, let window else { return }
+            // Best-effort: a frame that fails to persist just falls back to default
+            // placement next launch; never worth surfacing.
+            try? self.store.setWindowFrame(id: self.noteID, frame: NSStringFromRect(window.frame))
         }
     }
 
