@@ -33,6 +33,17 @@ struct MeatPadApp: App {
                     .keyboardShortcut("g", modifiers: [.command, .shift])
             }
         }
+
+        Window("All Notes", id: "all-notes") {
+            NotesBrowserWindow()
+                .environmentObject(AppModel.shared)
+        }
+
+        MenuBarExtra("MeatPad", systemImage: "note.text") {
+            MenuBarNotesView()
+                .environmentObject(AppModel.shared)
+        }
+        .menuBarExtraStyle(.window)
     }
 
     private func createNote() {
