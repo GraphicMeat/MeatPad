@@ -6,6 +6,9 @@ options:
 packages:
   MeatPadKit:
     path: MeatPadKit
+  STTextView:
+    url: https://github.com/krzyzanowskim/STTextView
+    exactVersion: 2.3.10
 targets:
   MeatPad:
     type: application
@@ -13,6 +16,8 @@ targets:
     sources: [App]
     dependencies:
       - package: MeatPadKit
+      - package: STTextView
+        product: STTextView
     info:
       path: App/Info.plist
       properties:
