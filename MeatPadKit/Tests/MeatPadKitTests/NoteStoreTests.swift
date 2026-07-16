@@ -1,0 +1,144 @@
+import XCTest
+@testable import MeatPadKit
+
+@MainActor
+final class NoteStoreTests: XCTestCase {
+
+    private var tempDir: URL!
+
+    override func setUpWithError() throws {
+        tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tempDir)
+        tempDir = nil
+    }
+
+    private func makeStore() throws -> NoteStore {
+        try NoteStore(rootURL: tempDir)
+    }
+
+    // MARK: - init
+
+    func testInitCreatesRootAndTrashDirectories() throws {
+        _ = try makeStore()
+        var isDir: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.path, isDirectory: &isDir))
+        XCTAssertTrue(isDir.boolValue)
+        let trash = tempDir.appendingPathComponent(".trash")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trash.path, isDirectory: &isDir))
+        XCTAssertTrue(isDir.boolValue)
+    }
+
+    // MARK: - createNote
+
+    func testCreateNoteWritesFilesAndAppearsInNotes() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+
+        let txtURL = tempDir.appendingPathComponent("\(note.id.uuidString).txt")
+        let jsonURL = tempDir.appendingPathComponent("\(note.id.uuidString).json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: txtURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: jsonURL.path))
+        XCTAssertTrue(store.notes.contains(where: { $0.id == note.id }))
+    }
+
+    func testCreateNoteTitleIsNewNote() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+        XCTAssertEqual(note.title, "New Note")
+    }
+
+    // MARK: - save
+
+    func testSaveUpdatesContentsAndTitleFromFirstLine() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+
+        try store.save(id: note.id, contents: "Hello World\nsecond line", cursor: 5)
+
+        XCTAssertEqual(try store.contents(of: note.id), "Hello World\nsecond line")
+        let updated = store.notes.first(where: { $0.id == note.id })
+        XCTAssertEqual(updated?.title, "Hello World")
+        XCTAssertEqual(updated?.cursor, 5)
+    }
+
+    func testSaveWithNoNonEmptyLineTitleIsNewNote() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+
+        try store.save(id: note.id, contents: "   \n\n  ", cursor: 0)
+
+        let updated = store.notes.first(where: { $0.id == note.id })
+        XCTAssertEqual(updated?.title, "New Note")
+    }
+
+    // MARK: - setLanguage
+
+    func testSetLanguageUpdatesLanguageID() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+
+        try store.setLanguage(id: note.id, languageID: "swift")
+
+        XCTAssertEqual(store.notes.first(where: { $0.id == note.id })?.languageID, "swift")
+    }
+
+    // MARK: - persistence (reload)
+
+    func testReloadViaNewStoreInstanceSeesSameNotes() throws {
+        let store1 = try makeStore()
+        let note = try store1.createNote()
+        try store1.save(id: note.id, contents: "Persisted note", cursor: 3)
+
+        let store2 = try makeStore()
+
+        XCTAssertEqual(store2.notes.count, 1)
+        XCTAssertEqual(store2.notes.first?.id, note.id)
+        XCTAssertEqual(store2.notes.first?.title, "Persisted note")
+        XCTAssertEqual(store2.notes.first?.cursor, 3)
+        XCTAssertEqual(try store2.contents(of: note.id), "Persisted note")
+    }
+
+    // MARK: - trash
+
+    func testTrashRemovesFromListAndMovesFilesToTrashDir() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+
+        try store.trash(id: note.id)
+
+        XCTAssertFalse(store.notes.contains(where: { $0.id == note.id }))
+        let trashedTxt = tempDir.appendingPathComponent(".trash/\(note.id.uuidString).txt")
+        let trashedJSON = tempDir.appendingPathComponent(".trash/\(note.id.uuidString).json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trashedTxt.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trashedJSON.path))
+
+        let originalTxt = tempDir.appendingPathComponent("\(note.id.uuidString).txt")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: originalTxt.path))
+    }
+
+    // MARK: - sorting
+
+    func testNotesAreSortedByModifiedDescending() throws {
+        let store = try makeStore()
+        let first = try store.createNote()
+        try store.save(id: first.id, contents: "first", cursor: 0)
+
+        let second = try store.createNote()
+        try store.save(id: second.id, contents: "second", cursor: 0)
+
+        // Force a distinguishable modified order regardless of clock resolution.
+        try store.save(id: first.id, contents: "first again", cursor: 0)
+
+        XCTAssertEqual(store.notes.first?.id, first.id)
+    }
+
+    // MARK: - defaultRoot
+
+    func testDefaultRootPointsAtApplicationSupportMeatPadNotes() {
+        let root = NoteStore.defaultRoot()
+        XCTAssertTrue(root.path.hasSuffix("Application Support/MeatPad/Notes"))
+    }
+}
