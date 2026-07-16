@@ -45,9 +45,8 @@ public final class NoteStore: ObservableObject {
     }
 
     public func contents(of id: UUID) throws -> String {
-        let url = textURL(for: id)
-        guard FileManager.default.fileExists(atPath: url.path) else { throw NoteStoreError.notFound(id) }
-        return try String(contentsOf: url, encoding: .utf8)
+        guard notes.contains(where: { $0.id == id }) else { throw NoteStoreError.notFound(id) }
+        return try String(contentsOf: textURL(for: id), encoding: .utf8)
     }
 
     public func save(id: UUID, contents: String, cursor: Int) throws {
@@ -82,10 +81,51 @@ public final class NoteStore: ObservableObject {
 
     // MARK: - Private
 
+    /// Self-healing load: a single corrupt/missing file must never hide the rest of the
+    /// notes ("notes never lost"). Only a failure to read the root directory itself throws.
     private static func loadNotes(from rootURL: URL) throws -> [Note] {
-        let urls = try FileManager.default.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: nil)
-        let notes = try urls.filter { $0.pathExtension == "json" }.map { url -> Note in
-            try decoder.decode(Note.self, from: Data(contentsOf: url))
+        let fm = FileManager.default
+        let urls = try fm.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: nil)
+
+        // Every note id present on disk, whether it has a txt, a json, or both.
+        let ids = Set(urls.compactMap { url -> UUID? in
+            guard url.pathExtension == "txt" || url.pathExtension == "json" else { return nil }
+            return UUID(uuidString: url.deletingPathExtension().lastPathComponent)
+        })
+
+        var notes: [Note] = []
+        for id in ids {
+            let base = rootURL.appendingPathComponent(id.uuidString)
+            let txtURL = base.appendingPathExtension("txt")
+            let jsonURL = base.appendingPathExtension("json")
+
+            // Sidecar without contents: create an empty txt so the note stays usable.
+            if !fm.fileExists(atPath: txtURL.path) {
+                try? Data().write(to: txtURL, options: .atomic)
+            }
+
+            if let data = try? Data(contentsOf: jsonURL),
+               let note = try? decoder.decode(Note.self, from: data),
+               note.id == id {
+                notes.append(note)
+                continue
+            }
+
+            // Corrupt or missing sidecar: regenerate it from the txt on disk.
+            let contents = (try? String(contentsOf: txtURL, encoding: .utf8)) ?? ""
+            let attributes = try? fm.attributesOfItem(atPath: txtURL.path)
+            let note = Note(
+                id: id,
+                languageID: nil,
+                created: attributes?[.creationDate] as? Date ?? Date(),
+                modified: attributes?[.modificationDate] as? Date ?? Date(),
+                cursor: 0,
+                title: Note.title(fromContents: contents)
+            )
+            if let repaired = try? encoder.encode(note) {
+                try? repaired.write(to: jsonURL, options: .atomic)
+            }
+            notes.append(note)
         }
         return notes.sorted { $0.modified > $1.modified }
     }

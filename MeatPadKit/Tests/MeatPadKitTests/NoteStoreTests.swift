@@ -135,6 +135,71 @@ final class NoteStoreTests: XCTestCase {
         XCTAssertEqual(store.notes.first?.id, first.id)
     }
 
+    // MARK: - self-healing load
+
+    func testCorruptSidecarIsRegeneratedFromTxt() throws {
+        let store1 = try makeStore()
+        let note = try store1.createNote()
+        try store1.save(id: note.id, contents: "Survivor title\nbody", cursor: 2)
+
+        let jsonURL = tempDir.appendingPathComponent("\(note.id.uuidString).json")
+        try Data("not json {{{".utf8).write(to: jsonURL)
+
+        let store2 = try makeStore()
+        let recovered = store2.notes.first(where: { $0.id == note.id })
+        XCTAssertNotNil(recovered)
+        XCTAssertEqual(recovered?.title, "Survivor title")
+        XCTAssertEqual(try store2.contents(of: note.id), "Survivor title\nbody")
+        // repaired sidecar was written back to disk
+        XCTAssertNoThrow(try JSONSerialization.jsonObject(with: Data(contentsOf: jsonURL)))
+    }
+
+    func testOrphanTxtWithNoSidecarBecomesVisible() throws {
+        _ = try makeStore() // creates dirs
+        let id = UUID()
+        try Data("Orphan note".utf8).write(to: tempDir.appendingPathComponent("\(id.uuidString).txt"))
+
+        let store = try makeStore()
+        let recovered = store.notes.first(where: { $0.id == id })
+        XCTAssertNotNil(recovered)
+        XCTAssertEqual(recovered?.title, "Orphan note")
+        XCTAssertEqual(try store.contents(of: id), "Orphan note")
+    }
+
+    func testCorruptSidecarDoesNotAffectOtherNotes() throws {
+        let store1 = try makeStore()
+        let bad = try store1.createNote()
+        let good = try store1.createNote()
+        try store1.save(id: good.id, contents: "Good note", cursor: 0)
+        try Data([0xFF, 0x00, 0x42]).write(to: tempDir.appendingPathComponent("\(bad.id.uuidString).json"))
+
+        let store2 = try makeStore()
+        XCTAssertEqual(store2.notes.count, 2)
+        XCTAssertEqual(store2.notes.first(where: { $0.id == good.id })?.title, "Good note")
+        XCTAssertEqual(store2.notes.first(where: { $0.id == good.id })?.cursor, 0)
+    }
+
+    func testSidecarWithMissingTxtGetsEmptyTxt() throws {
+        let store1 = try makeStore()
+        let note = try store1.createNote()
+        try FileManager.default.removeItem(at: tempDir.appendingPathComponent("\(note.id.uuidString).txt"))
+
+        let store2 = try makeStore()
+        XCTAssertTrue(store2.notes.contains(where: { $0.id == note.id }))
+        XCTAssertEqual(try store2.contents(of: note.id), "")
+    }
+
+    // MARK: - unknown id
+
+    func testUnknownIDThrowsNotFound() throws {
+        let store = try makeStore()
+        let bogus = UUID()
+        XCTAssertThrowsError(try store.contents(of: bogus)) { XCTAssertEqual($0 as? NoteStoreError, .notFound(bogus)) }
+        XCTAssertThrowsError(try store.save(id: bogus, contents: "", cursor: 0)) { XCTAssertEqual($0 as? NoteStoreError, .notFound(bogus)) }
+        XCTAssertThrowsError(try store.setLanguage(id: bogus, languageID: nil)) { XCTAssertEqual($0 as? NoteStoreError, .notFound(bogus)) }
+        XCTAssertThrowsError(try store.trash(id: bogus)) { XCTAssertEqual($0 as? NoteStoreError, .notFound(bogus)) }
+    }
+
     // MARK: - defaultRoot
 
     func testDefaultRootPointsAtApplicationSupportMeatPadNotes() {
