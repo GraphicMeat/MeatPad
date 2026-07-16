@@ -9,14 +9,16 @@ import MeatPadKit
 // close the popover (Apple feedback FB11984872; `@Environment(\.dismiss)` is a no-op
 // here). Clicking outside dismisses it natively, which is an acceptable P1 fallback.
 struct MenuBarNotesView: View {
-    @EnvironmentObject private var appModel: AppModel
+    // Observed directly: nested ObservableObject changes don't propagate through
+    // AppModel's @EnvironmentObject, so the list would go stale on create/trash/save.
+    @ObservedObject private var noteStore = AppModel.shared.noteStore
     @Environment(\.openWindow) private var openWindow
     @State private var query = ""
 
     // ponytail: title-only substring match, no full-text scan. Good enough at P1 note
     // counts; revisit if search needs to cover contents too.
     private var filtered: [Note] {
-        let notes = appModel.noteStore.notes
+        let notes = noteStore.notes
         let matched = query.isEmpty
             ? notes
             : notes.filter { $0.title.localizedCaseInsensitiveContains(query) }
@@ -30,7 +32,7 @@ struct MenuBarNotesView: View {
                 .padding(8)
 
             if filtered.isEmpty {
-                Text(appModel.noteStore.notes.isEmpty ? "No notes yet" : "No matches")
+                Text(noteStore.notes.isEmpty ? "No notes yet" : "No matches")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -67,7 +69,7 @@ struct MenuBarNotesView: View {
     }
 
     private func createAndOpen() {
-        guard let note = try? appModel.noteStore.createNote() else { return }
+        guard let note = try? noteStore.createNote() else { return }
         open(note.id)
     }
 

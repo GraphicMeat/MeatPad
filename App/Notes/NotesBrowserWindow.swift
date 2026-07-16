@@ -6,13 +6,15 @@ import MeatPadKit
 /// of every note plus a detail editor for the selection, reusing the same
 /// `NoteEditorViewModel` autosave pipeline as a standalone note window.
 struct NotesBrowserWindow: View {
-    @EnvironmentObject private var appModel: AppModel
+    // Observed directly: nested ObservableObject changes don't propagate through
+    // AppModel's @EnvironmentObject, so the list would go stale on create/trash/save.
+    @ObservedObject private var noteStore = AppModel.shared.noteStore
     @Environment(\.openWindow) private var openWindow
     @State private var query = ""
     @State private var selection: UUID?
 
     private var filtered: [Note] {
-        let notes = appModel.noteStore.notes
+        let notes = noteStore.notes
         guard !query.isEmpty else { return notes }
         return notes.filter { $0.title.localizedCaseInsensitiveContains(query) }
     }
@@ -28,7 +30,7 @@ struct NotesBrowserWindow: View {
 
     @ViewBuilder
     private var sidebar: some View {
-        if appModel.noteStore.notes.isEmpty {
+        if noteStore.notes.isEmpty {
             Text("No notes yet")
                 .foregroundStyle(.secondary)
         } else {
@@ -40,8 +42,14 @@ struct NotesBrowserWindow: View {
                         .foregroundStyle(.secondary)
                 }
                 .contextMenu {
-                    Button("Open in New Window") { openWindow(value: note.id) }
+                    Button("Open in New Window") { openInNewWindow(note.id) }
                     Button("Move to Trash", role: .destructive) { trash(note.id) }
+                }
+            }
+            .overlay {
+                if filtered.isEmpty {
+                    Text("No matches")
+                        .foregroundStyle(.secondary)
                 }
             }
             .searchable(text: $query)
@@ -50,8 +58,8 @@ struct NotesBrowserWindow: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let selection, appModel.noteStore.notes.contains(where: { $0.id == selection }) {
-            NoteDetailEditor(noteID: selection)
+        if let selection, noteStore.notes.contains(where: { $0.id == selection }) {
+            NoteDetailEditor(noteID: selection) { openInNewWindow(selection) }
                 .id(selection)
         } else {
             Text("Select a note")
@@ -60,8 +68,19 @@ struct NotesBrowserWindow: View {
         }
     }
 
+    /// Opens a standalone note window, first tearing down the browser's detail editor
+    /// for that note (clearing the selection flushes + releases its view model via
+    /// onDisappear) so only one live editor exists per note in this flow.
+    // ponytail: last-writer-wins ceiling remains — a menu-bar row click can still open
+    // a NoteWindow for a note currently selected in the browser, giving two live view
+    // models on the same file. Upgrade path: a per-note shared VM registry.
+    private func openInNewWindow(_ id: UUID) {
+        if selection == id { selection = nil }
+        openWindow(value: id)
+    }
+
     private func trash(_ id: UUID) {
-        try? appModel.noteStore.trash(id: id)
+        try? noteStore.trash(id: id)
         if selection == id { selection = nil }
     }
 }
@@ -71,12 +90,11 @@ struct NotesBrowserWindow: View {
 /// `@StateObject` (and thus a fresh load) whenever the sidebar selection changes.
 private struct NoteDetailEditor: View {
     @EnvironmentObject private var appModel: AppModel
-    @Environment(\.openWindow) private var openWindow
     @StateObject private var viewModel: NoteEditorViewModel
-    private let noteID: UUID
+    private let onOpenInNewWindow: () -> Void
 
-    init(noteID: UUID) {
-        self.noteID = noteID
+    init(noteID: UUID, onOpenInNewWindow: @escaping () -> Void) {
+        self.onOpenInNewWindow = onOpenInNewWindow
         _viewModel = StateObject(wrappedValue: NoteEditorViewModel(noteID: noteID, store: AppModel.shared.noteStore))
     }
 
@@ -97,7 +115,12 @@ private struct NoteDetailEditor: View {
         }
         .toolbar {
             ToolbarItem {
-                Button("Open in New Window") { openWindow(value: noteID) }
+                // Flush before handing off so the standalone window loads the latest
+                // contents from disk, not a stale pre-debounce snapshot.
+                Button("Open in New Window") {
+                    viewModel.flush()
+                    onOpenInNewWindow()
+                }
             }
         }
         .onAppear { viewModel.load() }
