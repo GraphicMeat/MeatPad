@@ -22,8 +22,9 @@ public struct Note: Identifiable, Equatable, Sendable, Codable {
 
 extension Note {
     /// Derives the display title from note contents: the first non-empty line, trimmed;
-    /// "New Note" if the contents have no non-empty line.
-    static func title(fromContents contents: String) -> String {
+    /// "New Note" if the contents have no non-empty line. Public so the app can recompute
+    /// a live window title on every keystroke, without waiting for the debounced autosave.
+    public static func title(fromContents contents: String) -> String {
         for line in contents.split(separator: "\n", omittingEmptySubsequences: false) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if !trimmed.isEmpty { return trimmed }

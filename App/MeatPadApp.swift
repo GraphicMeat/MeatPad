@@ -5,20 +5,23 @@ import STTextView
 
 @main
 struct MeatPadApp: App {
-    // Temporary demo state — Task 7 replaces this WindowGroup content.
-    @State private var text = MeatPadApp.sample
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
-        WindowGroup {
-            CodeEditor(
-                text: $text,
-                language: Languages.byID("python"),
-                theme: BuiltinThemes.defaultDark,
-                onCursorChange: { _ in }
-            )
-            .frame(minWidth: 640, minHeight: 420)
+        WindowGroup("Note", for: UUID.self) { $noteID in
+            if let noteID {
+                NoteWindow(noteID: noteID)
+                    .environmentObject(AppModel.shared)
+            }
         }
         .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("New Note") { createNote() }
+                    .keyboardShortcut("n", modifiers: .command)
+            }
+            CommandGroup(after: .toolbar) {
+                Menu("Language") { LanguageCommands() }
+            }
             // Route Cmd+F / Cmd+G through the responder chain to STTextView's
             // NSTextFinder integration. It reads the action from the sender's tag.
             CommandGroup(after: .textEditing) {
@@ -32,36 +35,36 @@ struct MeatPadApp: App {
         }
     }
 
+    private func createNote() {
+        guard let note = try? AppModel.shared.noteStore.createNote() else { return }
+        openWindow(value: note.id)
+    }
+
     static func finder(_ action: NSTextFinder.Action) {
         let item = NSMenuItem()
         item.tag = action.rawValue
         NSApp.sendAction(#selector(STTextView.performTextFinderAction(_:)), to: nil, from: item)
     }
+}
 
-    static let sample = """
-    #!/usr/bin/env python3
-    \"\"\"A small sample to show off syntax highlighting.\"\"\"
+/// "Automatic" + every registered language, checkmark on whichever applies to the
+/// focused note window. Disabled entirely when no note window is frontmost.
+private struct LanguageCommands: View {
+    @FocusedValue(\.noteEditor) private var editor
 
-    import math
+    var body: some View {
+        Button(label(for: nil, name: "Automatic")) { editor?.setLanguage(nil) }
+            .disabled(editor == nil)
+        Divider()
+        ForEach(Languages.all) { language in
+            Button(label(for: language.id, name: language.name)) {
+                editor?.setLanguage(language.id)
+            }
+            .disabled(editor == nil)
+        }
+    }
 
-
-    def circle_area(radius: float) -> float:
-        # area = pi * r^2
-        if radius < 0:
-            raise ValueError("radius must be non-negative")
-        return math.pi * radius ** 2
-
-
-    class Greeter:
-        def __init__(self, name: str):
-            self.name = name
-
-        def greet(self) -> str:
-            return f"Hello, {self.name}!"
-
-
-    if __name__ == "__main__":
-        print(circle_area(2.5))
-        print(Greeter("world").greet())
-    """
+    private func label(for id: String?, name: String) -> String {
+        editor?.languageOverride == id ? "✓ \(name)" : name
+    }
 }
