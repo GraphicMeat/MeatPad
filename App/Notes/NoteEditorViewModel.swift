@@ -9,6 +9,11 @@ import MeatPadKit
 @MainActor
 final class NoteEditorViewModel: ObservableObject {
     let noteID: UUID
+    // ponytail: `exists` only re-checks on the next save/setLanguage attempt (both
+    // already guard on the store's notFound error), not via a live subscription to
+    // store.notes. An idle window whose note gets trashed elsewhere won't flip to the
+    // empty state until the user next types or moves the cursor. Add a Combine sink on
+    // store.$notes here if that idle case needs to be instant.
     @Published private(set) var exists: Bool
     @Published var text: String = ""
     @Published private(set) var languageOverride: String?
