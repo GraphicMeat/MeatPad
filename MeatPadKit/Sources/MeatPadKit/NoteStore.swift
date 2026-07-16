@@ -8,7 +8,7 @@ public enum NoteStoreError: Error, Equatable {
 /// (metadata sidecar) per note under `rootURL`. Trashed notes move to `<root>/.trash/`.
 @MainActor
 public final class NoteStore: ObservableObject {
-    public let rootURL: URL
+    private let rootURL: URL
     private let trashURL: URL
 
     /// Sorted by `modified`, most recent first.
