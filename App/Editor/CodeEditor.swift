@@ -88,6 +88,9 @@ struct CodeEditor: NSViewRepresentable {
             textView.insertionPointColor = NSColor(theme.caret)
             textView.selectedLineHighlightColor = NSColor(theme.currentLine)
             textView.gutterView?.textColor = NSColor(theme.gutterForeground)
+            // textView.backgroundColor's own didSet propagates to gutterView.backgroundColor
+            // internally (STTextView.swift), so the gutter strip already tracks the theme
+            // instead of falling back to its default system-vibrancy background.
             // ponytail: STTextView draws the text selection with the system color
             // (NSColor.selectedTextBackgroundColor) and exposes no per-view hook, so
             // theme.selection is unused until upstream adds one.
