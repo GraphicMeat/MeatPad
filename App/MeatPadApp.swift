@@ -5,9 +5,18 @@ import STTextView
 
 @main
 struct MeatPadApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
+        // `let _ =` (a declaration, not an expression statement) keeps this side effect
+        // out of SceneBuilder's result-building, which otherwise requires every
+        // statement in this block to itself produce a `Scene`. Captured on every body
+        // evaluation (cheap, idempotent); guaranteed available before
+        // `applicationDidFinishLaunching` fires, since SwiftUI builds the scene graph
+        // before AppKit's launch delegate callbacks run.
+        let _ = { AppModel.shared.openWindowAction = openWindow }()
+
         WindowGroup("Note", for: UUID.self) { $noteID in
             if let noteID {
                 NoteWindow(noteID: noteID)
@@ -77,5 +86,24 @@ private struct LanguageCommands: View {
 
     private func label(for id: String?, name: String) -> String {
         editor?.languageOverride == id ? "✓ \(name)" : name
+    }
+}
+
+/// Bridges AppKit's launch/terminate lifecycle into session restore. SwiftUI's
+/// `WindowGroup(for:)` has its own automatic window-state restoration, which would
+/// otherwise race with ours and reopen the same notes a second time; setting
+/// `ApplePersistenceIgnoreState` disables AppKit-level restoration entirely so
+/// `AppModel`'s session.json is the sole source of restored windows.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true])
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        AppModel.shared.restoreSession()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        AppModel.shared.saveSessionNow()
     }
 }

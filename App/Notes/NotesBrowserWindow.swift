@@ -26,6 +26,8 @@ struct NotesBrowserWindow: View {
             detail
         }
         .frame(minWidth: 720, minHeight: 480)
+        .onAppear { AppModel.shared.browserWindowDidAppear() }
+        .onDisappear { AppModel.shared.browserWindowDidDisappear() }
     }
 
     @ViewBuilder

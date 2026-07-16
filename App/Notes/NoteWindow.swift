@@ -30,7 +30,11 @@ struct NoteWindow: View {
         .frame(minWidth: 640, minHeight: 420)
         .navigationTitle(viewModel.title)
         .background(WindowAccessor(onWindow: viewModel.attach))
-        .onAppear { viewModel.load() }
+        .onAppear {
+            viewModel.load()
+            appModel.noteWindowDidAppear(viewModel.noteID)
+        }
+        .onDisappear { appModel.noteWindowDidDisappear(viewModel.noteID) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
             viewModel.flush()
         }
