@@ -4,8 +4,10 @@ import STTextView
 
 /// Records raw key events while `isRecording` and replays a recorded sequence by
 /// re-synthesizing `NSEvent`s and handing them to `textView.keyDown(with:)` — the same
-/// seam live typing uses, so snippets, completion, and multi-caret editing all behave
-/// identically on replay. One app-wide instance on `AppModel`.
+/// seam live typing uses, so snippets and completion behave identically on replay.
+/// Ceiling: menu key-equivalents (e.g. Cmd+D multi-caret) are consumed by the menu bar
+/// before reaching `keyDown`, so they are neither recorded nor replayed; Option+Click
+/// is mouse-only and likewise outside macros. One app-wide instance on `AppModel`.
 @MainActor
 final class MacroController: ObservableObject {
     @Published private(set) var isRecording = false

@@ -66,8 +66,9 @@ struct EditorCommandContext {
             caretOffset: { textView()?.textSelection.location ?? 0 },
             replaceSelection: { output in
                 guard let tv = textView() else { return }
-                // With multiple carets, this acts on the FIRST (primary) selection only —
-                // `tv.textSelection` returns the primary range, and commands aren't multi-caret aware.
+                // With multiple carets, this acts on ONE selection only — `tv.textSelection`
+                // returns the most-recent one (STTextView's selectedRange() = textSelections.last).
+                // Commands aren't multi-caret aware.
                 // TextMate semantics: no selection → the whole document is "the selection".
                 let target = tv.textSelection.length > 0
                     ? tv.textSelection
