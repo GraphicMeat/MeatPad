@@ -9,6 +9,9 @@ packages:
   STTextView:
     url: https://github.com/krzyzanowskim/STTextView
     exactVersion: 2.3.10
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.6.0
 targets:
   MeatPad:
     type: application
@@ -18,15 +21,24 @@ targets:
       - package: MeatPadKit
       - package: STTextView
         product: STTextView
+      - package: Sparkle
+        product: Sparkle
     info:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: MeatPad
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "14.0"
         NSHumanReadableCopyright: "© 2026 Rokas"
+        SUFeedURL: https://github.com/thecoldzero/MeatPad/releases/latest/download/appcast.xml
+        SUEnableAutomaticChecks: true
+        SUPublicEDKey: "9OobPkT0p5WGp0wf2aSbADivVllEKZaz0gKhElMocU0="
     settings:
       base:
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_APP_SANDBOX: NO
         SWIFT_VERSION: "5.10"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
+        MARKETING_VERSION: "0.4.0"
+        CURRENT_PROJECT_VERSION: "0.4.0"

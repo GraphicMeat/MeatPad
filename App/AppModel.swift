@@ -2,6 +2,7 @@ import Combine
 import Foundation
 import SwiftUI
 import MeatPadKit
+import Sparkle
 
 /// App-wide state: the note store and the active theme (persisted across launches as a
 /// theme id string in UserDefaults).
@@ -25,6 +26,10 @@ final class AppModel: ObservableObject {
     let commandExecutor = CommandExecutor()
     /// Keystroke recorder/player, shared by the Commands menu and the editor's key tap.
     let macroController = MacroController()
+    /// Sparkle's updater, owned app-wide so both the menu command and any future settings
+    /// UI share one instance. DEBUG builds start it suspended (`startingUpdater: false`) so
+    /// dev runs never hit the feed or prompt to install over a debug build.
+    let updaterController: SPUStandardUpdaterController
     @Published var theme: Theme {
         didSet { UserDefaults.standard.set(theme.id, forKey: Self.themeDefaultsKey) }
     }
@@ -76,6 +81,15 @@ final class AppModel: ObservableObject {
     }
 
     private init() {
+        #if DEBUG
+        let startUpdater = false
+        #else
+        let startUpdater = true
+        #endif
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: startUpdater, updaterDelegate: nil, userDriverDelegate: nil
+        )
+
         do {
             noteStore = try NoteStore(rootURL: NoteStore.defaultRoot())
         } catch {

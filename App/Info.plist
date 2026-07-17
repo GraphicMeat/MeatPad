@@ -17,12 +17,18 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Rokas</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/thecoldzero/MeatPad/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>9OobPkT0p5WGp0wf2aSbADivVllEKZaz0gKhElMocU0=</string>
 </dict>
 </plist>

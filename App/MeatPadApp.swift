@@ -24,6 +24,7 @@ struct MeatPadApp: App {
             }
         }
         .commands {
+            CommandGroup(after: .appInfo) { CheckForUpdatesCommand() }
             CommandGroup(replacing: .newItem) {
                 Button("New Note") { createNote() }
                     .keyboardShortcut("n", modifiers: .command)
@@ -145,6 +146,19 @@ private struct OpenRecentCommands: View {
                 Button("Clear Menu") { appModel.clearRecentProjects() }
             }
         }
+    }
+}
+
+/// Check for Updates…, routed to Sparkle's shared updater controller. Disabled in DEBUG so
+/// dev builds can't trigger a feed check or offer to install over themselves.
+private struct CheckForUpdatesCommand: View {
+    var body: some View {
+        Button("Check for Updates…") {
+            AppModel.shared.updaterController.checkForUpdates(nil)
+        }
+        #if DEBUG
+        .disabled(true)
+        #endif
     }
 }
 
