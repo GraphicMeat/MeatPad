@@ -23,7 +23,7 @@ enum PrintController {
 
         let theme = BuiltinThemes.defaultLight
         textView.string = context.documentText()
-        textView.font = CodeEditor.font(size: 13)
+        textView.font = CodeEditor.font(size: AppModel.shared.fontSize)
         textView.textColor = NSColor(theme.editorForeground)
         // ponytail: no background fill — plain white paper, not the editor's painted bg.
         textView.drawsBackground = false
