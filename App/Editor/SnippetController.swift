@@ -45,7 +45,9 @@ final class SnippetTextView: STTextView {
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 49, // kVK_Space
-           event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .control,
+           // Ignore .capsLock (part of deviceIndependentFlagsMask): Ctrl+Space must fire
+           // with Caps Lock engaged too.
+           event.modifierFlags.intersection([.command, .option, .shift, .control]) == .control,
            onCompletionTrigger?() == true {
             return
         }

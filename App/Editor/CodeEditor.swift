@@ -71,6 +71,7 @@ struct CodeEditor: NSViewRepresentable {
         coord.applySoftWrap(softWrap)
         coord.applyTheme(theme) // sets colors + immediate first highlight paint
         coord.applyReveal(reveal) // first render of a just-opened file consumes here
+        coord.observeScroll(of: scrollView)
         return scrollView
     }
 
@@ -131,8 +132,33 @@ struct CodeEditor: NSViewRepresentable {
         /// no external consumer (no menu item reaches into it), so it's just owned here rather
         /// than threaded through `CodeEditor` as a parameter.
         private let completionController = CompletionController()
+        /// The completion popup is a child window pinned at screen coordinates — it does not
+        /// track content scrolling, so a manual scroll must dismiss it. Typing near the
+        /// viewport edge autoscrolls the caret and fires the same bounds notification; the
+        /// timestamp guard keeps the popup alive through those keystroke-driven scrolls.
+        private var scrollObserver: NSObjectProtocol?
+        private var lastTextChange = Date.distantPast
 
         init(_ parent: CodeEditor) { self.parent = parent }
+
+        deinit {
+            if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+        }
+
+        func observeScroll(of scrollView: NSScrollView) {
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            scrollObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let textView = self.textView, textView.isCompletionActive,
+                          Date().timeIntervalSince(self.lastTextChange) > 0.15 else { return }
+                    textView.cancelComplete(nil)
+                }
+            }
+        }
 
         // MARK: Snippet key-command forwarding (called from SnippetTextView overrides)
 
@@ -254,6 +280,7 @@ struct CodeEditor: NSViewRepresentable {
         nonisolated func textViewDidChangeText(_ notification: Notification) {
             MainActor.assumeIsolated {
                 guard let textView else { return }
+                lastTextChange = Date()
                 let new = textView.text ?? ""
                 if parent.text != new { parent.text = new }
                 scheduleHighlight()
