@@ -10,10 +10,16 @@ import STTextView
 /// on this subclass yields a `SnippetTextView` with no other plumbing changed. Each closure
 /// returns true to consume the key (a live snippet handled it), false to fall through to the
 /// normal behaviour (literal tab, completion trigger on Esc).
+///
+/// Ctrl+Space (word completion, Task 8) rides the same seam but can't be caught the same way:
+/// AppKit's default key-binding table only maps Option-Esc/F13 to `complete:`, not Ctrl+Space,
+/// so there's no `NSStandardKeyBindingResponding` selector to override. It's recognized at the
+/// raw key-event level in `keyDown(with:)` instead.
 final class SnippetTextView: STTextView {
     var onInsertTab: (() -> Bool)?
     var onInsertBacktab: (() -> Bool)?
     var onCancel: (() -> Bool)?
+    var onCompletionTrigger: (() -> Bool)?
 
     override func insertTab(_ sender: Any?) {
         if onInsertTab?() == true { return }
@@ -25,9 +31,25 @@ final class SnippetTextView: STTextView {
         super.insertBacktab(sender)
     }
 
+    /// Snippet precedence: while a live snippet's Esc-cancel doesn't apply (no session, or the
+    /// session declined it), fall back only to dismissing the completion popup if one is
+    /// showing — never to `super.cancelOperation`. STTextView's own `cancelOperation` override
+    /// treats a not-currently-visible popup as "nothing to cancel, so trigger completion
+    /// instead," which would make plain Esc a second way to open the Ctrl+Space popup.
     override func cancelOperation(_ sender: Any?) {
         if onCancel?() == true { return }
-        super.cancelOperation(sender)
+        if isCompletionActive {
+            cancelComplete(sender)
+        }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 49, // kVK_Space
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .control,
+           onCompletionTrigger?() == true {
+            return
+        }
+        super.keyDown(with: event)
     }
 }
 

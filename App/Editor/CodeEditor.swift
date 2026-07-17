@@ -52,10 +52,15 @@ struct CodeEditor: NSViewRepresentable {
         textView.onInsertTab = { [weak coord] in MainActor.assumeIsolated { coord?.snippetTab() ?? false } }
         textView.onInsertBacktab = { [weak coord] in MainActor.assumeIsolated { coord?.snippetBacktab() ?? false } }
         textView.onCancel = { [weak coord] in MainActor.assumeIsolated { coord?.snippetCancel() ?? false } }
+        textView.onCompletionTrigger = { [weak coord] in MainActor.assumeIsolated { coord?.triggerCompletion() ?? false } }
 
         textView.textDelegate = coord
         textView.showsLineNumbers = true
         textView.highlightSelectedLine = true
+        // See CompletionController.syncPopup: the built-in heuristic this replaces only keeps
+        // the popup open across a letter keystroke, closing it mid-identifier on a digit or
+        // underscore.
+        textView.shouldDimissCompletionOnSelectionChange = false
 
         textView.text = text
         if let initialCursor, initialCursor <= (text as NSString).length {
@@ -122,6 +127,10 @@ struct CodeEditor: NSViewRepresentable {
         /// buffer offsets are unambiguous) and consumed in `didChangeTextIn` — only while a
         /// snippet session is live.
         private var pendingEditRange: NSRange?
+        /// Owns Ctrl+Space word completion for this editor. Unlike `SnippetController` it has
+        /// no external consumer (no menu item reaches into it), so it's just owned here rather
+        /// than threaded through `CodeEditor` as a parameter.
+        private let completionController = CompletionController()
 
         init(_ parent: CodeEditor) { self.parent = parent }
 
@@ -140,6 +149,13 @@ struct CodeEditor: NSViewRepresentable {
         func snippetCancel() -> Bool {
             guard let textView, let controller = parent.snippetController else { return false }
             return controller.handleEscape(textView: textView)
+        }
+
+        /// Always consumes Ctrl+Space — the key has no prior meaning in this editor.
+        func triggerCompletion() -> Bool {
+            guard let textView else { return false }
+            completionController.trigger(textView: textView)
+            return true
         }
 
         func rebuildHighlighter(languageID: String?) {
@@ -241,6 +257,7 @@ struct CodeEditor: NSViewRepresentable {
                 let new = textView.text ?? ""
                 if parent.text != new { parent.text = new }
                 scheduleHighlight()
+                completionController.syncPopup(textView: textView)
             }
         }
 
@@ -249,6 +266,7 @@ struct CodeEditor: NSViewRepresentable {
                 guard let textView else { return }
                 parent.onCursorChange(textView.textSelection.location)
                 parent.snippetController?.caretDidMove(to: textView.textSelection.location)
+                completionController.syncPopup(textView: textView)
             }
         }
 
@@ -269,6 +287,20 @@ struct CodeEditor: NSViewRepresentable {
                 pendingEditRange = nil
                 controller.textDidChange(range: range, replacement: replacementString, textView: textView)
             }
+        }
+
+        // MARK: STTextViewDelegate — Ctrl+Space completion (forwarded to CompletionController)
+
+        nonisolated func textView(_ textView: STTextView, completionItemsAtLocation location: any NSTextLocation) -> [any STCompletionItem]? {
+            MainActor.assumeIsolated { completionController.completionItems(textView: textView) }
+        }
+
+        nonisolated func textView(_ textView: STTextView, insertCompletionItem item: any STCompletionItem) {
+            MainActor.assumeIsolated { completionController.insertCompletionItem(item, textView: textView) }
+        }
+
+        nonisolated func textViewCompletionViewController(_ textView: STTextView) -> any STCompletionViewControllerProtocol {
+            MainActor.assumeIsolated { WordCompletionViewController() }
         }
     }
 }
