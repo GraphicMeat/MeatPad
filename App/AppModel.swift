@@ -15,6 +15,9 @@ final class AppModel: ObservableObject {
     let snippetLibrary: SnippetLibrary
     /// Saved shell commands, backed by the sibling `Commands` directory.
     let commandStore: CommandStore
+    /// User themes, backed by the sibling `Themes` directory. `BuiltinThemes.all` is
+    /// always available through it too (see `ThemeStore.allThemes`).
+    let themeStore: ThemeStore
     /// App-wide shell command runner (one command at a time), shared by the Commands
     /// menu, the filter sheet, and the output panels.
     let commandExecutor = CommandExecutor()
@@ -78,8 +81,11 @@ final class AppModel: ObservableObject {
         snippetLibrary = SnippetLibrary(userDirectory: snippetsDir)
         let commandsDir = NoteStore.defaultRoot().deletingLastPathComponent().appendingPathComponent("Commands", isDirectory: true)
         commandStore = CommandStore(directory: commandsDir)
+        let themesDir = NoteStore.defaultRoot().deletingLastPathComponent().appendingPathComponent("Themes", isDirectory: true)
+        let themeStore = ThemeStore(directory: themesDir)
+        self.themeStore = themeStore
         let savedID = UserDefaults.standard.string(forKey: Self.themeDefaultsKey)
-        theme = savedID.flatMap { id in BuiltinThemes.all.first { $0.id == id } } ?? BuiltinThemes.defaultDark
+        theme = savedID.flatMap { themeStore.theme(id: $0) } ?? BuiltinThemes.defaultDark
 
         let savedFontSize = UserDefaults.standard.object(forKey: Self.fontSizeDefaultsKey) as? Double
         fontSize = savedFontSize.map { CGFloat($0) } ?? 13
