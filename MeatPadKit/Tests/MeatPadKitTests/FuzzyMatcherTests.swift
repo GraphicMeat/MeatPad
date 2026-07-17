@@ -95,6 +95,24 @@ final class FuzzyMatcherTests: XCTestCase {
         XCTAssertGreaterThan(matches[0].score, matches[1].score)
     }
 
+    // MARK: - Boundary preference must never drop a true subsequence
+
+    func testBoundaryTrapAfterUnderscoreStillMatches() {
+        // 'n' has a boundary occurrence at index 4 (after '_'), but the query is
+        // only completable from the non-boundary 'n' at index 1. Must still match.
+        let matches = FuzzyMatcher.rank(query: "np", candidates: ["xnp_n"])
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(matches[0].matchedIndices, [1, 2])
+    }
+
+    func testBoundaryTrapAtDifferentPositionStillMatches() {
+        // Same trap shape, different position: boundary 'a' at index 4 dead-ends;
+        // the match lives at the non-boundary 'a' at index 1.
+        let matches = FuzzyMatcher.rank(query: "ab", candidates: ["xab_a"])
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(matches[0].matchedIndices, [1, 2])
+    }
+
     // MARK: - Stable ordering on ties
 
     func testTiesPreserveCandidateOrder() {

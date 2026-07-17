@@ -41,20 +41,39 @@ public enum FuzzyMatcher {
     private static func match(queryChars: [Character], candidate: String, candidateIndex: Int) -> Match? {
         let chars = Array(candidate)
         guard !chars.isEmpty else { return nil }
+        // ponytail: assumes lowercased() of one Character yields one Character,
+        // true for ASCII paths this ranks; multi-grapheme expansions (e.g. İ)
+        // would shift matchedIndices — revisit if candidates go beyond file paths.
         let lower = chars.map { Character($0.lowercased()) }
         let boundaries = boundaryFlags(for: chars)
 
+        // Boundary-preferring walk scores better when it succeeds, but anchoring
+        // the first char on a later boundary can strand the rest of the query
+        // ("np" in "xnp_n"). Any true subsequence must match, so fall back to a
+        // plain leftmost-greedy walk before declaring no match.
+        guard let matchedIndices =
+            walk(queryChars: queryChars, lower: lower, boundaries: boundaries, preferBoundaryFirst: true)
+            ?? walk(queryChars: queryChars, lower: lower, boundaries: boundaries, preferBoundaryFirst: false)
+        else { return nil }
+
+        return Match(
+            candidateIndex: candidateIndex,
+            score: score(matchedIndices: matchedIndices, boundaries: boundaries),
+            matchedIndices: matchedIndices
+        )
+    }
+
+    private static func walk(queryChars: [Character], lower: [Character], boundaries: [Bool], preferBoundaryFirst: Bool) -> [Int]? {
         var matchedIndices: [Int] = []
         matchedIndices.reserveCapacity(queryChars.count)
         var searchStart = 0
 
         for (queryPosition, queryChar) in queryChars.enumerated() {
             var chosen: Int?
-            if queryPosition == 0 {
-                // Boundary-aware retry: prefer landing the first character on a
-                // word/segment boundary (e.g. jump past "src/" into "note.txt")
-                // over the leftmost occurrence, which tends to fall inside a
-                // directory name and score worse.
+            if preferBoundaryFirst && queryPosition == 0 {
+                // Prefer landing the first character on a word/segment boundary
+                // (e.g. jump past "src/" into "note.txt") over the leftmost
+                // occurrence, which tends to fall inside a directory name.
                 chosen = (searchStart..<lower.count).first { lower[$0] == queryChar && ($0 == 0 || boundaries[$0]) }
             }
             if chosen == nil {
@@ -64,12 +83,7 @@ public enum FuzzyMatcher {
             matchedIndices.append(index)
             searchStart = index + 1
         }
-
-        return Match(
-            candidateIndex: candidateIndex,
-            score: score(matchedIndices: matchedIndices, boundaries: boundaries),
-            matchedIndices: matchedIndices
-        )
+        return matchedIndices
     }
 
     /// Marks positions that start a new "segment": right after a path/word
