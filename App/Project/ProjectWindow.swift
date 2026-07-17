@@ -7,10 +7,19 @@ import MeatPadKit
 struct ProjectWindow: View {
     @StateObject private var viewModel: ProjectViewModel
     @StateObject private var searchViewModel: ProjectSearchViewModel
+    @ObservedObject private var executor = AppModel.shared.commandExecutor
 
     init(root: URL) {
         _viewModel = StateObject(wrappedValue: ProjectViewModel(root: root))
         _searchViewModel = StateObject(wrappedValue: ProjectSearchViewModel(root: root))
+    }
+
+    /// True while the executor's filter request targets this window's editor.
+    private var filterSheetShown: Binding<Bool> {
+        Binding(
+            get: { executor.filterContext?.hostID == AnyHashable(ObjectIdentifier(viewModel)) },
+            set: { if !$0 { executor.filterContext = nil } }
+        )
     }
 
     var body: some View {
@@ -34,11 +43,25 @@ struct ProjectWindow: View {
                 .safeAreaInset(edge: .top, spacing: 0) {
                     if viewModel.hasTabs { TabBarView(viewModel: viewModel) }
                 }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if let output = executor.panelOutput, output.hostID == AnyHashable(ObjectIdentifier(viewModel)) {
+                        OutputPanelView(
+                            output: output,
+                            onClose: { executor.panelOutput = nil },
+                            onCancel: { executor.cancel() }
+                        )
+                    }
+                }
                 .overlay {
                     if viewModel.quickOpenVisible {
                         QuickOpenView(viewModel: viewModel)
                     }
                 }
+        }
+        .sheet(isPresented: filterSheetShown) {
+            if let context = executor.filterContext {
+                FilterCommandSheet(context: context, onDismiss: { executor.filterContext = nil })
+            }
         }
         .frame(minWidth: 720, minHeight: 480)
         .navigationTitle(viewModel.root.lastPathComponent)

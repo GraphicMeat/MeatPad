@@ -8,9 +8,18 @@ struct NoteWindow: View {
     @EnvironmentObject private var appModel: AppModel
     @StateObject private var viewModel: NoteEditorViewModel
     @StateObject private var snippetController = SnippetController(library: AppModel.shared.snippetLibrary)
+    @ObservedObject private var executor = AppModel.shared.commandExecutor
 
     init(noteID: UUID) {
         _viewModel = StateObject(wrappedValue: EditorRegistry.shared.noteViewModel(for: noteID))
+    }
+
+    /// True while the executor's filter request targets this note window's editor.
+    private var filterSheetShown: Binding<Bool> {
+        Binding(
+            get: { executor.filterContext?.hostID == AnyHashable(ObjectIdentifier(viewModel)) },
+            set: { if !$0 { executor.filterContext = nil } }
+        )
     }
 
     var body: some View {
@@ -33,6 +42,17 @@ struct NoteWindow: View {
             }
         }
         .focusedSceneValue(\.snippetInsertion, SnippetInsertion(languageID: viewModel.language?.id, insert: { snippetController.insert($0) }))
+        .focusedSceneValue(\.editorCommandContext, EditorCommandContext.make(
+            hostID: ObjectIdentifier(viewModel),
+            panelCapable: false,
+            textView: snippetController.textView,
+            languageID: viewModel.language?.id
+        ))
+        .sheet(isPresented: filterSheetShown) {
+            if let context = executor.filterContext {
+                FilterCommandSheet(context: context, onDismiss: { executor.filterContext = nil })
+            }
+        }
         .frame(minWidth: 640, minHeight: 420)
         .navigationTitle(viewModel.title)
         .background(WindowAccessor(onWindow: viewModel.attach))

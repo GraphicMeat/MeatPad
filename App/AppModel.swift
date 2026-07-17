@@ -13,6 +13,11 @@ final class AppModel: ObservableObject {
     /// User + builtin snippets, backed by `~/Library/Application Support/MeatPad/Snippets`
     /// (sibling of Notes). One instance shared by every editor and the settings pane.
     let snippetLibrary: SnippetLibrary
+    /// Saved shell commands, backed by the sibling `Commands` directory.
+    let commandStore: CommandStore
+    /// App-wide shell command runner (one command at a time), shared by the Commands
+    /// menu, the filter sheet, and the output panels.
+    let commandExecutor = CommandExecutor()
     @Published var theme: Theme {
         didSet { UserDefaults.standard.set(theme.id, forKey: Self.themeDefaultsKey) }
     }
@@ -71,6 +76,8 @@ final class AppModel: ObservableObject {
         }
         let snippetsDir = NoteStore.defaultRoot().deletingLastPathComponent().appendingPathComponent("Snippets", isDirectory: true)
         snippetLibrary = SnippetLibrary(userDirectory: snippetsDir)
+        let commandsDir = NoteStore.defaultRoot().deletingLastPathComponent().appendingPathComponent("Commands", isDirectory: true)
+        commandStore = CommandStore(directory: commandsDir)
         let savedID = UserDefaults.standard.string(forKey: Self.themeDefaultsKey)
         theme = savedID.flatMap { id in BuiltinThemes.all.first { $0.id == id } } ?? BuiltinThemes.defaultDark
 
@@ -81,6 +88,14 @@ final class AppModel: ObservableObject {
         softWrap = savedSoftWrap ?? true
 
         recentProjectPaths = UserDefaults.standard.stringArray(forKey: Self.recentProjectsDefaultsKey) ?? []
+    }
+
+    /// Shell-command "New Note" output mode: create a note holding `contents` and open
+    /// its window. Best-effort — a store failure just drops the output note.
+    func openNewNote(withContents contents: String) {
+        guard let note = try? noteStore.createNote() else { return }
+        try? noteStore.save(id: note.id, contents: contents, cursor: 0)
+        openWindowAction?(value: note.id)
     }
 
     // MARK: - Recent projects

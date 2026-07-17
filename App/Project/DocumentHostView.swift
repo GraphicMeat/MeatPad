@@ -57,6 +57,14 @@ private struct EditorPane: View {
         )
         .overlay(alignment: .top) { banner }
         .focusedSceneValue(\.snippetInsertion, SnippetInsertion(languageID: editor.language?.id, insert: { snippetController.insert($0) }))
+        .focusedSceneValue(\.editorCommandContext, EditorCommandContext.make(
+            hostID: ObjectIdentifier(project),
+            panelCapable: true,
+            textView: snippetController.textView,
+            languageID: editor.language?.id,
+            fileURL: url,
+            projectRoot: project.root
+        ))
     }
 
     @ViewBuilder

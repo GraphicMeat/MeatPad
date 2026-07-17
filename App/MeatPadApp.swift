@@ -55,8 +55,11 @@ struct MeatPadApp: App {
                 Button("Find Previous") { MeatPadApp.finder(.previousMatch) }
                     .keyboardShortcut("g", modifiers: [.command, .shift])
             }
-            // Commands menu — introduced here with just Insert Snippet; Task 9 fills the rest.
             CommandMenu("Commands") {
+                SavedCommandItems()
+                Divider()
+                FilterCommandItems()
+                Divider()
                 InsertSnippetCommands()
             }
         }
@@ -192,6 +195,53 @@ private struct ProjectSearchCommand: View {
         }
         .keyboardShortcut("f", modifiers: [.command, .shift])
         .disabled(project == nil)
+    }
+}
+
+/// Commands ▸ saved shell commands scoped to the focused editor's language. Disabled
+/// when no editor is focused or a command is already running.
+private struct SavedCommandItems: View {
+    @FocusedValue(\.editorCommandContext) private var context
+    @ObservedObject private var store = AppModel.shared.commandStore
+    @ObservedObject private var executor = AppModel.shared.commandExecutor
+
+    var body: some View {
+        let commands = store.commands(forLanguageID: context?.languageID)
+        if commands.isEmpty {
+            Button("No Commands") {}.disabled(true)
+        } else {
+            ForEach(commands) { command in
+                if let shortcut = ShortcutParser.parse(command.keyEquivalent) {
+                    Button(command.name) { run(command) }
+                        .keyboardShortcut(shortcut)
+                        .disabled(context == nil || executor.isRunning)
+                } else {
+                    Button(command.name) { run(command) }
+                        .disabled(context == nil || executor.isRunning)
+                }
+            }
+        }
+    }
+
+    private func run(_ command: SavedCommand) {
+        guard let context else { return }
+        AppModel.shared.commandExecutor.run(command, context: context)
+    }
+}
+
+/// Filter Through Command… (Cmd+Opt+R) + Cancel Command while one runs. The filter
+/// request routes through the executor's `filterContext`; the focused window's
+/// `.sheet` picks it up by host id.
+private struct FilterCommandItems: View {
+    @FocusedValue(\.editorCommandContext) private var context
+    @ObservedObject private var executor = AppModel.shared.commandExecutor
+
+    var body: some View {
+        Button("Filter Through Command…") { executor.filterContext = context }
+            .keyboardShortcut("r", modifiers: [.command, .option])
+            .disabled(context == nil)
+        Button("Cancel Command") { executor.cancel() }
+            .disabled(!executor.isRunning)
     }
 }
 

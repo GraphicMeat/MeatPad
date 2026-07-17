@@ -1,8 +1,8 @@
 import SwiftUI
 import MeatPadKit
 
-/// `Settings` scene: General (theme, font, wrap) + Snippets. Commands (Task 9) and Themes
-/// (Task 10) tabs are intentionally not added yet.
+/// `Settings` scene: General (theme, font, wrap) + Snippets + Commands. Themes (Task 10)
+/// is intentionally not added yet.
 struct SettingsView: View {
     @EnvironmentObject private var appModel: AppModel
 
@@ -12,6 +12,8 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             SnippetsSettingsView(library: appModel.snippetLibrary)
                 .tabItem { Label("Snippets", systemImage: "text.badge.plus") }
+            CommandsSettingsView(store: appModel.commandStore)
+                .tabItem { Label("Commands", systemImage: "terminal") }
         }
         .frame(width: 540, height: 460)
     }
