@@ -31,9 +31,10 @@ struct MeatPadApp: App {
                     .keyboardShortcut("o", modifiers: .command)
                 OpenRecentCommands(openProject: openProject)
             }
-            // Save / Close Tab routed to the focused project window. Both are disabled
-            // (and so fall through to the default window Close / no-op) when no project
-            // window with tabs is frontmost, keeping note windows' Cmd+W = close window.
+            // Replacing .saveItem removes the system Close (Cmd+W) along with Save et al,
+            // so the ONE Cmd+W in the app is our unified item below — it routes to
+            // closeTab when a project window with tabs is focused, performClose otherwise.
+            // A DEBUG launch assertion in AppDelegate verifies the single-Cmd+W invariant.
             CommandGroup(replacing: .saveItem) { ProjectFileCommands() }
             CommandGroup(after: .toolbar) {
                 Menu("Language") { LanguageCommands() }
@@ -130,19 +131,28 @@ private struct OpenRecentCommands: View {
     }
 }
 
-/// Save / Close Tab for the frontmost project window. Disabled when no project window
-/// with tabs is focused, so Cmd+W falls through to AppKit's default window Close (note
-/// windows keep their normal close behaviour).
+/// Save + the app's single, unified Cmd+W. Save targets the focused project window's
+/// selected tab (disabled otherwise). Cmd+W is one always-enabled item that routes:
+/// focused project window with tabs → close the selected tab (with dirty guard);
+/// anything else → performClose on the key window, i.e. the standard Close behaviour
+/// note windows had before. One binding, deterministic — never two competing items.
 private struct ProjectFileCommands: View {
     @FocusedValue(\.projectViewModel) private var project
+
+    private var hasTabs: Bool { project?.hasTabs == true }
 
     var body: some View {
         Button("Save") { project?.saveSelectedTab() }
             .keyboardShortcut("s", modifiers: .command)
-            .disabled(project?.hasTabs != true)
-        Button("Close Tab") { project?.requestCloseSelectedTab() }
-            .keyboardShortcut("w", modifiers: .command)
-            .disabled(project?.hasTabs != true)
+            .disabled(!hasTabs)
+        Button(hasTabs ? "Close Tab" : "Close") {
+            if let project, project.hasTabs {
+                project.requestCloseSelectedTab()
+            } else {
+                NSApp.keyWindow?.performClose(nil)
+            }
+        }
+        .keyboardShortcut("w", modifiers: .command)
     }
 }
 
@@ -180,6 +190,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppModel.shared.restoreSession()
+
+        #if DEBUG
+        // Invariant behind the unified Cmd+W: replacing .saveItem must have removed the
+        // system Close item, leaving exactly one plain-Cmd+W binding in the whole menu
+        // bar (Close All is Option+Cmd+W and doesn't count). Delayed a beat so SwiftUI
+        // has finished building the menu.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            func plainCmdW(in menu: NSMenu) -> [NSMenuItem] {
+                menu.items.flatMap { item -> [NSMenuItem] in
+                    var found = item.submenu.map(plainCmdW(in:)) ?? []
+                    if item.keyEquivalent == "w", item.keyEquivalentModifierMask == .command {
+                        found.append(item)
+                    }
+                    return found
+                }
+            }
+            let items = NSApp.mainMenu.map(plainCmdW(in:)) ?? []
+            assert(items.count == 1, "Expected exactly one Cmd+W menu item, found: \(items.map(\.title))")
+        }
+        #endif
     }
 
     /// Guard quit against unsaved *file* documents (notes autosave and flush on their own
@@ -199,8 +229,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Cancel")
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            for vm in dirty { try? vm.save() }
-            return .terminateNow
+            // Any save failure (disk full, read-only…) cancels the quit so nothing is
+            // silently lost; the helper names the files that couldn't be written.
+            return FileEditorViewModel.saveAllReportingFailures(dirty) ? .terminateNow : .terminateCancel
         case .alertSecondButtonReturn:
             return .terminateNow
         default:

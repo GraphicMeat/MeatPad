@@ -18,8 +18,10 @@ final class ProjectViewModel: ObservableObject {
     /// At-most-one-visible per tab; the host shows `banners[selectedTab]`.
     @Published var banners: [URL: Banner] = [:]
 
-    /// Set via `WindowAccessor` so the dirty-close/save sheets attach to this window.
+    /// Set via `attach(window:)` so the dirty-close/save sheets attach to this window.
     weak var window: NSWindow?
+    /// `NSWindow.delegate` is weak — this keeps the close-guard proxy alive.
+    private var closeGuard: ProjectWindowCloseGuard?
 
     /// URLs where the user chose "Keep Mine" for the current on-disk revision — suppresses
     /// re-nagging on every window-key until the doc is next saved/reverted (mtime resets).
@@ -45,6 +47,17 @@ final class ProjectViewModel: ObservableObject {
             selectedTab = pending
             AppModel.shared.pendingFileOpen = nil
         }
+    }
+
+    /// Hooks into the hosting window: stashes it for sheets and installs the
+    /// dirty-tab guard on the red close button (`windowShouldClose`). The guard wraps
+    /// SwiftUI's own window delegate so its behaviours keep working.
+    func attach(window: NSWindow) {
+        self.window = window
+        guard closeGuard == nil else { return }
+        let closeGuard = ProjectWindowCloseGuard(viewModel: self, wrapping: window.delegate)
+        self.closeGuard = closeGuard
+        window.delegate = closeGuard
     }
 
     func open(file: URL) {
@@ -132,8 +145,32 @@ final class ProjectViewModel: ObservableObject {
                     banners[url] = nil
                 }
             case .deleted:
-                banners[url] = .deleted
+                if !dismissedChanges.contains(url) { banners[url] = .deleted }
             }
+        }
+    }
+
+    /// Red-button close guard: true = let the window close. Dirty tabs raise one summary
+    /// alert (modal — `windowShouldClose` needs a synchronous answer).
+    func confirmWindowClose() -> Bool {
+        let dirty = tabs.compactMap { EditorRegistry.shared.fileViewModel(for: $0) }.filter(\.isDirty)
+        guard !dirty.isEmpty else { return true }
+
+        let alert = NSAlert()
+        alert.messageText = dirty.count == 1
+            ? "1 document has unsaved changes."
+            : "\(dirty.count) documents have unsaved changes."
+        alert.informativeText = "Do you want to save your changes before closing?"
+        alert.addButton(withTitle: "Save All & Close")
+        alert.addButton(withTitle: "Discard & Close")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return FileEditorViewModel.saveAllReportingFailures(dirty)
+        case .alertSecondButtonReturn:
+            return true
+        default:
+            return false
         }
     }
 
@@ -143,13 +180,11 @@ final class ProjectViewModel: ObservableObject {
         dismissedChanges.remove(url)
     }
 
-    func keepMine(_ url: URL) {
-        banners[url] = nil
-        dismissedChanges.insert(url)
-    }
-
+    /// "Keep Mine" / "Dismiss": hide the banner and stop re-raising it on every
+    /// window-key until the doc is next saved/reverted/reopened.
     func dismissBanner(_ url: URL) {
         banners[url] = nil
+        dismissedChanges.insert(url)
     }
 
     private func presentError(_ error: Error, verb: String, url: URL) {
@@ -159,5 +194,39 @@ final class ProjectViewModel: ObservableObject {
         alert.addButton(withTitle: "OK")
         if let window { alert.beginSheetModal(for: window, completionHandler: nil) }
         else { alert.runModal() }
+    }
+}
+
+/// `NSWindowDelegate` proxy installed on a project window: intercepts `windowShouldClose`
+/// for the dirty-tab guard and forwards every other delegate call to SwiftUI's original
+/// delegate via `forwardingTarget`, so window restoration/tabbing behaviours survive.
+final class ProjectWindowCloseGuard: NSObject, NSWindowDelegate {
+    private weak var viewModel: ProjectViewModel?
+    /// SwiftUI keeps its own strong reference to its delegate; weak here avoids a cycle.
+    private weak var original: NSWindowDelegate?
+
+    init(viewModel: ProjectViewModel, wrapping original: NSWindowDelegate?) {
+        self.viewModel = viewModel
+        self.original = original
+    }
+
+    override func responds(to aSelector: Selector!) -> Bool {
+        super.responds(to: aSelector) || original?.responds(to: aSelector) == true
+    }
+
+    override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        if original?.responds(to: aSelector) == true { return original }
+        return super.forwardingTarget(for: aSelector)
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Delegate callbacks arrive on the main thread; hop onto the actor explicitly
+        // (same pattern as the STTextViewDelegate callbacks).
+        let allowed = MainActor.assumeIsolated { viewModel?.confirmWindowClose() ?? true }
+        guard allowed else { return false }
+        if let original, original.responds(to: #selector(NSWindowDelegate.windowShouldClose(_:))) {
+            return original.windowShouldClose?(sender) ?? true
+        }
+        return true
     }
 }

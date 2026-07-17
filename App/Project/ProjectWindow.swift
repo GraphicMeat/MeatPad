@@ -37,7 +37,7 @@ private struct ProjectWindowAccessor: NSViewRepresentable {
         let view = NSView()
         DispatchQueue.main.async {
             guard let window = view.window else { return }
-            viewModel.window = window
+            viewModel.attach(window: window)
             context.coordinator.observe(window, viewModel: viewModel)
         }
         return view

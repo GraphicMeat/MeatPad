@@ -60,7 +60,7 @@ private struct EditorPane: View {
         case .changedOnDisk:
             BannerBar(message: "File changed on disk") {
                 Button("Reload") { project.reload(url) }
-                Button("Keep Mine") { project.keepMine(url) }
+                Button("Keep Mine") { project.dismissBanner(url) }
             }
         case .deleted:
             BannerBar(message: "File was deleted on disk") {

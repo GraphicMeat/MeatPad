@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Combine
 import MeatPadKit
 
@@ -41,4 +42,25 @@ final class FileEditorViewModel: ObservableObject {
     func save() throws { try document.save() }
     func revert() throws { try document.revert() }
     func checkExternalChange() -> ExternalChange { document.checkExternalChange() }
+
+    /// Saves every VM, collecting failures. All saved → true. Any failure → modal alert
+    /// naming the files that couldn't be written, returns false so the caller cancels
+    /// whatever destructive step (quit, window close) the save was gating.
+    static func saveAllReportingFailures(_ viewModels: [FileEditorViewModel]) -> Bool {
+        var failures: [(url: URL, error: Error)] = []
+        for vm in viewModels {
+            do { try vm.save() } catch { failures.append((vm.document.url, error)) }
+        }
+        guard !failures.isEmpty else { return true }
+
+        let alert = NSAlert()
+        alert.messageText = failures.count == 1
+            ? "Couldn't save “\(failures[0].url.lastPathComponent)”."
+            : "Couldn't save \(failures.count) documents."
+        alert.informativeText = failures
+            .map { "\($0.url.lastPathComponent): \($0.error.localizedDescription)" }
+            .joined(separator: "\n")
+        alert.runModal()
+        return false
+    }
 }
