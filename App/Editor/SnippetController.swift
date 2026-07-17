@@ -44,6 +44,9 @@ final class SnippetTextView: STTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if AppModel.shared.macroController.isRecording {
+            AppModel.shared.macroController.record(event)
+        }
         if event.keyCode == 49, // kVK_Space
            // Ignore .capsLock (part of deviceIndependentFlagsMask): Ctrl+Space must fire
            // with Caps Lock engaged too.

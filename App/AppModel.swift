@@ -15,12 +15,16 @@ final class AppModel: ObservableObject {
     let snippetLibrary: SnippetLibrary
     /// Saved shell commands, backed by the sibling `Commands` directory.
     let commandStore: CommandStore
+    /// Saved keystroke macros, backed by the sibling `Macros` directory.
+    let macroStore: MacroStore
     /// User themes, backed by the sibling `Themes` directory. `BuiltinThemes.all` is
     /// always available through it too (see `ThemeStore.allThemes`).
     let themeStore: ThemeStore
     /// App-wide shell command runner (one command at a time), shared by the Commands
     /// menu, the filter sheet, and the output panels.
     let commandExecutor = CommandExecutor()
+    /// Keystroke recorder/player, shared by the Commands menu and the editor's key tap.
+    let macroController = MacroController()
     @Published var theme: Theme {
         didSet { UserDefaults.standard.set(theme.id, forKey: Self.themeDefaultsKey) }
     }
@@ -81,6 +85,8 @@ final class AppModel: ObservableObject {
         snippetLibrary = SnippetLibrary(userDirectory: snippetsDir)
         let commandsDir = NoteStore.defaultRoot().deletingLastPathComponent().appendingPathComponent("Commands", isDirectory: true)
         commandStore = CommandStore(directory: commandsDir)
+        let macrosDir = NoteStore.defaultRoot().deletingLastPathComponent().appendingPathComponent("Macros", isDirectory: true)
+        macroStore = MacroStore(directory: macrosDir)
         let themesDir = NoteStore.defaultRoot().deletingLastPathComponent().appendingPathComponent("Themes", isDirectory: true)
         let themeStore = ThemeStore(directory: themesDir)
         self.themeStore = themeStore

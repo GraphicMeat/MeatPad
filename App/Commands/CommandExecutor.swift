@@ -33,6 +33,9 @@ struct EditorCommandContext {
     let caretOffset: () -> Int
     let replaceSelection: (String) -> Void
     let insertAtCaret: (String) -> Void
+    /// Direct access to the focused editor's STTextView — for actions (macro replay) that
+    /// need the view itself rather than one of the text-mutation closures above.
+    let textView: () -> STTextView?
 
     /// Standard context over an editor's STTextView. `fileURL`/`projectRoot` are nil for notes.
     @MainActor
@@ -67,7 +70,8 @@ struct EditorCommandContext {
             insertAtCaret: { output in
                 guard let tv = textView() else { return }
                 tv.insertText(output, replacementRange: NSRange(location: tv.textSelection.location, length: 0))
-            }
+            },
+            textView: textView
         )
     }
 

@@ -58,6 +58,8 @@ struct MeatPadApp: App {
             CommandMenu("Commands") {
                 SavedCommandItems()
                 Divider()
+                MacroCommandItems()
+                Divider()
                 FilterCommandItems()
                 Divider()
                 InsertSnippetCommands()
@@ -226,6 +228,60 @@ private struct SavedCommandItems: View {
     private func run(_ command: SavedCommand) {
         guard let context else { return }
         AppModel.shared.commandExecutor.run(command, context: context)
+    }
+}
+
+/// Commands ▸ macro record/replay: Start/Stop Recording (Cmd+Opt+M), Replay Last Macro
+/// (Cmd+Shift+M), Save Last Macro As… (name prompt → `macroStore.add`), and any saved
+/// macros listed below (click replays). Replay always targets the focused editor.
+private struct MacroCommandItems: View {
+    @FocusedValue(\.editorCommandContext) private var context
+    @ObservedObject private var controller = AppModel.shared.macroController
+    @ObservedObject private var store = AppModel.shared.macroStore
+
+    var body: some View {
+        Button(controller.isRecording ? "Stop Recording" : "Start Recording Macro") {
+            controller.isRecording ? controller.stopRecording() : controller.startRecording()
+        }
+        .keyboardShortcut("m", modifiers: [.command, .option])
+
+        Button("Replay Last Macro") { replay(controller.lastMacro) }
+            .keyboardShortcut("m", modifiers: [.command, .shift])
+            .disabled(controller.lastMacro.isEmpty || context == nil)
+
+        Button("Save Last Macro As…") { promptSaveLastMacro() }
+            .disabled(controller.lastMacro.isEmpty)
+
+        if !store.macros.isEmpty {
+            Divider()
+            ForEach(store.macros) { macro in
+                Button(macro.name) { replay(macro.events) }
+                    .disabled(context == nil)
+            }
+        }
+    }
+
+    private func replay(_ events: [KeyEventRecord]) {
+        guard let context, let textView = context.textView() else { return }
+        controller.replay(events, into: textView)
+    }
+
+    /// Blocking `NSAlert` + accessory text field — same modal style the rest of the app
+    /// uses for one-off prompts (see `ProjectViewModel`'s save/close alerts); no sheet
+    /// plumbing needed since this isn't tied to any particular window.
+    private func promptSaveLastMacro() {
+        let alert = NSAlert()
+        alert.messageText = "Save Macro As"
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Macro Name"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        try? store.add(Macro(name: name, events: controller.lastMacro))
     }
 }
 
