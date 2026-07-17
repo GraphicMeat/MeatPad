@@ -59,6 +59,33 @@ final class WordCompleterTests: XCTestCase {
         XCTAssertEqual(result, ["note", "normal"], "nearest occurrence of the duplicated word should win the ranking")
     }
 
+    // MARK: - Distance measured from nearest edge, not word start
+
+    func testLongWordBeforeCaretRankedByNearestEdgeNotStart() {
+        // Caret sits right after "notification ", with 5 more spaces before
+        // "notepad". "notification" is only 1 unit from the caret at its
+        // nearest edge (its end); "notepad" is 5 units away at its nearest
+        // edge (its start). Measuring from "notification"'s START instead
+        // (the bug) inflates its distance to 13, wrongly ranking "notepad"
+        // first. The truly-adjacent word must win.
+        let text = "notification " + "     " + "notepad"
+        let caretOffset = "notification ".utf16.count // right after the single space, 5 more spaces before "notepad"
+        let result = WordCompleter.complete(prefix: "not", in: text, caretOffset: caretOffset)
+        XCTAssertEqual(result, ["notification", "notepad"], "word nearest the caret by edge distance should rank first")
+    }
+
+    func testUTF16DistanceAcrossMultiUnitCharacters() {
+        // An emoji between "notion" and the caret is 2 UTF-16 code units.
+        // Caret sits right after the emoji, 3 spaces before "notepad": edge
+        // distance to "notion" is 2, to "notepad" is 3 — "notion" nearer.
+        // Locks in that distance is measured in UTF-16 units (matching
+        // caretOffset's unit) across a surrogate pair, not Character count.
+        let text = "notion😀   notepad"
+        let caretOffset = "notion😀".utf16.count // right after the emoji, 3 spaces before "notepad"
+        let result = WordCompleter.complete(prefix: "not", in: text, caretOffset: caretOffset)
+        XCTAssertEqual(result, ["notion", "notepad"], "nearer word (by UTF-16 distance) should rank first across a multi-unit character")
+    }
+
     // MARK: - Limit
 
     func testLimitIsRespected() {

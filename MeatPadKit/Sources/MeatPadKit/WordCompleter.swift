@@ -40,7 +40,9 @@ public enum WordCompleter {
             if word == prefix { continue }
             guard word.lowercased().hasPrefix(lowerPrefix) else { continue }
 
-            let distance = abs(start - caretOffset)
+            // Distance to the word's nearest edge, not its start — a long word
+            // fully before the caret is only as far as its end, not its start.
+            let distance = caretOffset < start ? start - caretOffset : caretOffset - end
             if let existing = bestDistance[word] {
                 if distance < existing { bestDistance[word] = distance }
             } else {
