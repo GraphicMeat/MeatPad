@@ -16,6 +16,12 @@ struct ThemesSettingsView: View {
     @State private var storeError: String?
     @State private var newCaptureName: String = ""
 
+    /// Working copy of the selected theme: every color-well/toggle edit updates this
+    /// immediately (so the preview + `appModel.theme` hot-reload per tick) while the
+    /// actual disk write is debounced — see `saveDebouncer`.
+    @State private var draft: Theme?
+    @State private var saveDebouncer = Debouncer(delay: 0.4)
+
     private static let sampleCode = """
     // Sample code for live theme preview
     import Foundation
@@ -35,7 +41,15 @@ struct ThemesSettingsView: View {
             Divider()
             editor
         }
-        .onAppear { if selection == nil { selection = appModel.theme.id } }
+        .onAppear {
+            if selection == nil { selection = appModel.theme.id }
+            draft = storedTheme
+        }
+        .onChange(of: selection) { _, _ in
+            saveDebouncer.flush()
+            draft = storedTheme
+        }
+        .onDisappear { saveDebouncer.flush() }
         .alert("Theme Error", isPresented: Binding(get: { storeError != nil }, set: { if !$0 { storeError = nil } })) {
             Button("OK") { storeError = nil }
         } message: {
@@ -80,7 +94,7 @@ struct ThemesSettingsView: View {
         HStack(spacing: 4) {
             Button { duplicateSelected() } label: { Image(systemName: "plus.square.on.square") }
                 .help("Duplicate as editable copy")
-                .disabled(selectedTheme == nil)
+                .disabled(selection == nil)
             Button { deleteSelected() } label: { Image(systemName: "minus") }
                 .help("Delete theme")
                 .disabled(!isEditable)
@@ -96,7 +110,7 @@ struct ThemesSettingsView: View {
 
     @ViewBuilder
     private var editor: some View {
-        if let theme = selectedTheme {
+        if let theme = editingTheme {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
@@ -166,7 +180,18 @@ struct ThemesSettingsView: View {
 
     // MARK: - Selection helpers
 
-    private var selectedTheme: Theme? { selection.flatMap { themeStore.theme(id: $0) } }
+    private var storedTheme: Theme? { selection.flatMap { themeStore.theme(id: $0) } }
+
+    /// The theme the editor renders: the in-flight `draft` while it matches the current
+    /// selection (so per-tick color edits show up immediately without waiting on the
+    /// debounced disk write), falling back to the stored copy right after a selection
+    /// change / on first appear, before `draft` has caught up.
+    private var editingTheme: Theme? {
+        guard let id = selection else { return nil }
+        if let draft, draft.id == id { return draft }
+        return storedTheme
+    }
+
     private var isEditable: Bool { selection.map { !themeStore.isBuiltin(id: $0) } ?? false }
 
     /// Capture list: sorted union of every builtin theme's token keys plus any keys
@@ -187,8 +212,14 @@ struct ThemesSettingsView: View {
 
     private func deleteSelected() {
         guard let id = selection, isEditable else { return }
+        // Drop (not flush) any pending debounced write for this theme first — flushing
+        // here would resurrect the file `delete` is about to remove.
+        saveDebouncer.cancel()
         do {
             try themeStore.delete(id: id)
+            // The active theme's underlying file is gone; reflect that in-session
+            // immediately rather than silently reverting to it on next launch.
+            if appModel.theme.id == id { appModel.theme = BuiltinThemes.defaultDark }
             selection = nil
         } catch {
             storeError = "\(error)"
@@ -220,15 +251,20 @@ struct ThemesSettingsView: View {
         }
     }
 
-    /// Writes `theme` back to the store; when it's the currently active theme, also
-    /// reassigns `appModel.theme` so every open editor re-themes live (existing P1
-    /// plumbing — `AppModel.theme`'s `didSet` persists it).
-    private func persist(_ theme: Theme) {
-        do {
-            try themeStore.save(theme)
-            if appModel.theme.id == theme.id { appModel.theme = theme }
-        } catch {
-            storeError = "\(error)"
+    /// Applies an edit immediately (the `draft` + `appModel.theme` reassignment, so the
+    /// preview and every open editor re-theme live on every NSColorPanel drag tick), but
+    /// debounces the actual disk write — a color drag can fire dozens of times a second
+    /// and doesn't need a synchronous JSON write on every one. `onChange(of: selection)`
+    /// and `.onDisappear` flush any pending write so an edit can't be lost.
+    private func applyEdit(_ theme: Theme) {
+        draft = theme
+        if appModel.theme.id == theme.id { appModel.theme = theme }
+        saveDebouncer.call {
+            do {
+                try themeStore.save(theme)
+            } catch {
+                storeError = "\(error)"
+            }
         }
     }
 
@@ -239,7 +275,7 @@ struct ThemesSettingsView: View {
         if updated.tokenColors[name] == nil {
             updated.tokenColors[name] = theme.editorForeground
         }
-        persist(updated)
+        applyEdit(updated)
         newCaptureName = ""
     }
 
@@ -251,7 +287,7 @@ struct ThemesSettingsView: View {
             set: { newColor in
                 var updated = theme
                 updated[keyPath: keyPath] = RGBAColor(newColor)
-                persist(updated)
+                applyEdit(updated)
             }
         )
     }
@@ -262,7 +298,7 @@ struct ThemesSettingsView: View {
             set: { newValue in
                 var updated = theme
                 updated[keyPath: keyPath] = newValue
-                persist(updated)
+                applyEdit(updated)
             }
         )
     }
@@ -273,7 +309,7 @@ struct ThemesSettingsView: View {
             set: { newColor in
                 var updated = theme
                 updated.tokenColors[capture] = RGBAColor(newColor)
-                persist(updated)
+                applyEdit(updated)
             }
         )
     }
