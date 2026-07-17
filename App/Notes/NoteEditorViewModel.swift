@@ -105,7 +105,15 @@ final class NoteEditorViewModel: ObservableObject {
 
         if let saved = store.notes.first(where: { $0.id == noteID })?.windowFrame {
             let frame = NSRectFromString(saved)
-            if !frame.isEmpty { window.setFrame(frame, display: true) }
+            // Only restore if the saved rect still lands on a connected screen — e.g. the
+            // monitor it was last positioned on got disconnected. Otherwise skip setFrame
+            // entirely and let the system choose default placement (re-saving that default
+            // frame on the next move/resize heals the sidecar instead of persisting the
+            // off-screen rect forever).
+            let bestScreen = NSScreen.screens.first { $0.visibleFrame.intersects(frame) }
+            if !frame.isEmpty, let bestScreen {
+                window.setFrame(window.constrainFrameRect(frame, to: bestScreen), display: true)
+            }
         }
 
         let center = NotificationCenter.default
