@@ -30,6 +30,11 @@ final class AppModel: ObservableObject {
     /// SwiftUI environment is otherwise reachable.
     var openWindowAction: OpenWindowAction?
 
+    /// Set just before opening a project window when the user picked a *file* (Cmd+O):
+    /// the parent opens as the project and the new `ProjectViewModel` consumes this to
+    /// pre-open the file as a tab. Plain var (consumed once, imperatively).
+    var pendingFileOpen: URL?
+
     private var openNoteIDs: [UUID] = []
     private var browserOpen = false
     private let sessionDebouncer = Debouncer(delay: 0.5)

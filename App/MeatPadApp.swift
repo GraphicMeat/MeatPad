@@ -31,6 +31,10 @@ struct MeatPadApp: App {
                     .keyboardShortcut("o", modifiers: .command)
                 OpenRecentCommands(openProject: openProject)
             }
+            // Save / Close Tab routed to the focused project window. Both are disabled
+            // (and so fall through to the default window Close / no-op) when no project
+            // window with tabs is frontmost, keeping note windows' Cmd+W = close window.
+            CommandGroup(replacing: .saveItem) { ProjectFileCommands() }
             CommandGroup(after: .toolbar) {
                 Menu("Language") { LanguageCommands() }
             }
@@ -74,9 +78,9 @@ struct MeatPadApp: App {
         openWindow(value: note.id)
     }
 
-    /// Directory → open as a project. File → P2 ponytail: open the file's parent folder
-    /// as the project; single-file windows with the file pre-opened arrive with Task 7's
-    /// tab host.
+    /// Directory → open as a project. File → open the file's parent folder as the project
+    /// and pre-open the file as a tab (via `AppModel.pendingFileOpen`, consumed by the new
+    /// `ProjectViewModel`).
     private func openProjectPanel() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -84,7 +88,12 @@ struct MeatPadApp: App {
         panel.allowsMultipleSelection = false
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            openProject(url.hasDirectoryPath ? url : url.deletingLastPathComponent())
+            if url.hasDirectoryPath {
+                openProject(url)
+            } else {
+                AppModel.shared.pendingFileOpen = url
+                openProject(url.deletingLastPathComponent())
+            }
         }
     }
 
@@ -118,6 +127,22 @@ private struct OpenRecentCommands: View {
                 Button("Clear Menu") { appModel.clearRecentProjects() }
             }
         }
+    }
+}
+
+/// Save / Close Tab for the frontmost project window. Disabled when no project window
+/// with tabs is focused, so Cmd+W falls through to AppKit's default window Close (note
+/// windows keep their normal close behaviour).
+private struct ProjectFileCommands: View {
+    @FocusedValue(\.projectViewModel) private var project
+
+    var body: some View {
+        Button("Save") { project?.saveSelectedTab() }
+            .keyboardShortcut("s", modifiers: .command)
+            .disabled(project?.hasTabs != true)
+        Button("Close Tab") { project?.requestCloseSelectedTab() }
+            .keyboardShortcut("w", modifiers: .command)
+            .disabled(project?.hasTabs != true)
     }
 }
 
@@ -155,6 +180,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppModel.shared.restoreSession()
+    }
+
+    /// Guard quit against unsaved *file* documents (notes autosave and flush on their own
+    /// `willTerminate` path, untouched). One summary alert covers all dirty files.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let dirty = EditorRegistry.shared.allFileViewModels().filter { $0.isDirty }
+        guard !dirty.isEmpty else { return .terminateNow }
+
+        let alert = NSAlert()
+        let count = dirty.count
+        alert.messageText = count == 1
+            ? "1 document has unsaved changes."
+            : "\(count) documents have unsaved changes."
+        alert.informativeText = "Do you want to save your changes before quitting?"
+        alert.addButton(withTitle: "Save All")
+        alert.addButton(withTitle: "Discard All")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            for vm in dirty { try? vm.save() }
+            return .terminateNow
+        case .alertSecondButtonReturn:
+            return .terminateNow
+        default:
+            return .terminateCancel
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

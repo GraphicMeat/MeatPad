@@ -3,6 +3,14 @@ import AppKit
 import MeatPadKit
 import STTextView
 
+/// One-shot "scroll to + select this range" command. A fresh `token` (new UUID) marks a
+/// new request; the same token is applied at most once so a live selection is never
+/// clobbered on subsequent view updates. Consumed by Task 9 (search-result jumps).
+struct RevealTarget: Equatable {
+    let token: UUID
+    let range: NSRange
+}
+
 /// SwiftUI wrapper around STTextView (TextKit 2). Signature is consumed by later tasks.
 struct CodeEditor: NSViewRepresentable {
     @Binding var text: String
@@ -14,6 +22,9 @@ struct CodeEditor: NSViewRepresentable {
     /// persisted cursor). Applied once in `makeNSView` only — never in `updateNSView`,
     /// so it can never fight a live selection the user is making.
     var initialCursor: Int? = nil
+    /// When set with a token the Coordinator hasn't seen yet, scroll to + select the
+    /// range exactly once. Harmlessly `nil` for tabs/notes.
+    var reveal: RevealTarget? = nil
     var onCursorChange: (Int) -> Void
 
     /// SF Mono at the given point size.
@@ -64,12 +75,22 @@ struct CodeEditor: NSViewRepresentable {
         coord.applyFontSize(fontSize)
         coord.applySoftWrap(softWrap)
         coord.applyTheme(theme)
+
+        // One-shot reveal: apply once per new token, clamped to the current text length.
+        if let reveal, coord.lastRevealToken != reveal.token {
+            coord.lastRevealToken = reveal.token
+            if reveal.range.upperBound <= (textView.text as NSString? ?? "").length {
+                textView.textSelection = reveal.range
+                textView.scrollRangeToVisible(reveal.range)
+            }
+        }
     }
 
     @MainActor
     final class Coordinator: NSObject, STTextViewDelegate {
         var parent: CodeEditor
         weak var textView: STTextView?
+        var lastRevealToken: UUID?
         private(set) var languageID: String?
         private var highlighter: Highlighter?
         private var lastTheme: Theme?
