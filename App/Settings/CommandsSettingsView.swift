@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import MeatPadKit
 
 /// Settings ▸ Commands: the saved shell command library. Mirrors the Snippets pane:
@@ -8,6 +10,7 @@ struct CommandsSettingsView: View {
     @State private var selection: UUID?
     @State private var editingCommand: SavedCommand?
     @State private var storeError: String?
+    @State private var bundleImportMessage: String?
 
     /// Plain-Cmd shortcuts the system menu already owns; a command claiming one still
     /// works from the menu (TextMate tradition) but gets a warning badge here.
@@ -36,6 +39,11 @@ struct CommandsSettingsView: View {
             Button("OK") { storeError = nil }
         } message: {
             Text(storeError ?? "")
+        }
+        .alert("Bundle Import", isPresented: Binding(get: { bundleImportMessage != nil }, set: { if !$0 { bundleImportMessage = nil } })) {
+            Button("OK") { bundleImportMessage = nil }
+        } message: {
+            Text(bundleImportMessage ?? "")
         }
     }
 
@@ -75,6 +83,7 @@ struct CommandsSettingsView: View {
                 .help("Delete command")
                 .disabled(selectedCommand == nil)
             Spacer()
+            Button("Import Bundle…") { BundleImportRunner.run { bundleImportMessage = $0 } }
             Button("Edit") { editingCommand = selectedCommand }
                 .disabled(selectedCommand == nil)
         }
@@ -176,5 +185,42 @@ private struct CommandEditorSheet: View {
                 }
             }
         )
+    }
+}
+
+/// Shared "Import Bundle…" flow for the Snippets and Commands panes. A `.tmbundle` can
+/// hold both snippets and commands, so importing one is a single operation that adds
+/// every result item to both `AppModel.shared.snippetLibrary` and `.commandStore`,
+/// regardless of which pane's toolbar button launched the panel.
+@MainActor
+enum BundleImportRunner {
+    static func run(completion: @escaping (String) -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        var types: [UTType] = [.folder]
+        if let tmbundle = UTType(filenameExtension: "tmbundle") { types.append(tmbundle) }
+        panel.allowedContentTypes = types
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            completion(importAndApply(from: url))
+        }
+    }
+
+    private static func importAndApply(from url: URL) -> String {
+        do {
+            let result = try BundleImporter.importBundle(at: url)
+            for snippet in result.snippets {
+                try AppModel.shared.snippetLibrary.add(snippet)
+            }
+            for command in result.commands {
+                try AppModel.shared.commandStore.add(command)
+            }
+            let skipped = result.skippedSnippets + result.skippedCommands
+            return "Imported \(result.snippets.count) snippets, \(result.commands.count) commands (\(skipped) skipped)"
+        } catch {
+            return "Couldn't import bundle: \(error)"
+        }
     }
 }

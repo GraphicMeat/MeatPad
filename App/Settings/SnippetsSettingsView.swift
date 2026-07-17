@@ -8,6 +8,7 @@ struct SnippetsSettingsView: View {
     @ObservedObject var library: SnippetLibrary
     @State private var selection: UUID?
     @State private var editingSnippet: Snippet?
+    @State private var bundleImportMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,6 +26,11 @@ struct SnippetsSettingsView: View {
                 onSave: { edited in try? library.add(edited); editingSnippet = nil },
                 onCancel: { editingSnippet = nil }
             )
+        }
+        .alert("Bundle Import", isPresented: Binding(get: { bundleImportMessage != nil }, set: { if !$0 { bundleImportMessage = nil } })) {
+            Button("OK") { bundleImportMessage = nil }
+        } message: {
+            Text(bundleImportMessage ?? "")
         }
     }
 
@@ -61,6 +67,7 @@ struct SnippetsSettingsView: View {
                 .help("Delete snippet")
                 .disabled(!selectedIsUser)
             Spacer()
+            Button("Import Bundle…") { BundleImportRunner.run { bundleImportMessage = $0 } }
             Button("Edit") { if let snippet = selectedSnippet { edit(snippet) } }
                 .disabled(!selectedIsUser)
         }
