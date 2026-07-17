@@ -93,11 +93,21 @@ private struct NoteDetailEditor: View {
     @EnvironmentObject private var appModel: AppModel
     @StateObject private var viewModel: NoteEditorViewModel
     @StateObject private var snippetController = SnippetController(library: AppModel.shared.snippetLibrary)
+    @ObservedObject private var executor = AppModel.shared.commandExecutor
     private let onOpenInNewWindow: () -> Void
 
     init(noteID: UUID, onOpenInNewWindow: @escaping () -> Void) {
         self.onOpenInNewWindow = onOpenInNewWindow
         _viewModel = StateObject(wrappedValue: EditorRegistry.shared.noteViewModel(for: noteID))
+    }
+
+    /// Keyed on the per-pane snippet controller — the note VM is registry-shared
+    /// across windows and would double-present the filter sheet.
+    private var filterSheetShown: Binding<Bool> {
+        Binding(
+            get: { executor.filterContext?.hostID == AnyHashable(ObjectIdentifier(snippetController)) },
+            set: { if !$0 { executor.filterContext = nil } }
+        )
     }
 
     var body: some View {
@@ -120,6 +130,17 @@ private struct NoteDetailEditor: View {
             }
         }
         .focusedSceneValue(\.snippetInsertion, SnippetInsertion(languageID: viewModel.language?.id, insert: { snippetController.insert($0) }))
+        .focusedSceneValue(\.editorCommandContext, EditorCommandContext.make(
+            hostID: ObjectIdentifier(snippetController),
+            panelCapable: false,
+            textView: snippetController.textView,
+            languageID: viewModel.language?.id
+        ))
+        .sheet(isPresented: filterSheetShown) {
+            if let context = executor.filterContext {
+                FilterCommandSheet(context: context, onDismiss: { executor.filterContext = nil })
+            }
+        }
         .toolbar {
             ToolbarItem {
                 Button("Open in New Window", action: onOpenInNewWindow)

@@ -15,9 +15,11 @@ struct NoteWindow: View {
     }
 
     /// True while the executor's filter request targets this note window's editor.
+    /// Keyed on the per-window snippet controller, NOT the note view model — the
+    /// registry shares one VM per note across windows, which would double-present.
     private var filterSheetShown: Binding<Bool> {
         Binding(
-            get: { executor.filterContext?.hostID == AnyHashable(ObjectIdentifier(viewModel)) },
+            get: { executor.filterContext?.hostID == AnyHashable(ObjectIdentifier(snippetController)) },
             set: { if !$0 { executor.filterContext = nil } }
         )
     }
@@ -43,7 +45,7 @@ struct NoteWindow: View {
         }
         .focusedSceneValue(\.snippetInsertion, SnippetInsertion(languageID: viewModel.language?.id, insert: { snippetController.insert($0) }))
         .focusedSceneValue(\.editorCommandContext, EditorCommandContext.make(
-            hostID: ObjectIdentifier(viewModel),
+            hostID: ObjectIdentifier(snippetController),
             panelCapable: false,
             textView: snippetController.textView,
             languageID: viewModel.language?.id
