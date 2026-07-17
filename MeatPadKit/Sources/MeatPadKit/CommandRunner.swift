@@ -133,10 +133,10 @@ public struct CommandRunner: Sendable {
             // racing SIGPIPE once the child exits), and doing it inline here would
             // delay arming the timeout timer and cancellation handler, hanging the
             // cooperative-pool thread with no kill path.
-            let fd = stdinPipe.fileHandleForWriting.fileDescriptor
+            let handle = stdinPipe.fileHandleForWriting
             let data = Data(stdin.utf8)
             DispatchQueue.global(qos: .utility).async {
-                Self.writeStdinAndClose(data, to: fd)
+                Self.writeStdinAndClose(data, to: handle)
             }
         }
 
@@ -150,6 +150,11 @@ public struct CommandRunner: Sendable {
                     // the deadline (terminationHandler racing this already-started
                     // work item, whose cancel() is now a no-op) gets misreported as
                     // timed out despite finishing on its own.
+                    // ponytail: residual race even with this guard — Process.isRunning
+                    // (checked inside terminate()) updates asynchronously off the actual
+                    // child exit, so a self-exited process right at the deadline can still
+                    // be mis-flagged timedOut=true. Boolean-only impact; accepted ceiling,
+                    // revisit if it ever matters.
                     if Self.terminate(process) {
                         timedOut.set(true)
                     }
@@ -198,11 +203,16 @@ public struct CommandRunner: Sendable {
         return true
     }
 
-    /// Writes `data` to `fd` in a retry loop, then always closes it — on success,
+    /// Writes `data` to `handle` in a retry loop, then always closes it — on success,
     /// on EPIPE (child exited without reading), or on any other error. SIGPIPE is
     /// ignored process-wide (see `sigpipeIgnored`), so a closed read end turns what
     /// would otherwise be a fatal signal into a plain EPIPE return from `write`.
-    private static func writeStdinAndClose(_ data: Data, to fd: Int32) {
+    /// Takes the `FileHandle` itself (not a raw fd) so this closure is what keeps it
+    /// alive — otherwise `FileHandle` closes its fd on dealloc, and a raw fd captured
+    /// here could be double-closed or, worse, closed after the descriptor number was
+    /// reused by an unrelated file.
+    private static func writeStdinAndClose(_ data: Data, to handle: FileHandle) {
+        let fd = handle.fileDescriptor
         data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             var ptr = raw.baseAddress
             var remaining = raw.count
@@ -218,7 +228,7 @@ public struct CommandRunner: Sendable {
                 }
             }
         }
-        close(fd)
+        try? handle.close()
     }
 }
 
