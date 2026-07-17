@@ -115,6 +115,42 @@ final class ProjectViewModel: ObservableObject {
 
     var hasTabs: Bool { !tabs.isEmpty }
 
+    #if DEBUG
+    private var tabFlipTimer: Timer?
+    /// Debug-only regression harness for the tab-switch constraint-feedback crash.
+    /// Gated by MEATPAD_TAB_FLIP_TEST=<cycles> (default 400) and
+    /// MEATPAD_TAB_FLIP_INTERVAL=<seconds> (default 0.08). When ≥2 tabs are open it
+    /// cycles `selectedTab` for N flips, then quits — surfacing the tab-switch
+    /// constraint-feedback crash without any UI automation.
+    func startTabFlipHarnessIfEnabled() {
+        let env = ProcessInfo.processInfo.environment
+        guard let raw = env["MEATPAD_TAB_FLIP_TEST"], tabFlipTimer == nil else { return }
+        guard tabs.count >= 2 else {
+            NSLog("[TABFLIP] skipped: only \(tabs.count) tab(s)")
+            return
+        }
+        let cycles = Int(raw) ?? 400
+        let interval = env["MEATPAD_TAB_FLIP_INTERVAL"].flatMap(Double.init) ?? 0.08
+        var remaining = cycles
+        var index = 0
+        NSLog("[TABFLIP] starting: \(cycles) flips @ \(interval)s over \(tabs.count) tabs")
+        tabFlipTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self, !self.tabs.isEmpty else { timer.invalidate(); return }
+                index = (index + 1) % self.tabs.count
+                self.selectedTab = self.tabs[index]
+                remaining -= 1
+                if remaining % 50 == 0 { NSLog("[TABFLIP] \(remaining) flips left") }
+                if remaining <= 0 {
+                    timer.invalidate()
+                    NSLog("[TABFLIP] DONE — no crash after \(cycles) flips")
+                    NSApp.terminate(nil)
+                }
+            }
+        }
+    }
+    #endif
+
     // MARK: - Save / close flows (files only)
 
     func saveSelectedTab() {

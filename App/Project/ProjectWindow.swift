@@ -46,7 +46,14 @@ struct ProjectWindow: View {
         .focusedSceneValue(\.projectViewModel, viewModel)
         .focusedSceneValue(\.projectSearchViewModel, searchViewModel)
         .background(ProjectWindowAccessor(viewModel: viewModel))
-        .onAppear { AppModel.shared.projectWindowDidAppear(viewModel) }
+        .onAppear {
+            AppModel.shared.projectWindowDidAppear(viewModel)
+            #if DEBUG
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                viewModel.startTabFlipHarnessIfEnabled()
+            }
+            #endif
+        }
         .onDisappear { AppModel.shared.projectWindowDidDisappear(viewModel) }
     }
 }
