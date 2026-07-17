@@ -27,6 +27,9 @@ struct MeatPadApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New Note") { createNote() }
                     .keyboardShortcut("n", modifiers: .command)
+                Button("Open…") { openProjectPanel() }
+                    .keyboardShortcut("o", modifiers: .command)
+                OpenRecentCommands(openProject: openProject)
             }
             CommandGroup(after: .toolbar) {
                 Menu("Language") { LanguageCommands() }
@@ -40,6 +43,12 @@ struct MeatPadApp: App {
                     .keyboardShortcut("g", modifiers: .command)
                 Button("Find Previous") { MeatPadApp.finder(.previousMatch) }
                     .keyboardShortcut("g", modifiers: [.command, .shift])
+            }
+        }
+
+        WindowGroup("Project", for: URL.self) { $folderURL in
+            if let folderURL {
+                ProjectWindow(root: folderURL)
             }
         }
 
@@ -65,10 +74,50 @@ struct MeatPadApp: App {
         openWindow(value: note.id)
     }
 
+    /// Directory → open as a project. File → P2 ponytail: open the file's parent folder
+    /// as the project; single-file windows with the file pre-opened arrive with Task 7's
+    /// tab host.
+    private func openProjectPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            openProject(url.hasDirectoryPath ? url : url.deletingLastPathComponent())
+        }
+    }
+
+    private func openProject(_ url: URL) {
+        openWindow(value: url)
+        AppModel.shared.recordRecentProject(url)
+    }
+
     static func finder(_ action: NSTextFinder.Action) {
         let item = NSMenuItem()
         item.tag = action.rawValue
         NSApp.sendAction(#selector(STTextView.performTextFinderAction(_:)), to: nil, from: item)
+    }
+}
+
+/// File ▸ Open Recent: MRU project folders from `AppModel`, plus "Clear Menu" once
+/// there's anything to clear.
+private struct OpenRecentCommands: View {
+    @ObservedObject private var appModel = AppModel.shared
+    let openProject: (URL) -> Void
+
+    var body: some View {
+        Menu("Open Recent") {
+            ForEach(appModel.recentProjectPaths, id: \.self) { path in
+                Button(URL(fileURLWithPath: path).lastPathComponent) {
+                    openProject(URL(fileURLWithPath: path))
+                }
+            }
+            if !appModel.recentProjectPaths.isEmpty {
+                Divider()
+                Button("Clear Menu") { appModel.clearRecentProjects() }
+            }
+        }
     }
 }
 

@@ -18,6 +18,11 @@ final class AppModel: ObservableObject {
     @Published var softWrap: Bool {
         didSet { UserDefaults.standard.set(softWrap, forKey: Self.softWrapDefaultsKey) }
     }
+    /// MRU list of project folder paths, most recent first, capped at 10 — backs the
+    /// File ▸ Open Recent submenu.
+    @Published private(set) var recentProjectPaths: [String] {
+        didSet { UserDefaults.standard.set(recentProjectPaths, forKey: Self.recentProjectsDefaultsKey) }
+    }
 
     /// Bridge to SwiftUI's `openWindow` action, captured once from `MeatPadApp.body`
     /// (which runs before AppKit's `applicationDidFinishLaunching`) so the
@@ -32,6 +37,7 @@ final class AppModel: ObservableObject {
     private static let themeDefaultsKey = "themeID"
     private static let fontSizeDefaultsKey = "editorFontSize"
     private static let softWrapDefaultsKey = "softWrap"
+    private static let recentProjectsDefaultsKey = "recentProjectPaths"
 
     /// Sibling of the Notes directory (not inside it, so it's never mistaken for a note).
     private static var sessionURL: URL {
@@ -52,6 +58,22 @@ final class AppModel: ObservableObject {
 
         let savedSoftWrap = UserDefaults.standard.object(forKey: Self.softWrapDefaultsKey) as? Bool
         softWrap = savedSoftWrap ?? true
+
+        recentProjectPaths = UserDefaults.standard.stringArray(forKey: Self.recentProjectsDefaultsKey) ?? []
+    }
+
+    // MARK: - Recent projects
+
+    /// Moves `url` to the front of the MRU list (adding it if new), capped at 10.
+    func recordRecentProject(_ url: URL) {
+        var paths = recentProjectPaths
+        paths.removeAll { $0 == url.path }
+        paths.insert(url.path, at: 0)
+        recentProjectPaths = Array(paths.prefix(10))
+    }
+
+    func clearRecentProjects() {
+        recentProjectPaths = []
     }
 
     // MARK: - Session tracking
