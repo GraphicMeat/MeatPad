@@ -10,6 +10,10 @@ struct CodeEditor: NSViewRepresentable {
     var theme: Theme
     var fontSize: CGFloat = 13
     var softWrap: Bool = true
+    /// UTF-16 offset to place the caret at on first appearance (e.g. the note's
+    /// persisted cursor). Applied once in `makeNSView` only — never in `updateNSView`,
+    /// so it can never fight a live selection the user is making.
+    var initialCursor: Int? = nil
     var onCursorChange: (Int) -> Void
 
     /// SF Mono at the given point size.
@@ -30,6 +34,9 @@ struct CodeEditor: NSViewRepresentable {
         textView.highlightSelectedLine = true
 
         textView.text = text
+        if let initialCursor, initialCursor <= (text as NSString).length {
+            textView.textSelection = NSRange(location: initialCursor, length: 0)
+        }
         coord.rebuildHighlighter(languageID: language?.id)
         coord.applyFontSize(fontSize)
         coord.applySoftWrap(softWrap)

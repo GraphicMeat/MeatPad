@@ -37,6 +37,11 @@ final class NoteEditorViewModel: ObservableObject {
         self.noteID = noteID
         self.store = store
         self.exists = store.notes.contains { $0.id == noteID }
+        // Eager, not deferred to onAppear: CodeEditor reads `text`/`cursor` at its very
+        // first SwiftUI render (before onAppear can fire) to restore the initial caret
+        // position, so those need to be populated synchronously here. load() is a cheap
+        // local read; the redundant onAppear call below stays as a no-op safety net.
+        load()
     }
 
     deinit {
@@ -45,7 +50,8 @@ final class NoteEditorViewModel: ObservableObject {
         }
     }
 
-    /// Loads the note's contents once, on the editor's first appearance.
+    /// Loads the note's contents once. Called eagerly from init (see above); guarded by
+    /// `loaded` so a repeat call from onAppear is a no-op.
     func load() {
         guard !loaded, exists else { return }
         loaded = true
@@ -66,8 +72,10 @@ final class NoteEditorViewModel: ObservableObject {
     }
 
     func cursorDidChange(_ location: Int) {
+        // No scheduleSave: every caret move (even just opening/clicking a note) would
+        // otherwise bump `modified`, rewrite the file, and re-sort the recency lists.
+        // The cursor rides along on the next content save/flush instead.
         cursor = location
-        scheduleSave()
     }
 
     func setLanguage(_ id: String?) {

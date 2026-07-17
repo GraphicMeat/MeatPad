@@ -21,6 +21,7 @@ struct NoteWindow: View {
                     theme: appModel.theme,
                     fontSize: appModel.fontSize,
                     softWrap: appModel.softWrap,
+                    initialCursor: appModel.noteStore.notes.first(where: { $0.id == viewModel.noteID })?.cursor,
                     onCursorChange: viewModel.cursorDidChange
                 )
             } else {
