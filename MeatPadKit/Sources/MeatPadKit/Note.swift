@@ -29,8 +29,11 @@ extension Note {
     /// "New Note" if the contents have no non-empty line. Public so the app can recompute
     /// a live window title on every keystroke, without waiting for the debounced autosave.
     public static func title(fromContents contents: String) -> String {
-        for line in contents.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+        // `split(separator: "\n")` alone misses CRLF content: "\r\n" is a single
+        // extended grapheme cluster in Swift, not a "\n" Character, so it never
+        // matches that separator. `\.isNewline` matches \n, \r, and \r\n alike.
+        for line in contents.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { return trimmed }
         }
         return "New Note"

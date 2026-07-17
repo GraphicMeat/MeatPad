@@ -76,6 +76,16 @@ final class NoteStoreTests: XCTestCase {
 
     // MARK: - setLanguage
 
+    func testSaveWithCRLFContentTitleTrimsCarriageReturn() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+
+        try store.save(id: note.id, contents: "Hello\r\nWorld", cursor: 0)
+
+        let updated = store.notes.first(where: { $0.id == note.id })
+        XCTAssertEqual(updated?.title, "Hello")
+    }
+
     func testSetLanguageUpdatesLanguageID() throws {
         let store = try makeStore()
         let note = try store.createNote()
