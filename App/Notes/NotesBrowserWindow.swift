@@ -70,14 +70,11 @@ struct NotesBrowserWindow: View {
         }
     }
 
-    /// Opens a standalone note window, first tearing down the browser's detail editor
-    /// for that note (clearing the selection flushes + releases its view model via
-    /// onDisappear) so only one live editor exists per note in this flow.
-    // ponytail: last-writer-wins ceiling remains — a menu-bar row click can still open
-    // a NoteWindow for a note currently selected in the browser, giving two live view
-    // models on the same file. Upgrade path: a per-note shared VM registry.
+    /// Opens a standalone note window for `id`. Safe to do while the same note is still
+    /// selected in the browser: both surfaces resolve their view model through
+    /// `EditorRegistry`, so this opens a second window onto the *same* `NoteEditorViewModel`
+    /// rather than a competing copy — no flush-and-deselect handoff needed.
     private func openInNewWindow(_ id: UUID) {
-        if selection == id { selection = nil }
         openWindow(value: id)
     }
 
@@ -89,7 +86,9 @@ struct NotesBrowserWindow: View {
 
 /// Detail-pane editor for one note, selected from the browser sidebar. Mirrors
 /// `NoteWindow`'s autosave wiring; `.id(selection)` on the call site forces a fresh
-/// `@StateObject` (and thus a fresh load) whenever the sidebar selection changes.
+/// `@StateObject` wrapper whenever the sidebar selection changes, but the `EditorRegistry`
+/// lookup inside `init` hands back the same live `NoteEditorViewModel` (no re-load) if the
+/// note is already open elsewhere — e.g. in a standalone `NoteWindow`.
 private struct NoteDetailEditor: View {
     @EnvironmentObject private var appModel: AppModel
     @StateObject private var viewModel: NoteEditorViewModel
@@ -97,7 +96,7 @@ private struct NoteDetailEditor: View {
 
     init(noteID: UUID, onOpenInNewWindow: @escaping () -> Void) {
         self.onOpenInNewWindow = onOpenInNewWindow
-        _viewModel = StateObject(wrappedValue: NoteEditorViewModel(noteID: noteID, store: AppModel.shared.noteStore))
+        _viewModel = StateObject(wrappedValue: EditorRegistry.shared.noteViewModel(for: noteID))
     }
 
     var body: some View {
@@ -120,12 +119,7 @@ private struct NoteDetailEditor: View {
         }
         .toolbar {
             ToolbarItem {
-                // Flush before handing off so the standalone window loads the latest
-                // contents from disk, not a stale pre-debounce snapshot.
-                Button("Open in New Window") {
-                    viewModel.flush()
-                    onOpenInNewWindow()
-                }
+                Button("Open in New Window", action: onOpenInNewWindow)
             }
         }
         .onAppear { viewModel.load() }

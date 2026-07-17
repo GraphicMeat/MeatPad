@@ -9,7 +9,7 @@ struct NoteWindow: View {
     @StateObject private var viewModel: NoteEditorViewModel
 
     init(noteID: UUID) {
-        _viewModel = StateObject(wrappedValue: NoteEditorViewModel(noteID: noteID, store: AppModel.shared.noteStore))
+        _viewModel = StateObject(wrappedValue: EditorRegistry.shared.noteViewModel(for: noteID))
     }
 
     var body: some View {
