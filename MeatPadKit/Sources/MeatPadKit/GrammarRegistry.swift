@@ -38,7 +38,7 @@ enum GrammarRegistry {
         let bundleName: String?
     }
 
-    // languageID -> grammar. Missing ids (swift, markdown) simply have no grammar wired.
+    // languageID -> grammar. Missing ids (markdown) simply have no grammar wired.
     private static let specs: [String: Spec] = [
         "json":       Spec(function: tree_sitter_json,       name: "JSON",       bundleName: nil),
         "javascript": Spec(function: tree_sitter_javascript, name: "JavaScript", bundleName: nil),
