@@ -76,18 +76,20 @@ final class ProjectViewModel: ObservableObject {
     }
 
     /// Same as `open(file:)`, plus a one-shot reveal of `range` in the newly-shown editor
-    /// (Task 9 search-result jumps). `range` is a whole-document UTF-16 `NSRange`.
+    /// (Task 9 search-result jumps). `range` is a whole-document UTF-16 `NSRange`. The
+    /// target stays set until `CodeEditor` confirms it applied it (`revealConsumed`) —
+    /// clearing on confirmed consumption, not a timer, so a reveal into a file whose
+    /// editor hasn't rendered yet can never be lost to render-pass timing.
     func open(file: URL, reveal range: NSRange) {
         open(file: file)
-        let target = RevealTarget(token: UUID(), range: range)
-        revealTarget = target
-        // `CodeEditor.updateNSView` consumes the token synchronously on the render pass
-        // this triggers; clearing it right after means a *future* reselect of this same
-        // tab (a fresh `CodeEditor.Coordinator`, which has no memory of consumed tokens)
-        // won't replay this reveal.
-        DispatchQueue.main.async { [weak self] in
-            if self?.revealTarget?.token == target.token { self?.revealTarget = nil }
-        }
+        revealTarget = RevealTarget(token: UUID(), range: range)
+    }
+
+    /// Called by the editor after it actually scrolled/selected the target. Token-guarded
+    /// so a slow consumer can't clear a newer target: a fresh `CodeEditor.Coordinator` on
+    /// a later tab reselect never replays old reveals because the target is gone by then.
+    func revealConsumed(_ token: UUID) {
+        if revealTarget?.token == token { revealTarget = nil }
     }
 
     /// Drops the tab unconditionally (no prompt); callers that need the dirty guard use

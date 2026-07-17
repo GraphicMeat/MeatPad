@@ -50,6 +50,7 @@ private struct EditorPane: View {
             fontSize: appModel.fontSize,
             softWrap: appModel.softWrap,
             reveal: project.revealTarget,
+            onRevealApplied: { project.revealConsumed($0) },
             onCursorChange: { _ in }
         )
         .overlay(alignment: .top) { banner }

@@ -25,6 +25,10 @@ struct CodeEditor: NSViewRepresentable {
     /// When set with a token the Coordinator hasn't seen yet, scroll to + select the
     /// range exactly once. Harmlessly `nil` for tabs/notes.
     var reveal: RevealTarget? = nil
+    /// Called (with the consumed token) after a reveal has actually been applied, so the
+    /// owner can clear its published target — clearing on confirmed consumption, never on
+    /// a timer, means a reveal for a not-yet-open file can't be lost to render timing.
+    var onRevealApplied: ((UUID) -> Void)? = nil
     var onCursorChange: (Int) -> Void
 
     /// SF Mono at the given point size.
@@ -52,6 +56,7 @@ struct CodeEditor: NSViewRepresentable {
         coord.applyFontSize(fontSize)
         coord.applySoftWrap(softWrap)
         coord.applyTheme(theme) // sets colors + immediate first highlight paint
+        coord.applyReveal(reveal) // first render of a just-opened file consumes here
         return scrollView
     }
 
@@ -76,14 +81,7 @@ struct CodeEditor: NSViewRepresentable {
         coord.applySoftWrap(softWrap)
         coord.applyTheme(theme)
 
-        // One-shot reveal: apply once per new token, clamped to the current text length.
-        if let reveal, coord.lastRevealToken != reveal.token {
-            coord.lastRevealToken = reveal.token
-            if reveal.range.upperBound <= (textView.text as NSString? ?? "").length {
-                textView.textSelection = reveal.range
-                textView.scrollRangeToVisible(reveal.range)
-            }
-        }
+        coord.applyReveal(reveal)
     }
 
     @MainActor
@@ -139,6 +137,26 @@ struct CodeEditor: NSViewRepresentable {
             guard lastSoftWrap != wrap, let textView else { return }
             lastSoftWrap = wrap
             textView.isHorizontallyResizable = !wrap // wrap == view width tracks text width
+        }
+
+        /// One-shot reveal: the token is consumed synchronously (so a make + update pass
+        /// in the same render cycle can't double-apply), but the scroll/select and the
+        /// consumed-callback run on the next main-queue turn — by then a freshly made
+        /// view is in its window (so scrollRangeToVisible has real layout to work with),
+        /// and mutating the owner's @Published target is safely outside the view update.
+        func applyReveal(_ reveal: RevealTarget?) {
+            guard let reveal, lastRevealToken != reveal.token else { return }
+            lastRevealToken = reveal.token
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, let textView = self.textView else { return }
+                    if reveal.range.upperBound <= (textView.text as NSString? ?? "").length {
+                        textView.textSelection = reveal.range
+                        textView.scrollRangeToVisible(reveal.range)
+                    }
+                    self.parent.onRevealApplied?(reveal.token)
+                }
+            }
         }
 
         func scheduleHighlight() {

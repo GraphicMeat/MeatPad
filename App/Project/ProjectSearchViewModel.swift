@@ -17,7 +17,14 @@ struct FileMatchGroup: Identifiable {
 final class ProjectSearchViewModel: ObservableObject {
     @Published var query = "" { didSet { scheduleSearch() } }
     @Published var replaceText = ""
-    @Published var isRegex = false { didSet { scheduleSearch() } }
+    @Published var isRegex = false {
+        didSet {
+            // \b is regex syntax's job now; drop the flag rather than leaving a lit-but-
+            // disabled toggle behind. (Its own didSet harmlessly re-schedules.)
+            if isRegex { wholeWord = false }
+            scheduleSearch()
+        }
+    }
     @Published var caseSensitive = false { didSet { scheduleSearch() } }
     @Published var wholeWord = false { didSet { scheduleSearch() } }
     @Published private(set) var results: [SearchMatch] = []
@@ -88,17 +95,15 @@ final class ProjectSearchViewModel: ObservableObject {
     /// Converts a match's line/column into a whole-document UTF-16 `NSRange` against the
     /// file's CURRENT contents (the shared `FileEditorViewModel` buffer if open elsewhere,
     /// disk otherwise) — the file may have changed since the search ran. Returns `nil` if
-    /// the recorded line no longer exists or the match no longer fits on it.
+    /// the recorded line vanished or changed (caller opens without revealing then).
     static func revealRange(for match: SearchMatch) -> NSRange? {
         guard let text = EditorRegistry.shared.fileViewModel(for: match.file)?.text else { return nil }
         let lines = text.components(separatedBy: "\n")
         let idx = match.lineNumber - 1
-        guard idx >= 0, idx < lines.count else { return nil }
+        guard idx >= 0, idx < lines.count, lines[idx] == match.lineText else { return nil }
 
         var offset = 0
         for i in 0..<idx { offset += (lines[i] as NSString).length + 1 } // +1 per "\n"
-        let lineLength = (lines[idx] as NSString).length
-        guard match.rangeInLine.upperBound <= lineLength else { return nil }
         return NSRange(location: offset + match.rangeInLine.lowerBound, length: match.rangeInLine.count)
     }
 
@@ -112,8 +117,21 @@ final class ProjectSearchViewModel: ObservableObject {
         guard !results.isEmpty, let searchQuery = lastQuery else { return }
 
         let byFile = Dictionary(grouping: results, by: \.file)
-        let dirtyFiles = byFile.keys.filter { EditorRegistry.shared.fileViewModel(for: $0)?.isDirty == true }
-        let matchesToReplace = results.filter { !dirtyFiles.contains($0.file) }
+        let dirtyFiles = Set(byFile.keys.filter { EditorRegistry.shared.fileViewModel(for: $0)?.isDirty == true })
+        // SearchReplacer skips disk-stale files itself but only reports a count; running
+        // the same predicate here tells us WHICH files those are, so the revert loop
+        // below never touches a file the replacer didn't rewrite (a stale file's disk
+        // divergence stays with the existing changed-on-disk banner flow instead).
+        let staleFiles = Set(byFile.keys.filter { file in
+            guard !dirtyFiles.contains(file) else { return false }
+            guard let content = try? String(contentsOf: file, encoding: .utf8) else { return true }
+            let lines = content.components(separatedBy: "\n")
+            return byFile[file]!.contains { match in
+                let idx = match.lineNumber - 1
+                return idx < 0 || idx >= lines.count || lines[idx] != match.lineText
+            }
+        })
+        let matchesToReplace = results.filter { !dirtyFiles.contains($0.file) && !staleFiles.contains($0.file) }
 
         let confirm = NSAlert()
         confirm.messageText = "Replace \(results.count) match\(results.count == 1 ? "" : "es") in \(byFile.count) file\(byFile.count == 1 ? "" : "s")?"
