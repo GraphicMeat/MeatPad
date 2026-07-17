@@ -206,8 +206,13 @@ struct ThemesSettingsView: View {
     // MARK: - Actions
 
     private func duplicateSelected() {
-        guard let id = selection, let copy = themeStore.duplicate(id: id) else { return }
-        selection = copy.id
+        guard let id = selection else { return }
+        do {
+            let copy = try themeStore.duplicate(id: id)
+            selection = copy.id
+        } catch {
+            storeError = "\(error)"
+        }
     }
 
     private func deleteSelected() {

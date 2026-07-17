@@ -9,6 +9,7 @@ struct SnippetsSettingsView: View {
     @State private var selection: UUID?
     @State private var editingSnippet: Snippet?
     @State private var bundleImportMessage: String?
+    @State private var storeError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,9 +24,16 @@ struct SnippetsSettingsView: View {
         .sheet(item: $editingSnippet) { snippet in
             SnippetEditorSheet(
                 snippet: snippet,
-                onSave: { edited in try? library.add(edited); editingSnippet = nil },
+                onSave: { edited in
+                    do { try library.add(edited); editingSnippet = nil } catch { storeError = "\(error)" }
+                },
                 onCancel: { editingSnippet = nil }
             )
+        }
+        .alert("Couldn't Save Snippet", isPresented: Binding(get: { storeError != nil }, set: { if !$0 { storeError = nil } })) {
+            Button("OK") { storeError = nil }
+        } message: {
+            Text(storeError ?? "")
         }
         .alert("Bundle Import", isPresented: Binding(get: { bundleImportMessage != nil }, set: { if !$0 { bundleImportMessage = nil } })) {
             Button("OK") { bundleImportMessage = nil }
@@ -94,8 +102,12 @@ struct SnippetsSettingsView: View {
 
     private func deleteSelected() {
         guard let snippet = selectedSnippet, !isBuiltin(snippet) else { return }
-        try? library.delete(id: snippet.id)
-        selection = nil
+        do {
+            try library.delete(id: snippet.id)
+            selection = nil
+        } catch {
+            storeError = "\(error)"
+        }
     }
 }
 

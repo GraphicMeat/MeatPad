@@ -2,6 +2,7 @@ import Foundation
 
 public enum ThemeStoreError: Error, Equatable {
     case builtinReadOnly(String)
+    case notFound(String)
 }
 
 /// Owns the user's custom theme collection: one `<id>.json` file per theme under
@@ -35,12 +36,12 @@ public final class ThemeStore: ObservableObject {
     }
 
     /// Copies any theme (builtin or user) into a fresh, persisted user theme.
-    public func duplicate(id: String) -> Theme? {
-        guard let original = theme(id: id) else { return nil }
+    public func duplicate(id: String) throws -> Theme {
+        guard let original = theme(id: id) else { throw ThemeStoreError.notFound(id) }
         var copy = original
         copy.id = "user-" + UUID().uuidString
         copy.name = "\(original.name) Copy"
-        try? save(copy)
+        try save(copy)
         return copy
     }
 

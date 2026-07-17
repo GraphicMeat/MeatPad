@@ -134,4 +134,49 @@ final class SnippetSessionTests: XCTestCase {
         XCTAssertTrue(s.previous()) // back to stop 1
         XCTAssertEqual(s.currentStopRanges, [0..<15])
     }
+
+    // Editing a stop nested inside a parent placeholder must also refresh any
+    // MIRROR of that parent, not just the parent's own (geometrically-contained)
+    // text — a stale-mirror bug previously left trailing `$1` unsynced here.
+    func testEditingNestedStopRefreshesParentMirror() throws {
+        let s = try session("${1:${2:a}} $1")
+        XCTAssertEqual(s.insertText, "a a")
+        XCTAssertTrue(s.next()) // -> stop 2 (the inner "a") at 0..<1
+        XCTAssertEqual(s.currentStopRanges, [0..<1])
+
+        let edits = s.bufferDidChange(range: 0..<1, replacement: "bb")
+        XCTAssertEqual(edits, [MirrorEdit(range: 3..<4, replacement: "bb")])
+
+        XCTAssertTrue(s.previous()) // back to stop 1 (parent + its mirror)
+        XCTAssertEqual(s.currentStopRanges, [0..<2, 3..<5])
+    }
+
+    // MARK: - UTF-16 / multi-unit regressions
+
+    func testEmojiEditInStopSyncsMirrorAcrossMultiUnitDelta() throws {
+        let s = try session("${1:x} = $1")
+        let edits = s.bufferDidChange(range: 0..<1, replacement: "😀")
+        XCTAssertEqual(edits, [MirrorEdit(range: 5..<6, replacement: "😀")])
+        XCTAssertEqual(s.currentStopRanges, [0..<2, 5..<7])
+    }
+
+    func testMidBodyZeroStopIsStillVisitedLast() throws {
+        let s = try session("$0 middle ${1:a}")
+        // $0 sits first in the text, but visit order is still real stops before $0.
+        XCTAssertEqual(s.currentStopRanges, [8..<9])
+        XCTAssertFalse(s.next())
+        XCTAssertFalse(s.isActive)
+        XCTAssertEqual(s.currentStopRanges, [0..<0])
+    }
+
+    func testTwoMirrorsAfterPrimaryBothSync() throws {
+        let s = try session("${1:x} $1 $1")
+        XCTAssertEqual(s.insertText, "x x x")
+        let edits = s.bufferDidChange(range: 0..<1, replacement: "hello")
+        XCTAssertEqual(edits, [
+            MirrorEdit(range: 8..<9, replacement: "hello"),
+            MirrorEdit(range: 6..<7, replacement: "hello"),
+        ])
+        XCTAssertEqual(s.currentStopRanges, [0..<5, 6..<11, 12..<17])
+    }
 }

@@ -86,7 +86,7 @@ public final class SnippetSession {
                     out += primaryText[index] ?? ""   // mirror renders the primary's resolved text
                 }
                 let endRel = out.utf16.count
-                let content = String(out[utf16Range(startRel, endRel, in: out)])
+                let content = String(out[Self.utf16Range(startRel, endRel, in: out)])
                 stops[slot].length = endRel - startRel
                 stops[slot].text = content
                 if isPrimary { primaryText[index] = content }
@@ -175,19 +175,32 @@ public final class SnippetSession {
         let delta = replacement.utf16.count - (editEnd - editStart)
         applyEdit(start: editStart, end: editEnd, replacement: replacement, delta: delta)
 
-        let newText = instances[pSlot].text
-        let mirrorSlots = instances.indices.filter { instances[$0].index == cur && !instances[$0].isPrimary }
+        // Sync mirrors of the edited stop AND every ancestor stop whose primary range
+        // geometrically contains it — e.g. "${1:${2:a}} $1": editing $2 must also
+        // refresh the parent $1's trailing mirror, not just $2's own mirrors.
+        let curPrimary = instances[pSlot]
+        let ancestorIndices = instances
+            .filter { $0.isPrimary && $0.index != cur && $0.start <= curPrimary.start && curPrimary.end <= $0.end }
+            .map(\.index)
 
-        // Capture returned edits in post-primary-edit coordinates before mutating.
-        let edits = mirrorSlots.map { MirrorEdit(range: instances[$0].start ..< instances[$0].end, replacement: newText) }
+        var edits: [MirrorEdit] = []
+        for stopIndex in [cur] + ancestorIndices {
+            guard let primarySlot = instances.firstIndex(where: { $0.index == stopIndex && $0.isPrimary }) else { continue }
+            let newText = instances[primarySlot].text
+            let mirrorSlots = instances.indices.filter { instances[$0].index == stopIndex && !instances[$0].isPrimary }
+            guard !mirrorSlots.isEmpty else { continue }
 
-        // Bring internal state in sync, applying mirror edits left-to-right.
-        for slot in mirrorSlots.sorted(by: { instances[$0].start < instances[$1].start }) {
-            let m = instances[slot]
-            let dM = newText.utf16.count - m.length
-            applyEdit(start: m.start, end: m.end, replacement: newText, delta: dM, skipping: slot)
-            instances[slot].text = newText
-            instances[slot].length = newText.utf16.count
+            // Capture returned edits in post-primary-edit coordinates before mutating.
+            edits += mirrorSlots.map { MirrorEdit(range: instances[$0].start ..< instances[$0].end, replacement: newText) }
+
+            // Bring internal state in sync, applying mirror edits left-to-right.
+            for slot in mirrorSlots.sorted(by: { instances[$0].start < instances[$1].start }) {
+                let m = instances[slot]
+                let dM = newText.utf16.count - m.length
+                applyEdit(start: m.start, end: m.end, replacement: newText, delta: dM, skipping: slot)
+                instances[slot].text = newText
+                instances[slot].length = newText.utf16.count
+            }
         }
 
         // Host applies these right-to-left, so hand them back descending.
@@ -217,8 +230,4 @@ public final class SnippetSession {
     private static func utf16Range(_ lower: Int, _ upper: Int, in s: String) -> Range<String.Index> {
         String.Index(utf16Offset: lower, in: s) ..< String.Index(utf16Offset: upper, in: s)
     }
-}
-
-private func utf16Range(_ lower: Int, _ upper: Int, in s: String) -> Range<String.Index> {
-    String.Index(utf16Offset: lower, in: s) ..< String.Index(utf16Offset: upper, in: s)
 }

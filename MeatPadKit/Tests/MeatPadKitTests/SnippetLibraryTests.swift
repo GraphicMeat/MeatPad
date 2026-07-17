@@ -158,6 +158,63 @@ final class SnippetLibraryTests: XCTestCase {
         XCTAssertFalse(library.all.contains(where: { $0.id == builtin!.id }))
     }
 
+    // MARK: - partition: narrow user override over a multi-language builtin
+
+    func testNarrowUserOverrideDoesNotShadowMultiLanguageBuiltinInAll() throws {
+        // "fn" is a real builtin scoped to BOTH javascript and typescript. A user
+        // override scoped to javascript ONLY must not remove the builtin from `all` —
+        // it doesn't cover the builtin's entire scope, so typescript still needs it.
+        let library = makeLibrary()
+        let builtin = BuiltinSnippets.all.first(where: { $0.trigger == "fn" })
+        XCTAssertNotNil(builtin)
+
+        let jsOnly = Snippet(name: "JS fn", trigger: "fn", languageIDs: ["javascript"], body: "js $0")
+        try library.add(jsOnly)
+
+        XCTAssertTrue(library.all.contains(where: { $0.id == builtin!.id }))
+        XCTAssertTrue(library.all.contains(jsOnly))
+    }
+
+    func testUserOverrideCoveringEntireMultiLanguageBuiltinScopeShadowsInAll() throws {
+        let library = makeLibrary()
+        let builtin = BuiltinSnippets.all.first(where: { $0.trigger == "fn" })
+        XCTAssertNotNil(builtin)
+
+        let bothLangs = Snippet(name: "Both fn", trigger: "fn", languageIDs: ["javascript", "typescript"], body: "both $0")
+        try library.add(bothLangs)
+
+        XCTAssertFalse(library.all.contains(where: { $0.id == builtin!.id }))
+    }
+
+    func testNarrowOverridePartitionsSnippetsForLanguageIDPerLanguage() throws {
+        // The javascript-only override wins for javascript, but typescript still
+        // resolves to the untouched multi-language builtin — per-language partition,
+        // not an all-or-nothing shadow.
+        let library = makeLibrary()
+        let jsOnly = Snippet(name: "JS fn", trigger: "fn", languageIDs: ["javascript"], body: "js $0")
+        try library.add(jsOnly)
+
+        XCTAssertEqual(library.snippet(trigger: "fn", languageID: "javascript"), jsOnly)
+        let tsResolved = library.snippet(trigger: "fn", languageID: "typescript")
+        XCTAssertEqual(tsResolved?.languageIDs, ["javascript", "typescript"])
+        XCTAssertTrue(BuiltinSnippets.all.contains(tsResolved!))
+
+        XCTAssertTrue(library.snippets(forLanguageID: "javascript").contains(jsOnly))
+        XCTAssertTrue(library.snippets(forLanguageID: "typescript").contains(where: { $0.id == tsResolved!.id }))
+        XCTAssertFalse(library.snippets(forLanguageID: "typescript").contains(jsOnly))
+    }
+
+    func testDisjointLanguageOverrideResolvesIndependentlyPerLanguage() throws {
+        // "func" lookup: swift still finds the builtin, python finds the user override.
+        let library = makeLibrary()
+        let pythonOverride = Snippet(name: "Python func", trigger: "func", languageIDs: ["python"], body: "def $0")
+        try library.add(pythonOverride)
+
+        let swiftResolved = library.snippet(trigger: "func", languageID: "swift")
+        XCTAssertTrue(BuiltinSnippets.all.contains(swiftResolved!))
+        XCTAssertEqual(library.snippet(trigger: "func", languageID: "python"), pythonOverride)
+    }
+
     // MARK: - trigger resolution precedence
 
     func testResolutionPrefersExactLanguageUserOverEverything() throws {

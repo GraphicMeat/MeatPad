@@ -41,12 +41,14 @@ public final class SnippetLibrary: ObservableObject {
         userSnippets = Self.loadUserSnippets(from: userDirectory)
     }
 
-    /// Builtins plus user snippets, minus any builtin shadowed by a user snippet that
-    /// shares its trigger and overlaps its language scope.
+    /// Builtins plus user snippets, minus any builtin fully superseded by a user
+    /// snippet that shares its trigger and covers its ENTIRE language scope. A user
+    /// snippet that only covers part of a multi-language builtin's scope leaves the
+    /// builtin visible here — `snippets(forLanguageID:)` handles the per-language split.
     public var all: [Snippet] {
         let visibleBuiltins = BuiltinSnippets.all.filter { builtin in
             !userSnippets.contains { user in
-                user.trigger == builtin.trigger && Self.scopesOverlap(user.languageIDs, builtin.languageIDs)
+                user.trigger == builtin.trigger && Self.scopeFullyCovers(user.languageIDs, builtin.languageIDs)
             }
         }
         return visibleBuiltins + userSnippets
@@ -78,9 +80,15 @@ public final class SnippetLibrary: ObservableObject {
 
     /// For the Insert Snippet menu: snippets scoped to `languageID` plus all-language
     /// snippets, name-sorted. A nil `languageID` returns only all-language snippets.
+    /// Resolved per-trigger via `snippet(trigger:languageID:)` so a narrow user override
+    /// only shadows the builtin for the languages it actually covers.
     public func snippets(forLanguageID languageID: String?) -> [Snippet] {
-        all
-            .filter { $0.languageIDs.isEmpty || (languageID != nil && $0.languageIDs.contains(languageID!)) }
+        let applicable = (userSnippets + BuiltinSnippets.all).filter {
+            $0.languageIDs.isEmpty || (languageID != nil && $0.languageIDs.contains(languageID!))
+        }
+        let triggers = Set(applicable.map(\.trigger))
+        return triggers
+            .compactMap { snippet(trigger: $0, languageID: languageID) }
             .sorted { $0.name < $1.name }
     }
 
@@ -112,10 +120,13 @@ public final class SnippetLibrary: ObservableObject {
 
     // MARK: - Private
 
-    /// Empty scope means "all languages", which overlaps every other scope.
-    private static func scopesOverlap(_ a: [String], _ b: [String]) -> Bool {
-        if a.isEmpty || b.isEmpty { return true }
-        return !Set(a).isDisjoint(with: b)
+    /// Does `user`'s scope fully cover `builtin`'s scope (so the builtin can be dropped
+    /// entirely, not just for some languages)? Empty means "all languages": a builtin
+    /// with an empty scope can only be fully covered by an equally universal user
+    /// snippet; a finite user scope can never cover the entire language universe.
+    private static func scopeFullyCovers(_ user: [String], _ builtin: [String]) -> Bool {
+        if builtin.isEmpty { return user.isEmpty }
+        return user.isEmpty || Set(builtin).isSubset(of: Set(user))
     }
 
     /// Self-healing load: a corrupt snippet file is skipped, never crashes the rest.

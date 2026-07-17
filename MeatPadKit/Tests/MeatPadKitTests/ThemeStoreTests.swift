@@ -130,21 +130,22 @@ final class ThemeStoreTests: XCTestCase {
 
     func testDuplicateBuiltinCreatesPersistedUserCopyWithSuffixedName() throws {
         let store = makeStore()
-        let copy = store.duplicate(id: BuiltinThemes.defaultDark.id)
+        let copy = try store.duplicate(id: BuiltinThemes.defaultDark.id)
 
-        XCTAssertNotNil(copy)
-        XCTAssertEqual(copy?.name, "\(BuiltinThemes.defaultDark.name) Copy")
-        XCTAssertTrue(copy!.id.hasPrefix("user-"))
-        XCTAssertNotEqual(copy!.id, BuiltinThemes.defaultDark.id)
-        XCTAssertTrue(store.userThemes.contains(copy!))
+        XCTAssertEqual(copy.name, "\(BuiltinThemes.defaultDark.name) Copy")
+        XCTAssertTrue(copy.id.hasPrefix("user-"))
+        XCTAssertNotEqual(copy.id, BuiltinThemes.defaultDark.id)
+        XCTAssertTrue(store.userThemes.contains(copy))
 
-        let fileURL = tempDir.appendingPathComponent("\(copy!.id).json")
+        let fileURL = tempDir.appendingPathComponent("\(copy.id).json")
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
     }
 
-    func testDuplicateUnknownIDReturnsNil() {
+    func testDuplicateUnknownIDThrowsNotFound() {
         let store = makeStore()
-        XCTAssertNil(store.duplicate(id: "nope"))
+        XCTAssertThrowsError(try store.duplicate(id: "nope")) { error in
+            XCTAssertEqual(error as? ThemeStoreError, .notFound("nope"))
+        }
     }
 
     // MARK: - persistence (reload)

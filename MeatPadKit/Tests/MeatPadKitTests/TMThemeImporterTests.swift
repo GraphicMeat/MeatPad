@@ -185,6 +185,91 @@ final class TMThemeImporterTests: XCTestCase {
         XCTAssertEqual(theme.tokenColors.count, 4)
     }
 
+    func testSpaceOnlyMultiScopeEntryMapsAllParts() throws {
+        // "keyword.operator storage.type" — space-separated, no comma at all.
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>name</key>
+            <string>Space Scopes</string>
+            <key>settings</key>
+            <array>
+                <dict>
+                    <key>settings</key>
+                    <dict>
+                        <key>background</key>
+                        <string>#000000</string>
+                        <key>foreground</key>
+                        <string>#FFFFFF</string>
+                    </dict>
+                </dict>
+                <dict>
+                    <key>scope</key>
+                    <string>keyword.operator storage.type</string>
+                    <key>settings</key>
+                    <dict>
+                        <key>foreground</key>
+                        <string>#AAAAAA</string>
+                    </dict>
+                </dict>
+            </array>
+        </dict>
+        </plist>
+        """
+        let theme = try TMThemeImporter.importTheme(data: Data(xml.utf8))
+        XCTAssertEqual(theme.tokenColors["operator"], RGBAColor(hex: "#AAAAAA")!)
+        XCTAssertEqual(theme.tokenColors["type"], RGBAColor(hex: "#AAAAAA")!)
+    }
+
+    func testEntryWithGarbageHexIsDropped() throws {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>name</key>
+            <string>Garbage Hex</string>
+            <key>settings</key>
+            <array>
+                <dict>
+                    <key>settings</key>
+                    <dict>
+                        <key>background</key>
+                        <string>#000000</string>
+                        <key>foreground</key>
+                        <string>#FFFFFF</string>
+                    </dict>
+                </dict>
+                <dict>
+                    <key>scope</key>
+                    <string>keyword</string>
+                    <key>settings</key>
+                    <dict>
+                        <key>foreground</key>
+                        <string>not-a-hex-color</string>
+                    </dict>
+                </dict>
+                <dict>
+                    <key>scope</key>
+                    <string>string</string>
+                    <key>settings</key>
+                    <dict>
+                        <key>foreground</key>
+                        <string>#6A9955</string>
+                    </dict>
+                </dict>
+            </array>
+        </dict>
+        </plist>
+        """
+        let theme = try TMThemeImporter.importTheme(data: Data(xml.utf8))
+        XCTAssertNil(theme.tokenColors["keyword"])
+        XCTAssertEqual(theme.tokenColors["string"], RGBAColor(hex: "#6A9955")!)
+        XCTAssertEqual(theme.tokenColors.count, 1)
+    }
+
     // MARK: - errors
 
     func testGarbageDataThrowsNotAPlist() {
@@ -207,6 +292,22 @@ final class TMThemeImporterTests: XCTestCase {
         """
         XCTAssertThrowsError(try TMThemeImporter.importTheme(data: Data(xml.utf8))) { error in
             XCTAssertEqual(error as? TMThemeImportError, .missingSettings)
+        }
+    }
+
+    func testValidPlistWithNonDictRootThrowsNotAPlist() {
+        // Well-formed plist XML, but the root is an array, not a dict.
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <array>
+            <string>not a theme dict</string>
+        </array>
+        </plist>
+        """
+        XCTAssertThrowsError(try TMThemeImporter.importTheme(data: Data(xml.utf8))) { error in
+            XCTAssertEqual(error as? TMThemeImportError, .notAPlist)
         }
     }
 }
