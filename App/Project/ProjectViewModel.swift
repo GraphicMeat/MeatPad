@@ -11,6 +11,9 @@ final class ProjectViewModel: ObservableObject {
     /// Banner shown over the editor when disk diverges from the open buffer.
     enum Banner: Equatable { case changedOnDisk, deleted }
 
+    /// Which content the sidebar shows: the live file tree, or Cmd+Shift+F project search.
+    enum SidebarMode: Hashable { case files, search }
+
     let root: URL
     @Published var tree: TreeNode
     @Published var tabs: [URL] = []
@@ -19,6 +22,11 @@ final class ProjectViewModel: ObservableObject {
     @Published var banners: [URL: Banner] = [:]
     /// Cmd+T quick-open overlay, toggled by the app-level command.
     @Published var quickOpenVisible = false
+    @Published var sidebarMode: SidebarMode = .files
+    /// One-shot scroll+select for the currently selected tab's `CodeEditor` (search-result
+    /// jumps). Cleared right after being read so switching away and back to the same tab
+    /// later never replays a stale selection.
+    @Published private(set) var revealTarget: RevealTarget?
 
     /// Set via `attach(window:)` so the dirty-close/save sheets attach to this window.
     weak var window: NSWindow?
@@ -65,6 +73,21 @@ final class ProjectViewModel: ObservableObject {
     func open(file: URL) {
         if !tabs.contains(file) { tabs.append(file) }
         selectedTab = file
+    }
+
+    /// Same as `open(file:)`, plus a one-shot reveal of `range` in the newly-shown editor
+    /// (Task 9 search-result jumps). `range` is a whole-document UTF-16 `NSRange`.
+    func open(file: URL, reveal range: NSRange) {
+        open(file: file)
+        let target = RevealTarget(token: UUID(), range: range)
+        revealTarget = target
+        // `CodeEditor.updateNSView` consumes the token synchronously on the render pass
+        // this triggers; clearing it right after means a *future* reselect of this same
+        // tab (a fresh `CodeEditor.Coordinator`, which has no memory of consumed tokens)
+        // won't replay this reveal.
+        DispatchQueue.main.async { [weak self] in
+            if self?.revealTarget?.token == target.token { self?.revealTarget = nil }
+        }
     }
 
     /// Drops the tab unconditionally (no prompt); callers that need the dirty guard use

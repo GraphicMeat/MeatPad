@@ -43,6 +43,7 @@ struct MeatPadApp: App {
             CommandGroup(after: .toolbar) {
                 Menu("Language") { LanguageCommands() }
                 QuickOpenCommand()
+                ProjectSearchCommand()
             }
             // Route Cmd+F / Cmd+G through the responder chain to STTextView's
             // NSTextFinder integration. It reads the action from the sender's tag.
@@ -170,6 +171,23 @@ private struct QuickOpenCommand: View {
         Button("Quick Open…") { project?.quickOpenVisible.toggle() }
             .keyboardShortcut("t", modifiers: .command)
             .disabled(project == nil)
+    }
+}
+
+/// Cmd+Shift+F: switches the focused project window's sidebar to Search and focuses its
+/// query field. Pressing it again while already on Search just refocuses the field (via
+/// `requestFocus`'s token bump — a plain sidebar-mode assignment can't retrigger that).
+private struct ProjectSearchCommand: View {
+    @FocusedValue(\.projectViewModel) private var project
+    @FocusedValue(\.projectSearchViewModel) private var search
+
+    var body: some View {
+        Button("Find in Project…") {
+            project?.sidebarMode = .search
+            search?.requestFocus()
+        }
+        .keyboardShortcut("f", modifiers: [.command, .shift])
+        .disabled(project == nil)
     }
 }
 
