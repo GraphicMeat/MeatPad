@@ -23,6 +23,22 @@ targets:
         product: STTextView
       - package: Sparkle
         product: Sparkle
+    preBuildScripts:
+      - name: Ensure Info.plist (xcodegen output)
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/App/Info.plist
+        script: |
+          if [ ! -f "$SRCROOT/App/Info.plist" ]; then
+            XCODEGEN="$(command -v xcodegen || echo /opt/homebrew/bin/xcodegen)"
+            if [ -x "$XCODEGEN" ]; then
+              echo "warning: App/Info.plist missing — regenerating via xcodegen"
+              (cd "$SRCROOT" && "$XCODEGEN" generate)
+            else
+              echo "error: App/Info.plist missing and xcodegen not found. Run: xcodegen generate"
+              exit 1
+            fi
+          fi
     info:
       path: App/Info.plist
       properties:
