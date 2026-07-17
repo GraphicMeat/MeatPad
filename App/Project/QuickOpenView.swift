@@ -10,12 +10,11 @@ struct QuickOpenView: View {
 
     @State private var query = ""
     @State private var matches: [FuzzyMatcher.Match] = []
+    @State private var rankedCandidates: [(url: URL, relativePath: String)] = []
     @State private var selection = 0
     @FocusState private var focused: Bool
 
     var body: some View {
-        let candidates = candidates
-
         VStack(spacing: 0) {
             TextField("Quick Open", text: $query)
                 .textFieldStyle(.plain)
@@ -24,7 +23,7 @@ struct QuickOpenView: View {
                 .focused($focused)
                 .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
                 .onKeyPress(.downArrow) { moveSelection(1); return .handled }
-                .onKeyPress(.return) { openSelected(candidates); return .handled }
+                .onKeyPress(.return) { openSelected(); return .handled }
                 .onKeyPress(.escape) { dismiss(); return .handled }
 
             Divider()
@@ -39,10 +38,12 @@ struct QuickOpenView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(matches.enumerated()), id: \.offset) { row, match in
-                                let candidate = candidates[match.candidateIndex]
-                                resultRow(candidate: candidate, match: match, isSelected: row == selection)
-                                    .id(row)
-                                    .onTapGesture { open(candidate.url) }
+                                if rankedCandidates.indices.contains(match.candidateIndex) {
+                                    let candidate = rankedCandidates[match.candidateIndex]
+                                    resultRow(candidate: candidate, match: match, isSelected: row == selection)
+                                        .id(row)
+                                        .onTapGesture { open(candidate.url) }
+                                }
                             }
                         }
                     }
@@ -59,19 +60,25 @@ struct QuickOpenView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .shadow(radius: 20)
         .onAppear {
-            matches = FuzzyMatcher.rank(query: query, candidates: candidates.map(\.relativePath), limit: 50)
+            rerank()
             focused = true
         }
         .task(id: query) {
             try? await Task.sleep(nanoseconds: 50_000_000)
             guard !Task.isCancelled else { return }
-            matches = FuzzyMatcher.rank(query: query, candidates: candidates.map(\.relativePath), limit: 50)
+            rerank()
             selection = 0
         }
     }
 
-    private var candidates: [(url: URL, relativePath: String)] {
-        ProjectScanner.flatFileList(viewModel.tree).map { ($0, Self.relativePath($0, root: viewModel.root)) }
+    /// Snapshots the current file list into `rankedCandidates` and ranks `matches` against
+    /// that SAME array. FSEvents can republish `viewModel.tree` (and thus a fresh `candidates`
+    /// list) between renders while the overlay is open; ranking and subscripting against one
+    /// stored snapshot keeps `match.candidateIndex` valid for both the list body and Return-to-open.
+    private func rerank() {
+        let candidates: [(url: URL, relativePath: String)] = ProjectScanner.flatFileList(viewModel.tree).map { ($0, Self.relativePath($0, root: viewModel.root)) }
+        rankedCandidates = candidates
+        matches = FuzzyMatcher.rank(query: query, candidates: candidates.map(\.relativePath), limit: 50)
     }
 
     @ViewBuilder
@@ -91,9 +98,11 @@ struct QuickOpenView: View {
         selection = (selection + delta + matches.count) % matches.count
     }
 
-    private func openSelected(_ candidates: [(url: URL, relativePath: String)]) {
+    private func openSelected() {
         guard matches.indices.contains(selection) else { return }
-        open(candidates[matches[selection].candidateIndex].url)
+        let candidateIndex = matches[selection].candidateIndex
+        guard rankedCandidates.indices.contains(candidateIndex) else { return }
+        open(rankedCandidates[candidateIndex].url)
     }
 
     private func open(_ url: URL) {
