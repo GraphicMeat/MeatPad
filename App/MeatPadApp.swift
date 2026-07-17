@@ -36,8 +36,13 @@ struct MeatPadApp: App {
             // closeTab when a project window with tabs is focused, performClose otherwise.
             // A DEBUG launch assertion in AppDelegate verifies the single-Cmd+W invariant.
             CommandGroup(replacing: .saveItem) { ProjectFileCommands() }
+            // Empties the default Format menu (Font > Show Fonts is Cmd+T) — this app is
+            // plain-text only and never adopts NSFontPanel, so that menu was dead weight
+            // and its Cmd+T would otherwise race our quick-open binding below.
+            CommandGroup(replacing: .textFormatting) { }
             CommandGroup(after: .toolbar) {
                 Menu("Language") { LanguageCommands() }
+                QuickOpenCommand()
             }
             // Route Cmd+F / Cmd+G through the responder chain to STTextView's
             // NSTextFinder integration. It reads the action from the sender's tag.
@@ -153,6 +158,18 @@ private struct ProjectFileCommands: View {
             }
         }
         .keyboardShortcut("w", modifiers: .command)
+    }
+}
+
+/// Cmd+T: toggles the quick-open panel on the focused project window. Same
+/// `@FocusedValue` routing as Save/Close — disabled with no project window frontmost.
+private struct QuickOpenCommand: View {
+    @FocusedValue(\.projectViewModel) private var project
+
+    var body: some View {
+        Button("Quick Open…") { project?.quickOpenVisible.toggle() }
+            .keyboardShortcut("t", modifiers: .command)
+            .disabled(project == nil)
     }
 }
 

@@ -19,6 +19,11 @@ struct ProjectWindow: View {
                 .safeAreaInset(edge: .top, spacing: 0) {
                     if viewModel.hasTabs { TabBarView(viewModel: viewModel) }
                 }
+                .overlay {
+                    if viewModel.quickOpenVisible {
+                        QuickOpenView(viewModel: viewModel)
+                    }
+                }
         }
         .frame(minWidth: 720, minHeight: 480)
         .navigationTitle(viewModel.root.lastPathComponent)

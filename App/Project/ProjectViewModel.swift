@@ -17,6 +17,8 @@ final class ProjectViewModel: ObservableObject {
     @Published var selectedTab: URL?
     /// At-most-one-visible per tab; the host shows `banners[selectedTab]`.
     @Published var banners: [URL: Banner] = [:]
+    /// Cmd+T quick-open overlay, toggled by the app-level command.
+    @Published var quickOpenVisible = false
 
     /// Set via `attach(window:)` so the dirty-close/save sheets attach to this window.
     weak var window: NSWindow?
