@@ -60,6 +60,20 @@ struct CodeEditor: NSViewRepresentable {
         return scrollView
     }
 
+    /// Always report exactly the size SwiftUI proposes. The editor is a scrolling view
+    /// that fills its slot; it must never expose STTextView's own intrinsic content size
+    /// to SwiftUI. STTextView self-marks `needsUpdateConstraints` and grows its
+    /// `intrinsicContentSize` on every `usageBoundsForTextContainer` change as TextKit2
+    /// lazily lays a freshly-mounted document out (tab switch = a new STTextView via
+    /// `.id(url)`). Without this, each window Update-Constraints pass re-measured a
+    /// different detail min/max size, so NavigationSplitView's SplitViewChildController
+    /// re-marked the window mid-pass until the per-window pass budget was exhausted —
+    /// AppKit's constraint-feedback-loop guard then threw ("more Update Constraints in
+    /// Window passes than there are views in the window"), crashing the app.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? STTextView else { return }
         let coord = context.coordinator
