@@ -3,3 +3,6 @@ DerivedData/
 .build/
 .DS_Store
 xcuserdata/
+docs/superpowers/
+docs/plans/
+docs/specs/
