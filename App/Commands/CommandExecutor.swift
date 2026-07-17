@@ -25,6 +25,9 @@ struct EditorCommandContext {
     let hostID: AnyHashable
     /// Project windows render the output panel; note windows fall back to a new note.
     let panelCapable: Bool
+    /// File's `lastPathComponent` for project tabs; the note's derived title for notes.
+    /// Used for the print job title (Task 5) — not part of the shell-command environment.
+    let displayName: String
     let languageID: String?
     let fileURL: URL?
     let projectRoot: URL?
@@ -44,12 +47,14 @@ struct EditorCommandContext {
         panelCapable: Bool,
         textView: @autoclosure @escaping () -> STTextView?,
         languageID: String?,
+        displayName: String,
         fileURL: URL? = nil,
         projectRoot: URL? = nil
     ) -> EditorCommandContext {
         EditorCommandContext(
             hostID: hostID,
             panelCapable: panelCapable,
+            displayName: displayName,
             languageID: languageID,
             fileURL: fileURL,
             projectRoot: projectRoot,

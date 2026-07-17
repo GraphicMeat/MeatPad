@@ -134,7 +134,8 @@ private struct NoteDetailEditor: View {
             hostID: ObjectIdentifier(snippetController),
             panelCapable: false,
             textView: snippetController.textView,
-            languageID: viewModel.language?.id
+            languageID: viewModel.language?.id,
+            displayName: viewModel.title
         ))
         .sheet(isPresented: filterSheetShown) {
             if let context = executor.filterContext {

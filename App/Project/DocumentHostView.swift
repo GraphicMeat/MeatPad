@@ -62,6 +62,7 @@ private struct EditorPane: View {
             panelCapable: true,
             textView: snippetController.textView,
             languageID: editor.language?.id,
+            displayName: url.lastPathComponent,
             fileURL: url,
             projectRoot: project.root
         ))

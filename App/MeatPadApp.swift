@@ -40,6 +40,7 @@ struct MeatPadApp: App {
             // plain-text only and never adopts NSFontPanel, so that menu was dead weight
             // and its Cmd+T would otherwise race our quick-open binding below.
             CommandGroup(replacing: .textFormatting) { }
+            CommandGroup(replacing: .printItem) { PrintCommand() }
             CommandGroup(after: .toolbar) {
                 Menu("Language") { LanguageCommands() }
                 QuickOpenCommand()
@@ -168,6 +169,18 @@ private struct ProjectFileCommands: View {
             }
         }
         .keyboardShortcut("w", modifiers: .command)
+    }
+}
+
+/// Cmd+P: prints the focused editor's document. Disabled with no editor focused —
+/// same `@FocusedValue` routing as the other editor-command-context menu items.
+private struct PrintCommand: View {
+    @FocusedValue(\.editorCommandContext) private var context
+
+    var body: some View {
+        Button("Print…") { context.map(PrintController.print) }
+            .keyboardShortcut("p", modifiers: .command)
+            .disabled(context == nil)
     }
 }
 
