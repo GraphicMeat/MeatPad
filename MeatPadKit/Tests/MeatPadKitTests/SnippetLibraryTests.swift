@@ -49,6 +49,22 @@ final class SnippetLibraryTests: XCTestCase {
         XCTAssertTrue(library.all.contains(snippet))
     }
 
+    func testAddingSameIDTwiceReplacesInPlaceInsteadOfAppending() throws {
+        let library = makeLibrary()
+        let snippet = Snippet(name: "My Snippet", trigger: "mine", languageIDs: ["swift"], body: "$0")
+
+        try library.add(snippet)
+        var changed = snippet
+        changed.body = "changed $0"
+        try library.add(changed)
+
+        XCTAssertEqual(library.userSnippets.count, 1)
+        XCTAssertEqual(library.userSnippets.first?.body, "changed $0")
+
+        let contents = try FileManager.default.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)
+        XCTAssertEqual(contents.filter { $0.pathExtension == "json" }.count, 1)
+    }
+
     // MARK: - update
 
     func testUpdateRewritesFile() throws {
@@ -64,6 +80,15 @@ final class SnippetLibraryTests: XCTestCase {
         let fileURL = tempDir.appendingPathComponent("\(snippet.id.uuidString).json")
         let reloaded = try JSONDecoder().decode(Snippet.self, from: Data(contentsOf: fileURL))
         XCTAssertEqual(reloaded.body, "changed $0")
+    }
+
+    func testUpdateUnknownIDThrowsNotFound() {
+        let library = makeLibrary()
+        let snippet = Snippet(name: "Ghost", trigger: "ghost", languageIDs: [], body: "$0")
+
+        XCTAssertThrowsError(try library.update(snippet)) { error in
+            XCTAssertEqual(error as? SnippetLibraryError, .notFound(snippet.id))
+        }
     }
 
     // MARK: - delete
@@ -121,13 +146,8 @@ final class SnippetLibraryTests: XCTestCase {
     }
 
     func testAllLanguageUserSnippetShadowsAllLanguageBuiltinWithSameTrigger() throws {
-        // Craft a collision: an all-language user snippet with a trigger that collides
-        // with a builtin that is itself all-language scoped, by reusing a builtin trigger
-        // but declaring the override with empty languageIDs to hit the all-vs-all case
-        // when the builtin also has empty scope. Markdown "link" is all-language? No —
-        // builtins are language-scoped, so instead verify overlap logic directly: an
-        // all-language user snippet overlaps (and shadows) a specific-language builtin
-        // with the same trigger, since empty scope is treated as overlapping everything.
+        // Empty scope overlaps everything, so an all-language user snippet shadows even
+        // a specific-language builtin sharing its trigger.
         let library = makeLibrary()
         let builtin = BuiltinSnippets.all.first(where: { $0.trigger == "func" && $0.languageIDs.contains("swift") })
         XCTAssertNotNil(builtin)
@@ -142,20 +162,14 @@ final class SnippetLibraryTests: XCTestCase {
 
     func testResolutionPrefersExactLanguageUserOverEverything() throws {
         let library = makeLibrary()
-        let exactUser = Snippet(name: "A", trigger: "t", languageIDs: ["swift"], body: "exact-user")
-        let allLangUser = Snippet(name: "B", trigger: "t", languageIDs: [], body: "all-user")
-        let exactBuiltin = Snippet(name: "C", trigger: "t", languageIDs: ["swift"], body: "exact-builtin")
-        let allLangBuiltin = Snippet(name: "D", trigger: "t", languageIDs: [], body: "all-builtin")
+        // "func"/"swift" is a real builtin trigger; the exact-language user override
+        // must win over the user's own all-language snippet and both builtin tiers.
+        let exactUser = Snippet(name: "A", trigger: "func", languageIDs: ["swift"], body: "exact-user")
+        let allLangUser = Snippet(name: "B", trigger: "func", languageIDs: [], body: "all-user")
         try library.add(allLangUser)
         try library.add(exactUser)
-        // Simulate builtins by adding user snippets for languages that would collide;
-        // instead directly test via a crafted scenario using only user snippets plus
-        // real builtins is fragile, so exercise tiers with `snippet(trigger:languageID:)`
-        // against genuinely distinct triggers to avoid coupling to BuiltinSnippets content.
-        _ = exactBuiltin
-        _ = allLangBuiltin
 
-        let resolved = library.snippet(trigger: "t", languageID: "swift")
+        let resolved = library.snippet(trigger: "func", languageID: "swift")
         XCTAssertEqual(resolved, exactUser)
     }
 

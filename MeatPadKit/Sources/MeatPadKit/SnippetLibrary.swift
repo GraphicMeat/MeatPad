@@ -1,5 +1,9 @@
 import Foundation
 
+public enum SnippetLibraryError: Error, Equatable {
+    case notFound(UUID)
+}
+
 /// A TextMate-style snippet: a trigger word that expands to `body` via `SnippetParser`.
 /// `languageIDs` scopes the snippet to specific `Language.id` values; an empty array
 /// means "all languages".
@@ -80,18 +84,22 @@ public final class SnippetLibrary: ObservableObject {
             .sorted { $0.name < $1.name }
     }
 
+    /// One file per id: an id already present is replaced in place rather than appended.
     public func add(_ snippet: Snippet) throws {
-        try write(snippet)
-        userSnippets.append(snippet)
-    }
-
-    public func update(_ snippet: Snippet) throws {
         try write(snippet)
         if let index = userSnippets.firstIndex(where: { $0.id == snippet.id }) {
             userSnippets[index] = snippet
         } else {
             userSnippets.append(snippet)
         }
+    }
+
+    public func update(_ snippet: Snippet) throws {
+        guard let index = userSnippets.firstIndex(where: { $0.id == snippet.id }) else {
+            throw SnippetLibraryError.notFound(snippet.id)
+        }
+        try write(snippet)
+        userSnippets[index] = snippet
     }
 
     public func delete(id: UUID) throws {
