@@ -100,8 +100,14 @@ final class NoteEditorViewModel: ObservableObject {
     /// Hooks into this note's hosting window: restores the persisted frame once, then
     /// observes close (flush pending autosave) and move/resize (persist the new frame,
     /// debounced — window drags fire these notifications continuously).
+    ///
+    /// Last-attach-wins: a shared VM can outlive its standalone window (the browser's
+    /// detail pane keeps it alive after that window closes), so a reopen must replace
+    /// any observers left from the previous window rather than bailing out. WindowGroup
+    /// dedup guarantees at most one live NoteWindow per note, so there's never a second
+    /// window whose observers this would clobber.
     func attach(window: NSWindow) {
-        guard windowObservers.isEmpty else { return }
+        detachWindowObservers()
 
         if let saved = store.notes.first(where: { $0.id == noteID })?.windowFrame {
             let frame = NSRectFromString(saved)
@@ -120,7 +126,12 @@ final class NoteEditorViewModel: ObservableObject {
         windowObservers.append(center.addObserver(
             forName: NSWindow.willCloseNotification, object: window, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.flush() }
+            MainActor.assumeIsolated {
+                self?.flush()
+                // The window is gone; drop its observers now instead of letting them
+                // linger while the VM lives on in another surface.
+                self?.detachWindowObservers()
+            }
         })
         // didResize (not didEndLiveResize): also catches non-live resizes like the zoom
         // button; the debounce absorbs the continuous stream during a live drag.
@@ -131,6 +142,15 @@ final class NoteEditorViewModel: ObservableObject {
                 MainActor.assumeIsolated { self?.windowFrameDidChange(window) }
             })
         }
+    }
+
+    /// Same cleanup deinit performs, callable while the VM is still alive (deinit keeps
+    /// its own inline copy: it's nonisolated and can't call into this @MainActor method).
+    private func detachWindowObservers() {
+        for observer in windowObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        windowObservers.removeAll()
     }
 
     private func windowFrameDidChange(_ window: NSWindow?) {
