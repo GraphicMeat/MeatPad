@@ -138,11 +138,17 @@ fi
 find_sparkle_tool() {
   local tool_name="$1"
   local hit
-  hit="$(find "$HOME/Library/Developer/Xcode/DerivedData" \
+  # DerivedData is shared across every Xcode project on this machine, so a
+  # plain glob can match some *other* project's cached Sparkle artifact
+  # (wrong version, and not even guaranteed to exist next time). Scope to
+  # this project's own MeatPad-* DerivedData dirs, and if more than one
+  # exists (stale + fresh), take the most recently built one.
+  hit="$(find "$HOME/Library/Developer/Xcode/DerivedData"/MeatPad-* \
     -type f -path "*/SourcePackages/artifacts/sparkle/Sparkle/bin/${tool_name}" \
-    -perm -u+x 2>/dev/null | head -n1 || true)"
+    -perm -u+x 2>/dev/null | xargs -I{} stat -f '%m %N' {} 2>/dev/null \
+    | sort -rn | head -n1 | cut -d' ' -f2- || true)"
   if [[ -z "$hit" ]]; then
-    fail "could not locate Sparkle tool '$tool_name' under ~/Library/Developer/Xcode/DerivedData/*/SourcePackages/artifacts/sparkle/Sparkle/bin/. Build the app once in Xcode (or run xcodebuild -resolvePackageDependencies) so SwiftPM resolves the Sparkle artifact, then re-run."
+    fail "could not locate Sparkle tool '$tool_name' under ~/Library/Developer/Xcode/DerivedData/MeatPad-*/SourcePackages/artifacts/sparkle/Sparkle/bin/. Build the app once (this script's own xcodebuild archive above resolves it) so SwiftPM fetches the Sparkle artifact, then re-run."
   fi
   echo "$hit"
 }
