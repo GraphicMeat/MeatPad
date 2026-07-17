@@ -189,6 +189,15 @@ xcodebuild -exportArchive \
 [[ -d "$APP_PATH" ]] || fail "export did not produce $APP_PATH"
 log "exported: $APP_PATH"
 
+# xcodebuild's workspace-level SwiftPM resolution can incidentally rewrite
+# MeatPadKit/Package.resolved (pulling in the app's Sparkle dependency even
+# though MeatPadKit itself doesn't depend on it). That's not a real lockfile
+# change, so discard it rather than leaving the tree dirty for future runs.
+if ! git -C "$ROOT_DIR" diff --quiet -- MeatPadKit/Package.resolved 2>/dev/null; then
+  git -C "$ROOT_DIR" checkout -- MeatPadKit/Package.resolved
+  log "reverted incidental MeatPadKit/Package.resolved churn from package resolution"
+fi
+
 codesign -dv --verbose=2 "$APP_PATH" 2>&1 | tee "$RELEASE_DIR/codesign-check.txt"
 if ! grep -q "Authority=Developer ID Application: MB Modernios Aplikacijos" "$RELEASE_DIR/codesign-check.txt"; then
   fail "codesign check failed: $APP_PATH is not signed with '$SIGN_IDENTITY'"
