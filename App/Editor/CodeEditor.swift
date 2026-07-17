@@ -53,6 +53,8 @@ struct CodeEditor: NSViewRepresentable {
         textView.onInsertBacktab = { [weak coord] in MainActor.assumeIsolated { coord?.snippetBacktab() ?? false } }
         textView.onCancel = { [weak coord] in MainActor.assumeIsolated { coord?.snippetCancel() ?? false } }
         textView.onCompletionTrigger = { [weak coord] in MainActor.assumeIsolated { coord?.triggerCompletion() ?? false } }
+        textView.onFoldToggle = { [weak coord] fold in MainActor.assumeIsolated { coord?.foldToggle(fold: fold) ?? false } }
+        coord.foldController.attach(to: textView)
 
         textView.textDelegate = coord
         textView.showsLineNumbers = true
@@ -132,6 +134,10 @@ struct CodeEditor: NSViewRepresentable {
         /// no external consumer (no menu item reaches into it), so it's just owned here rather
         /// than threaded through `CodeEditor` as a parameter.
         private let completionController = CompletionController()
+        /// Per-editor-instance fold state (regions, folded set, gutter chevrons). Owned here so
+        /// it lives and dies with the view — never persisted. Recomputed on the highlight
+        /// debounce (see `applyHighlight`).
+        let foldController = FoldController()
         /// The completion popup is a child window pinned at screen coordinates — it does not
         /// track content scrolling, so a manual scroll must dismiss it. Typing near the
         /// viewport edge autoscrolls the caret and fires the same bounds notification; the
@@ -175,6 +181,12 @@ struct CodeEditor: NSViewRepresentable {
         func snippetCancel() -> Bool {
             guard let textView, let controller = parent.snippetController else { return false }
             return controller.handleEscape(textView: textView)
+        }
+
+        /// Cmd+Opt+Left / Cmd+Opt+Right routed from `SnippetTextView.keyDown`. Consumed only
+        /// when a fold region actually matched the caret.
+        func foldToggle(fold: Bool) -> Bool {
+            fold ? foldController.foldAtCaret() : foldController.unfoldAtCaret()
         }
 
         /// Always consumes Ctrl+Space — the key has no prior meaning in this editor.
@@ -257,6 +269,10 @@ struct CodeEditor: NSViewRepresentable {
         /// Full-document reparse + reapply. ponytail: whole-doc every time; fine at P1
         /// scale, swap for a visible-range pass if large files get janky.
         func applyHighlight() {
+            // Fold regions ride the same debounce cadence as highlighting — recompute here so
+            // the gutter chevrons track edits. Runs even for an empty/unhighlighted buffer so a
+            // doc that was just cleared drops its stale chevrons.
+            foldController.refresh()
             guard let textView, let highlighter else { return }
             let source = textView.text ?? ""
             let full = NSRange(location: 0, length: (source as NSString).length)

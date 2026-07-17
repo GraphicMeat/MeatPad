@@ -20,6 +20,8 @@ final class SnippetTextView: STTextView {
     var onInsertBacktab: (() -> Bool)?
     var onCancel: (() -> Bool)?
     var onCompletionTrigger: (() -> Bool)?
+    /// Fold (true) / unfold (false) the region at the caret. Returns true to consume the key.
+    var onFoldToggle: ((_ fold: Bool) -> Bool)?
 
     override func insertTab(_ sender: Any?) {
         if onInsertTab?() == true { return }
@@ -52,6 +54,14 @@ final class SnippetTextView: STTextView {
            // with Caps Lock engaged too.
            event.modifierFlags.intersection([.command, .option, .shift, .control]) == .control,
            onCompletionTrigger?() == true {
+            return
+        }
+        // Cmd+Opt+Left folds the region at the caret, Cmd+Opt+Right unfolds it. No text-editing
+        // binding claims these chords, so intercepting here (rather than a menu item) keeps the
+        // whole editor-key surface in one place — the same seam as Tab/Esc/Ctrl+Space.
+        if event.modifierFlags.intersection([.command, .option, .shift, .control]) == [.command, .option],
+           event.keyCode == 123 || event.keyCode == 124, // kVK_LeftArrow / kVK_RightArrow
+           onFoldToggle?(event.keyCode == 123) == true {
             return
         }
         super.keyDown(with: event)
