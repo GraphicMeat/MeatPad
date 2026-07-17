@@ -9,3 +9,4 @@ docs/specs/
 build/
 MeatPadKit/build/
 release/
+App/Info.plist
