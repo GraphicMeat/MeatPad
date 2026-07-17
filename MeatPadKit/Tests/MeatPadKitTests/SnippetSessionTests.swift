@@ -179,4 +179,37 @@ final class SnippetSessionTests: XCTestCase {
         ])
         XCTAssertEqual(s.currentStopRanges, [0..<5, 6..<11, 12..<17])
     }
+
+    /// Regression: a child stop with its OWN mirror nested inside a mirrored parent.
+    /// Returned edits must all be in post-primary-edit (pre-splice) coordinates so
+    /// right-to-left host application never goes out of range — capturing ranges
+    /// mid-sync returned an ancestor range shifted past the buffer end (crash).
+    func testChildMirrorInsideMirroredParentAppliesCleanly() throws {
+        let s = try session("${1:${2:a} $2} $1")
+        XCTAssertEqual(s.insertText, "a a a a")
+        XCTAssertTrue(s.next()) // -> stop 2 primary at 0..<1
+        XCTAssertEqual(s.currentStopRanges, [0..<1, 2..<3])
+
+        // Host applies the primary edit first: "XY a a a"
+        var buffer = Array("XY a a a".utf16)
+        let edits = s.bufferDidChange(range: 0..<1, replacement: "XY")
+        // Descending, single coordinate space: parent mirror ("a a" at 5..<8 pre-splice),
+        // then child's own mirror (3..<4).
+        XCTAssertEqual(edits, [
+            MirrorEdit(range: 5..<8, replacement: "XY XY"),
+            MirrorEdit(range: 3..<4, replacement: "XY"),
+        ])
+
+        // Simulate sequential host application in the returned order — must never
+        // touch out-of-range indices, and must converge on the fully synced buffer.
+        for edit in edits {
+            XCTAssertLessThanOrEqual(edit.range.upperBound, buffer.count, "edit exceeds buffer")
+            buffer.replaceSubrange(edit.range, with: Array(edit.replacement.utf16))
+        }
+        XCTAssertEqual(String(utf16CodeUnits: buffer, count: buffer.count), "XY XY XY XY")
+
+        // Internal bookkeeping ends fully synced too.
+        XCTAssertTrue(s.previous()) // back to stop 1
+        XCTAssertEqual(s.currentStopRanges, [0..<5, 6..<11])
+    }
 }

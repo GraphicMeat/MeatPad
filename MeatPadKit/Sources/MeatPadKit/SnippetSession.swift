@@ -179,22 +179,33 @@ public final class SnippetSession {
         // geometrically contains it — e.g. "${1:${2:a}} $1": editing $2 must also
         // refresh the parent $1's trailing mirror, not just $2's own mirrors.
         let curPrimary = instances[pSlot]
+        // Innermost-first so each parent's newText is computed after its children synced.
         let ancestorIndices = instances
             .filter { $0.isPrimary && $0.index != cur && $0.start <= curPrimary.start && curPrimary.end <= $0.end }
+            .sorted { ($0.end - $0.start) < ($1.end - $1.start) }
             .map(\.index)
 
+        // Capture EVERY group's mirror ranges up front, in post-primary-edit coordinates —
+        // before any internal mirror splice shifts them. All returned ranges then share one
+        // coordinate space; sorted descending, right-to-left host application keeps each
+        // leftward range valid (the same invariant as the single-level path). Capturing
+        // inside the sync loop instead returned ranges already shifted by earlier groups'
+        // splices — an out-of-range MirrorEdit and a host-side crash.
+        let groups: [(stopIndex: Int, captures: [(slot: Int, range: Range<Int>)])] =
+            ([cur] + ancestorIndices).compactMap { stopIndex in
+                let mirrorSlots = instances.indices.filter { instances[$0].index == stopIndex && !instances[$0].isPrimary }
+                guard !mirrorSlots.isEmpty else { return nil }
+                return (stopIndex, mirrorSlots.map { ($0, instances[$0].start ..< instances[$0].end) })
+            }
+
         var edits: [MirrorEdit] = []
-        for stopIndex in [cur] + ancestorIndices {
-            guard let primarySlot = instances.firstIndex(where: { $0.index == stopIndex && $0.isPrimary }) else { continue }
+        for group in groups {
+            guard let primarySlot = instances.firstIndex(where: { $0.index == group.stopIndex && $0.isPrimary }) else { continue }
             let newText = instances[primarySlot].text
-            let mirrorSlots = instances.indices.filter { instances[$0].index == stopIndex && !instances[$0].isPrimary }
-            guard !mirrorSlots.isEmpty else { continue }
+            edits += group.captures.map { MirrorEdit(range: $0.range, replacement: newText) }
 
-            // Capture returned edits in post-primary-edit coordinates before mutating.
-            edits += mirrorSlots.map { MirrorEdit(range: instances[$0].start ..< instances[$0].end, replacement: newText) }
-
-            // Bring internal state in sync, applying mirror edits left-to-right.
-            for slot in mirrorSlots.sorted(by: { instances[$0].start < instances[$1].start }) {
+            // Bring internal state in sync, applying this group's splices left-to-right.
+            for slot in group.captures.map(\.slot).sorted(by: { instances[$0].start < instances[$1].start }) {
                 let m = instances[slot]
                 let dM = newText.utf16.count - m.length
                 applyEdit(start: m.start, end: m.end, replacement: newText, delta: dM, skipping: slot)
