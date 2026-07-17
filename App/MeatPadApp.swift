@@ -247,7 +247,7 @@ private struct MacroCommandItems: View {
 
         Button("Replay Last Macro") { replay(controller.lastMacro) }
             .keyboardShortcut("m", modifiers: [.command, .shift])
-            .disabled(controller.lastMacro.isEmpty || context == nil)
+            .disabled(controller.lastMacro.isEmpty || context == nil || controller.isRecording)
 
         Button("Save Last Macro As…") { promptSaveLastMacro() }
             .disabled(controller.lastMacro.isEmpty)
@@ -256,7 +256,7 @@ private struct MacroCommandItems: View {
             Divider()
             ForEach(store.macros) { macro in
                 Button(macro.name) { replay(macro.events) }
-                    .disabled(context == nil)
+                    .disabled(context == nil || controller.isRecording)
             }
         }
     }
@@ -281,7 +281,18 @@ private struct MacroCommandItems: View {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
-        try? store.add(Macro(name: name, events: controller.lastMacro))
+        do {
+            try store.add(Macro(name: name, events: controller.lastMacro))
+        } catch {
+            // No window/sheet hosts this command-menu item, so a SwiftUI `.alert` has
+            // nothing to attach to — same blocking-`NSAlert` style as the prompt above
+            // and `ProjectViewModel.presentError`.
+            let errorAlert = NSAlert()
+            errorAlert.messageText = "Couldn't Save Macro"
+            errorAlert.informativeText = error.localizedDescription
+            errorAlert.addButton(withTitle: "OK")
+            errorAlert.runModal()
+        }
     }
 }
 

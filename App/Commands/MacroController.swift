@@ -70,7 +70,9 @@ final class MacroController: ObservableObject {
     }
 
     private func isStopShortcut(_ event: NSEvent) -> Bool {
+        // Masked equality (not `.contains`): a superset check would wrongly swallow
+        // Cmd+Opt+Shift+M as if it were the plain Cmd+Opt+M stop shortcut.
         event.charactersIgnoringModifiers?.lowercased() == Self.stopShortcutCharacter
-            && event.modifierFlags.contains(Self.stopShortcutModifiers)
+            && event.modifierFlags.intersection([.command, .option, .shift, .control]) == Self.stopShortcutModifiers
     }
 }
