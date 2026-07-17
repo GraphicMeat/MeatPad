@@ -46,6 +46,8 @@ struct ProjectWindow: View {
         .focusedSceneValue(\.projectViewModel, viewModel)
         .focusedSceneValue(\.projectSearchViewModel, searchViewModel)
         .background(ProjectWindowAccessor(viewModel: viewModel))
+        .onAppear { AppModel.shared.projectWindowDidAppear(viewModel) }
+        .onDisappear { AppModel.shared.projectWindowDidDisappear(viewModel) }
     }
 }
 

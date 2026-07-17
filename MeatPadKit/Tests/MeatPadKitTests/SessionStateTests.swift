@@ -43,4 +43,30 @@ final class SessionStateTests: XCTestCase {
 
         XCTAssertEqual(SessionState.load(from: url), second)
     }
+
+    /// v1 session.json files (written before openProjects existed) have no such key —
+    /// they must still decode, defaulting to an empty array, not fail to load entirely.
+    func testV1JSONWithoutOpenProjectsKeyDecodesWithEmptyProjects() throws {
+        let noteID = UUID()
+        let v1JSON = """
+        {"openNoteIDs":["\(noteID.uuidString)"],"browserOpen":true}
+        """
+        try Data(v1JSON.utf8).write(to: url)
+
+        let loaded = SessionState.load(from: url)
+
+        XCTAssertEqual(loaded, SessionState(openNoteIDs: [noteID], browserOpen: true, openProjects: []))
+    }
+
+    func testOpenProjectsRoundTrip() throws {
+        let projects = [
+            ProjectSession(root: "/tmp/one", openTabs: ["/tmp/one/a.txt", "/tmp/one/b.txt"], selectedTab: "/tmp/one/b.txt"),
+            ProjectSession(root: "/tmp/two", openTabs: [], selectedTab: nil)
+        ]
+        let state = SessionState(openNoteIDs: [UUID()], browserOpen: false, openProjects: projects)
+
+        try state.save(to: url)
+
+        XCTAssertEqual(SessionState.load(from: url), state)
+    }
 }

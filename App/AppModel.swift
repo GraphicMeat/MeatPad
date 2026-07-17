@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 import MeatPadKit
@@ -35,8 +36,18 @@ final class AppModel: ObservableObject {
     /// pre-open the file as a tab. Plain var (consumed once, imperatively).
     var pendingFileOpen: URL?
 
+    /// Saved tabs/selection for a project window about to be reopened by session
+    /// restore, keyed by standardized root URL. `ProjectViewModel.init` consumes (and
+    /// removes) its own entry, same one-shot pattern as `pendingFileOpen`.
+    var pendingProjectSessions: [URL: ProjectSession] = [:]
+
     private var openNoteIDs: [UUID] = []
     private var browserOpen = false
+    /// Open project windows, keyed by instance identity (not root — the same folder can
+    /// be open in two windows, and each needs its own tabs/selection tracked). Combine
+    /// sinks re-schedule the session write whenever a tracked VM's tabs/selection change.
+    private var projectViewModels: [ObjectIdentifier: ProjectViewModel] = [:]
+    private var projectViewModelSinks: [ObjectIdentifier: AnyCancellable] = [:]
     private let sessionDebouncer = Debouncer(delay: 0.5)
 
     private static let themeDefaultsKey = "themeID"
@@ -103,16 +114,41 @@ final class AppModel: ObservableObject {
         scheduleSessionSave()
     }
 
+    /// Registers a project window so its tabs/selection are captured on every session
+    /// write. Sinks the VM's `objectWillChange` so tab open/close/select changes
+    /// schedule a debounced save without any per-action wiring at the call sites.
+    func projectWindowDidAppear(_ viewModel: ProjectViewModel) {
+        let id = ObjectIdentifier(viewModel)
+        guard projectViewModels[id] == nil else { return }
+        projectViewModels[id] = viewModel
+        projectViewModelSinks[id] = viewModel.objectWillChange.sink { [weak self] _ in
+            self?.scheduleSessionSave()
+        }
+        scheduleSessionSave()
+    }
+
+    func projectWindowDidDisappear(_ viewModel: ProjectViewModel) {
+        let id = ObjectIdentifier(viewModel)
+        projectViewModels.removeValue(forKey: id)
+        projectViewModelSinks.removeValue(forKey: id)
+        scheduleSessionSave()
+    }
+
     /// Called from `applicationDidFinishLaunching`: reopens whatever was open at last
-    /// quit, dropping ids for notes that no longer exist on disk. Falls back to one
-    /// fresh note when there's nothing valid to restore, so launch never shows zero
-    /// windows.
+    /// quit, dropping ids for notes and project roots that no longer exist on disk.
+    /// Falls back to one fresh note when there's nothing valid to restore, so launch
+    /// never shows zero windows. Duplicate saved roots collapse to one restored window —
+    /// `WindowGroup(for:)` dedups by value.
     func restoreSession() {
         guard let openWindowAction else { return }
         let state = SessionState.load(from: Self.sessionURL)
         let idsToRestore = (state?.openNoteIDs ?? []).filter { id in noteStore.notes.contains { $0.id == id } }
+        let projectsToRestore = (state?.openProjects ?? []).filter { session in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: session.root, isDirectory: &isDirectory) && isDirectory.boolValue
+        }
 
-        guard !idsToRestore.isEmpty || state?.browserOpen == true else {
+        guard !idsToRestore.isEmpty || state?.browserOpen == true || !projectsToRestore.isEmpty else {
             if let note = try? noteStore.createNote() {
                 openWindowAction(value: note.id)
             }
@@ -121,13 +157,22 @@ final class AppModel: ObservableObject {
 
         for id in idsToRestore { openWindowAction(value: id) }
         if state?.browserOpen == true { openWindowAction(id: "all-notes") }
+        for session in projectsToRestore {
+            let rootURL = URL(fileURLWithPath: session.root).standardizedFileURL
+            pendingProjectSessions[rootURL] = session
+            openWindowAction(value: rootURL)
+        }
     }
 
     /// Immediate, non-debounced write — used on `applicationWillTerminate` so the last
     /// window open/close right before quit isn't lost to the pending debounce.
     func saveSessionNow() {
         sessionDebouncer.cancel()
-        try? SessionState(openNoteIDs: openNoteIDs, browserOpen: browserOpen).save(to: Self.sessionURL)
+        let openProjects = projectViewModels.values.map { vm in
+            ProjectSession(root: vm.root.path, openTabs: vm.tabs.map(\.path), selectedTab: vm.selectedTab?.path)
+        }
+        try? SessionState(openNoteIDs: openNoteIDs, browserOpen: browserOpen, openProjects: openProjects)
+            .save(to: Self.sessionURL)
     }
 
     private func scheduleSessionSave() {

@@ -49,9 +49,21 @@ final class ProjectViewModel: ObservableObject {
             guard let self else { return }
             self.tree = ProjectScanner.scan(root: self.root)
         }
-        // Task 6 leftover: Cmd+O on a file opens its parent as a project and pre-opens the
-        // file as a tab. AppModel stashes the file; consume it if it lives under this root.
-        if let pending = AppModel.shared.pendingFileOpen,
+        // Session restore: AppModel stashed this root's saved tabs/selection keyed by
+        // standardized URL just before calling openWindow. Consume once; drop tabs for
+        // files that vanished since the session was saved, falling back to the first
+        // surviving tab when the saved selection is gone too.
+        if let session = AppModel.shared.pendingProjectSessions.removeValue(forKey: root.standardizedFileURL) {
+            let restoredTabs = session.openTabs
+                .map { URL(fileURLWithPath: $0) }
+                .filter { FileManager.default.fileExists(atPath: $0.path) }
+            tabs = restoredTabs
+            let savedSelection = session.selectedTab.map { URL(fileURLWithPath: $0) }
+            selectedTab = (savedSelection.flatMap { restoredTabs.contains($0) ? $0 : nil }) ?? restoredTabs.first
+        } else if let pending = AppModel.shared.pendingFileOpen,
+           // Task 6 leftover: Cmd+O on a file opens its parent as a project and
+           // pre-opens the file as a tab. AppModel stashes the file; consume it if it
+           // lives under this root.
            pending.deletingLastPathComponent().standardizedFileURL == root.standardizedFileURL {
             tabs = [pending]
             selectedTab = pending
