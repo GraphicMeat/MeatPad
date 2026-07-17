@@ -19,6 +19,10 @@ final class FileDocumentModelTests: XCTestCase {
         try Data(string.utf8).write(to: fileURL, options: .atomic)
     }
 
+    private func setMtime(_ date: Date) throws {
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: fileURL.path)
+    }
+
     // MARK: - init / load
 
     func testInitLoadsContentsFromDisk() throws {
@@ -26,6 +30,16 @@ final class FileDocumentModelTests: XCTestCase {
         let model = try FileDocumentModel(url: fileURL)
         XCTAssertEqual(model.contents, "Hello World")
         XCTAssertEqual(model.editedContents, "Hello World")
+        XCTAssertFalse(model.isDirty)
+    }
+
+    func testInitDecodesInvalidUTF8Lossily() throws {
+        // "Hi" + invalid bytes + "!" — must open (never refuse a text file), lossily.
+        try Data([0x48, 0x69, 0xFF, 0xC0, 0x21]).write(to: fileURL, options: .atomic)
+        let model = try FileDocumentModel(url: fileURL)
+        XCTAssertTrue(model.contents.hasPrefix("Hi"))
+        XCTAssertTrue(model.contents.contains("\u{FFFD}"))
+        XCTAssertTrue(model.contents.hasSuffix("!"))
         XCTAssertFalse(model.isDirty)
     }
 
@@ -82,9 +96,9 @@ final class FileDocumentModelTests: XCTestCase {
         try write("Original")
         let model = try FileDocumentModel(url: fileURL)
 
-        // Ensure the new mtime is strictly newer than the loaded snapshot.
-        Thread.sleep(forTimeInterval: 1.1)
         try write("Modified externally")
+        // Force a strictly newer mtime deterministically (no sleep, no fs-granularity flake).
+        try setMtime(Date().addingTimeInterval(10))
 
         XCTAssertEqual(model.checkExternalChange(), .changedOnDisk)
     }
@@ -102,10 +116,15 @@ final class FileDocumentModelTests: XCTestCase {
         try write("Original")
         let model = try FileDocumentModel(url: fileURL)
 
-        Thread.sleep(forTimeInterval: 1.1)
+        // Make the on-disk mtime strictly newer than the init snapshot, so a stale
+        // snapshot would report .changedOnDisk...
+        try setMtime(Date().addingTimeInterval(10))
+        XCTAssertEqual(model.checkExternalChange(), .changedOnDisk)
+
         model.editedContents = "Saved content"
         try model.save()
 
+        // ...and save() must have refreshed the snapshot to the post-write mtime.
         XCTAssertEqual(model.checkExternalChange(), .none)
     }
 }
