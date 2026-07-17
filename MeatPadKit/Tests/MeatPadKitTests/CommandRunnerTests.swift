@@ -72,6 +72,34 @@ final class CommandRunnerTests: XCTestCase {
         XCTAssertGreaterThan(result.stdout.utf8.count, 1_000_000)
     }
 
+    func testStdinToProcessThatNeverReadsItDoesNotCrash() async throws {
+        // Reproduces the SIGPIPE crash: `echo hi` exits immediately without ever
+        // reading stdin, so writing several MB to it must not raise SIGPIPE and
+        // take down the whole test process.
+        let runner = CommandRunner()
+        let hugeStdin = String(repeating: "x", count: 5_000_000)
+
+        let result = try await runner.run(script: "echo hi", stdin: hugeStdin, environment: [:])
+
+        XCTAssertEqual(result.stdout, "hi\n")
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertFalse(result.timedOut)
+    }
+
+    func testLargeStdoutAndStderrSimultaneouslyDoesNotDeadlock() async throws {
+        // ~300KB on each stream, interleaved, so neither pipe's drain can block
+        // waiting on the other.
+        let runner = CommandRunner()
+        let script = "for i in $(seq 1 3000); do printf '%0100d\\n' 0; printf '%0100d\\n' 1 1>&2; done"
+
+        let result = try await runner.run(script: script, stdin: nil, environment: [:], timeout: 10)
+
+        XCTAssertFalse(result.timedOut)
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertGreaterThanOrEqual(result.stdout.utf8.count, 256_000)
+        XCTAssertGreaterThanOrEqual(result.stderr.utf8.count, 256_000)
+    }
+
     // MARK: - cancellation
 
     func testTaskCancellationKillsProcessAndThrows() async throws {

@@ -71,8 +71,20 @@ public struct CommandResult: Equatable, Sendable {
 public struct CommandRunner: Sendable {
     private let shell: String
 
+    /// Ignoring SIGPIPE is required because writing stdin to a child that exits
+    /// without reading it (the common case for one-liners like `echo hi`) would
+    /// otherwise raise SIGPIPE and kill this ENTIRE host process, not just the
+    /// runner. Pipes have no per-write "ignore" flag (unlike socket MSG_NOSIGNAL),
+    /// so this is a global, process-wide disposition change — installed once,
+    /// lazily, the first time a `CommandRunner` is created.
+    private static let sigpipeIgnored: Bool = {
+        signal(SIGPIPE, SIG_IGN)
+        return true
+    }()
+
     public init(shell: String? = nil) {
         self.shell = shell ?? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        _ = Self.sigpipeIgnored
     }
 
     public func run(
@@ -116,17 +128,31 @@ public struct CommandRunner: Sendable {
         try process.run()
 
         if let stdin, let stdinPipe {
-            stdinPipe.fileHandleForWriting.write(Data(stdin.utf8))
+            // Off the calling task, and armed before the timeout/cancellation below:
+            // a child that never reads stdin leaves this blocked on a full pipe (or
+            // racing SIGPIPE once the child exits), and doing it inline here would
+            // delay arming the timeout timer and cancellation handler, hanging the
+            // cooperative-pool thread with no kill path.
+            let fd = stdinPipe.fileHandleForWriting.fileDescriptor
+            let data = Data(stdin.utf8)
+            DispatchQueue.global(qos: .utility).async {
+                Self.writeStdinAndClose(data, to: fd)
+            }
         }
-        try? stdinPipe?.fileHandleForWriting.close()
 
         let timedOut = TimedOutBox()
 
         return try await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 let timeoutWorkItem = DispatchWorkItem {
-                    timedOut.set(true)
-                    Self.terminate(process)
+                    // Only report timedOut if we actually found the process running
+                    // and signaled it here — otherwise a process that exits right at
+                    // the deadline (terminationHandler racing this already-started
+                    // work item, whose cancel() is now a no-op) gets misreported as
+                    // timed out despite finishing on its own.
+                    if Self.terminate(process) {
+                        timedOut.set(true)
+                    }
                 }
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timeoutWorkItem)
 
@@ -154,15 +180,45 @@ public struct CommandRunner: Sendable {
     }
 
     /// `terminate()` (SIGTERM) then a short grace period before SIGKILL, so a script
-    /// trapping SIGTERM can't hang the runner forever.
-    private static func terminate(_ process: Process) {
-        guard process.isRunning else { return }
+    /// trapping SIGTERM can't hang the runner forever. Returns whether it actually
+    /// found the process running and signaled it, so callers can distinguish "we
+    /// killed it" from "it was already gone" (used to avoid misreporting timedOut).
+    @discardableResult
+    private static func terminate(_ process: Process) -> Bool {
+        guard process.isRunning else { return false }
         process.terminate()
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
             if process.isRunning {
+                // ponytail: TOCTOU between this check and kill() — pid could in
+                // theory be reused by the time the signal lands. Accepted ceiling;
+                // revisit only if this ever fires against a real pid-reuse report.
                 kill(process.processIdentifier, SIGKILL)
             }
         }
+        return true
+    }
+
+    /// Writes `data` to `fd` in a retry loop, then always closes it — on success,
+    /// on EPIPE (child exited without reading), or on any other error. SIGPIPE is
+    /// ignored process-wide (see `sigpipeIgnored`), so a closed read end turns what
+    /// would otherwise be a fatal signal into a plain EPIPE return from `write`.
+    private static func writeStdinAndClose(_ data: Data, to fd: Int32) {
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            var ptr = raw.baseAddress
+            var remaining = raw.count
+            while remaining > 0, let p = ptr {
+                let n = write(fd, p, remaining)
+                if n > 0 {
+                    ptr = p.advanced(by: n)
+                    remaining -= n
+                } else if n == -1 && errno == EINTR {
+                    continue
+                } else {
+                    break // EPIPE (child gone) or other error: stop, nothing more to write
+                }
+            }
+        }
+        close(fd)
     }
 }
 
