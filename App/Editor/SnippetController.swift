@@ -39,10 +39,28 @@ final class SnippetTextView: STTextView {
     /// treats a not-currently-visible popup as "nothing to cancel, so trigger completion
     /// instead," which would make plain Esc a second way to open the Ctrl+Space popup.
     override func cancelOperation(_ sender: Any?) {
+        // Multi-caret collapse takes priority: with >1 caret/range, Esc collapses to the first
+        // BEFORE any snippet/completion handling.
+        if MultiCaretController.collapseToFirst(self) { return }
         if onCancel?() == true { return }
         if isCompletionActive {
             cancelComplete(sender)
         }
+    }
+
+    /// Option+Click appends a caret. STTextView consumes plain option-click for block/visual
+    /// selection and its `appendInsertionPointSelection` hook is module-internal, so snapshot the
+    /// current selections, let `super` place a single caret at the click (native point → caret
+    /// conversion, no gutter/scroll math), then merge the snapshot back via MultiCaretController.
+    override func mouseDown(with event: NSEvent) {
+        if event.type == .leftMouseDown,
+           event.modifierFlags.intersection([.command, .option, .shift, .control]) == .option {
+            let existing = textLayoutManager.textSelections
+            super.mouseDown(with: event)
+            MultiCaretController.appendCaret(to: self, keeping: existing)
+            return
+        }
+        super.mouseDown(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -97,6 +115,9 @@ final class SnippetController: ObservableObject {
     /// advance to the next stop (always consumed — a Tab inside a snippet never inserts a
     /// literal tab; the final Tab lands the caret on `$0` and ends the session).
     func handleTab(textView: STTextView, languageID: String?) -> Bool {
+        // With multiple carets active, Tab stays a literal tab across all of them (STTextView-native):
+        // no trigger expansion, no session.
+        if MultiCaretController.hasMultipleSelections(textView) { return false }
         if session != nil {
             advance(textView: textView)
             return true

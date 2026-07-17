@@ -53,6 +53,8 @@ final class WordCompletionViewController: STCompletionViewController {
     /// Ctrl+Space. `complete(_:)` drives everything else: it calls back into
     /// `completionItems(textView:)` below for candidates, and shows/positions the popup.
     func trigger(textView: STTextView) {
+        // No word-completion popup while multiple carets are active — there's no single prefix.
+        guard !MultiCaretController.hasMultipleSelections(textView) else { return }
         textView.complete(nil)
     }
 

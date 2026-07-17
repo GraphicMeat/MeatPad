@@ -49,6 +49,7 @@ struct MeatPadApp: App {
             // Route Cmd+F / Cmd+G through the responder chain to STTextView's
             // NSTextFinder integration. It reads the action from the sender's tag.
             CommandGroup(after: .textEditing) {
+                SelectNextOccurrenceCommand()
                 Button("Find…") { MeatPadApp.finder(.showFindInterface) }
                     .keyboardShortcut("f", modifiers: .command)
                 Button("Find Next") { MeatPadApp.finder(.nextMatch) }
@@ -169,6 +170,21 @@ private struct ProjectFileCommands: View {
             }
         }
         .keyboardShortcut("w", modifiers: .command)
+    }
+}
+
+/// Cmd+D: multi-caret "Select Next Occurrence" on the focused editor. Same `@FocusedValue`
+/// routing as the other editor-command-context items — disabled with no editor focused.
+private struct SelectNextOccurrenceCommand: View {
+    @FocusedValue(\.editorCommandContext) private var context
+
+    var body: some View {
+        Button("Select Next Occurrence") {
+            guard let context, let tv = context.textView() else { return }
+            MultiCaretController.selectNextOccurrence(in: tv)
+        }
+        .keyboardShortcut("d", modifiers: .command)
+        .disabled(context == nil)
     }
 }
 
