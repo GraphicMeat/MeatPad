@@ -70,7 +70,7 @@ TEAM_ID="YXDJG24NWG"
 SIGN_IDENTITY="Developer ID Application: MB Modernios Aplikacijos (${TEAM_ID})"
 NOTARY_PROFILE="meatpad-notary"
 BUNDLE_ID="com.thecoldzero.MeatPad"
-GH_REPO="thecoldzero/MeatPad"
+GH_REPO="rokas-ambrazevicius/MeatPad"
 SCHEME="MeatPad"
 PROJECT="MeatPad.xcodeproj"
 
