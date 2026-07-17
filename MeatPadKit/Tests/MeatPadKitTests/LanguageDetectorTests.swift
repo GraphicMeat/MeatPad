@@ -133,4 +133,39 @@ final class LanguageDetectorTests: XCTestCase {
     func testUnknownFileReturnsNil() {
         XCTAssertNil(LanguageDetector.detect(filename: "file.unknownext", contents: "no hints here"))
     }
+
+    // MARK: - Content-heuristic tier (lowest priority)
+
+    func testContentHeuristicDetectsPastedSwiftWithNilFilename() {
+        let contents = """
+        import Foundation
+
+        func greet(name: String) -> String {
+            let prefix = "Hello"
+            guard !name.isEmpty else { return prefix }
+            return prefix + ", " + name
+        }
+        """
+        XCTAssertEqual(LanguageDetector.detect(filename: nil, contents: contents)?.id, "swift")
+    }
+
+    func testExtensionBeatsContentHeuristic() {
+        // Python filename, unambiguous Go body: extension tier must win.
+        let contents = "package main\n\nimport \"fmt\"\n\nfunc main() {\n    x := 1\n    fmt.Println(x)\n}\n"
+        XCTAssertEqual(LanguageDetector.detect(filename: "main.py", contents: contents)?.id, "python")
+    }
+
+    func testShebangBeatsContentHeuristic() {
+        let contents = "#!/usr/bin/env python3\nfn main() {\n    let mut x = 0;\n    println!(\"{}\", x);\n}\n"
+        XCTAssertEqual(LanguageDetector.detect(filename: nil, contents: contents)?.id, "python")
+    }
+
+    func testUnknownExtensionFallsThroughToContentHeuristic() {
+        let contents = "package main\n\nimport \"fmt\"\n\nfunc main() {\n    x := 1\n    fmt.Println(x)\n}\n"
+        XCTAssertEqual(LanguageDetector.detect(filename: "notes.xyzzy", contents: contents)?.id, "go")
+    }
+
+    func testProseStillReturnsNilThroughDetect() {
+        XCTAssertNil(LanguageDetector.detect(filename: nil, contents: "meeting notes: discuss roadmap, then lunch"))
+    }
 }

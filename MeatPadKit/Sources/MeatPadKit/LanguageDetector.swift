@@ -1,7 +1,7 @@
 import Foundation
 
 /// Detects a `Language` from a filename and/or file contents.
-/// Priority: modeline (vim/emacs) > shebang > extension.
+/// Priority: modeline (vim/emacs) > shebang > extension > content heuristic.
 public enum LanguageDetector {
 
     /// Aliases for modeline tokens that don't spell the language id exactly:
@@ -17,6 +17,7 @@ public enum LanguageDetector {
         if let language = detectModeline(contents: contents) { return language }
         if let language = detectShebang(contents: contents) { return language }
         if let filename, let language = detectExtension(filename: filename) { return language }
+        if let language = ContentClassifier.classify(contents) { return language }
         return nil
     }
 
