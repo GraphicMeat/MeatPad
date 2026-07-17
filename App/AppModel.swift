@@ -10,6 +10,9 @@ final class AppModel: ObservableObject {
     static let shared = AppModel()
 
     let noteStore: NoteStore
+    /// User + builtin snippets, backed by `~/Library/Application Support/MeatPad/Snippets`
+    /// (sibling of Notes). One instance shared by every editor and the settings pane.
+    let snippetLibrary: SnippetLibrary
     @Published var theme: Theme {
         didSet { UserDefaults.standard.set(theme.id, forKey: Self.themeDefaultsKey) }
     }
@@ -66,6 +69,8 @@ final class AppModel: ObservableObject {
         } catch {
             fatalError("MeatPad couldn't set up its notes folder at \(NoteStore.defaultRoot().path): \(error)")
         }
+        let snippetsDir = NoteStore.defaultRoot().deletingLastPathComponent().appendingPathComponent("Snippets", isDirectory: true)
+        snippetLibrary = SnippetLibrary(userDirectory: snippetsDir)
         let savedID = UserDefaults.standard.string(forKey: Self.themeDefaultsKey)
         theme = savedID.flatMap { id in BuiltinThemes.all.first { $0.id == id } } ?? BuiltinThemes.defaultDark
 

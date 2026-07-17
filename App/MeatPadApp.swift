@@ -55,6 +55,10 @@ struct MeatPadApp: App {
                 Button("Find Previous") { MeatPadApp.finder(.previousMatch) }
                     .keyboardShortcut("g", modifiers: [.command, .shift])
             }
+            // Commands menu — introduced here with just Insert Snippet; Task 9 fills the rest.
+            CommandMenu("Commands") {
+                InsertSnippetCommands()
+            }
         }
 
         WindowGroup("Project", for: URL.self) { $folderURL in
@@ -188,6 +192,30 @@ private struct ProjectSearchCommand: View {
         }
         .keyboardShortcut("f", modifiers: [.command, .shift])
         .disabled(project == nil)
+    }
+}
+
+/// Commands ▸ Insert Snippet: the snippets in scope for the focused editor's language,
+/// name-sorted. Selecting one expands it at the caret exactly like a Tab trigger (starting a
+/// session). Disabled when no editor is focused.
+private struct InsertSnippetCommands: View {
+    @FocusedValue(\.snippetInsertion) private var insertion
+    @ObservedObject private var appModel = AppModel.shared
+
+    var body: some View {
+        Menu("Insert Snippet") {
+            if let insertion {
+                let snippets = appModel.snippetLibrary.snippets(forLanguageID: insertion.languageID)
+                if snippets.isEmpty {
+                    Button("No Snippets") {}.disabled(true)
+                } else {
+                    ForEach(snippets) { snippet in
+                        Button(snippet.name) { insertion.insert(snippet) }
+                    }
+                }
+            }
+        }
+        .disabled(insertion == nil)
     }
 }
 

@@ -29,6 +29,10 @@ struct CodeEditor: NSViewRepresentable {
     /// owner can clear its published target — clearing on confirmed consumption, never on
     /// a timer, means a reveal for a not-yet-open file can't be lost to render timing.
     var onRevealApplied: ((UUID) -> Void)? = nil
+    /// Live snippet expansion for this editor. Owned by the hosting window (so the Insert
+    /// Snippet menu can reach it too); the Coordinator wires its text view and routes Tab /
+    /// Shift+Tab / Esc and buffer edits into it. `nil` disables snippet handling entirely.
+    var snippetController: SnippetController? = nil
     var onCursorChange: (Int) -> Void
 
     /// SF Mono at the given point size.
@@ -39,10 +43,15 @@ struct CodeEditor: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = STTextView.scrollableTextView()
-        let textView = scrollView.documentView as! STTextView
+        let scrollView = SnippetTextView.scrollableTextView()
+        let textView = scrollView.documentView as! SnippetTextView
         let coord = context.coordinator
         coord.textView = textView
+
+        snippetController?.textView = textView
+        textView.onInsertTab = { [weak coord] in MainActor.assumeIsolated { coord?.snippetTab() ?? false } }
+        textView.onInsertBacktab = { [weak coord] in MainActor.assumeIsolated { coord?.snippetBacktab() ?? false } }
+        textView.onCancel = { [weak coord] in MainActor.assumeIsolated { coord?.snippetCancel() ?? false } }
 
         textView.textDelegate = coord
         textView.showsLineNumbers = true
@@ -109,8 +118,29 @@ struct CodeEditor: NSViewRepresentable {
         private var lastFontSize: CGFloat?
         private var lastSoftWrap: Bool?
         private var pendingHighlight: DispatchWorkItem?
+        /// Pre-edit range of the change in flight, captured in `willChangeTextIn` (where
+        /// buffer offsets are unambiguous) and consumed in `didChangeTextIn` — only while a
+        /// snippet session is live.
+        private var pendingEditRange: NSRange?
 
         init(_ parent: CodeEditor) { self.parent = parent }
+
+        // MARK: Snippet key-command forwarding (called from SnippetTextView overrides)
+
+        func snippetTab() -> Bool {
+            guard let textView, let controller = parent.snippetController else { return false }
+            return controller.handleTab(textView: textView, languageID: parent.language?.id)
+        }
+
+        func snippetBacktab() -> Bool {
+            guard let textView, let controller = parent.snippetController else { return false }
+            return controller.handleShiftTab(textView: textView)
+        }
+
+        func snippetCancel() -> Bool {
+            guard let textView, let controller = parent.snippetController else { return false }
+            return controller.handleEscape(textView: textView)
+        }
 
         func rebuildHighlighter(languageID: String?) {
             self.languageID = languageID
@@ -218,6 +248,26 @@ struct CodeEditor: NSViewRepresentable {
             MainActor.assumeIsolated {
                 guard let textView else { return }
                 parent.onCursorChange(textView.textSelection.location)
+                parent.snippetController?.caretDidMove(to: textView.textSelection.location)
+            }
+        }
+
+        // Snippet mirror sync needs the ranged edit callbacks: capture the pre-edit range in
+        // `willChange` (buffer offsets are stable there), act on it in `didChange` (buffer now
+        // holds the primary edit, so the session's returned mirror edits land in valid
+        // coordinates). Skipped entirely when no session is live.
+        nonisolated func textView(_ textView: STTextView, willChangeTextIn affectedCharRange: NSTextRange, replacementString: String) {
+            MainActor.assumeIsolated {
+                guard parent.snippetController?.isSessionActive == true else { return }
+                pendingEditRange = SnippetController.nsRange(affectedCharRange, in: textView.textContentManager)
+            }
+        }
+
+        nonisolated func textView(_ textView: STTextView, didChangeTextIn affectedCharRange: NSTextRange, replacementString: String) {
+            MainActor.assumeIsolated {
+                guard let controller = parent.snippetController, let range = pendingEditRange else { return }
+                pendingEditRange = nil
+                controller.textDidChange(range: range, replacement: replacementString, textView: textView)
             }
         }
     }

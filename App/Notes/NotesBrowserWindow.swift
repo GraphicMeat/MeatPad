@@ -92,6 +92,7 @@ struct NotesBrowserWindow: View {
 private struct NoteDetailEditor: View {
     @EnvironmentObject private var appModel: AppModel
     @StateObject private var viewModel: NoteEditorViewModel
+    @StateObject private var snippetController = SnippetController(library: AppModel.shared.snippetLibrary)
     private let onOpenInNewWindow: () -> Void
 
     init(noteID: UUID, onOpenInNewWindow: @escaping () -> Void) {
@@ -109,6 +110,7 @@ private struct NoteDetailEditor: View {
                     fontSize: appModel.fontSize,
                     softWrap: appModel.softWrap,
                     initialCursor: appModel.noteStore.notes.first(where: { $0.id == viewModel.noteID })?.cursor,
+                    snippetController: snippetController,
                     onCursorChange: viewModel.cursorDidChange
                 )
             } else {
@@ -117,6 +119,7 @@ private struct NoteDetailEditor: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .focusedSceneValue(\.snippetInsertion, SnippetInsertion(languageID: viewModel.language?.id, insert: { snippetController.insert($0) }))
         .toolbar {
             ToolbarItem {
                 Button("Open in New Window", action: onOpenInNewWindow)

@@ -7,6 +7,7 @@ import MeatPadKit
 struct NoteWindow: View {
     @EnvironmentObject private var appModel: AppModel
     @StateObject private var viewModel: NoteEditorViewModel
+    @StateObject private var snippetController = SnippetController(library: AppModel.shared.snippetLibrary)
 
     init(noteID: UUID) {
         _viewModel = StateObject(wrappedValue: EditorRegistry.shared.noteViewModel(for: noteID))
@@ -22,6 +23,7 @@ struct NoteWindow: View {
                     fontSize: appModel.fontSize,
                     softWrap: appModel.softWrap,
                     initialCursor: appModel.noteStore.notes.first(where: { $0.id == viewModel.noteID })?.cursor,
+                    snippetController: snippetController,
                     onCursorChange: viewModel.cursorDidChange
                 )
             } else {
@@ -30,6 +32,7 @@ struct NoteWindow: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .focusedSceneValue(\.snippetInsertion, SnippetInsertion(languageID: viewModel.language?.id, insert: { snippetController.insert($0) }))
         .frame(minWidth: 640, minHeight: 420)
         .navigationTitle(viewModel.title)
         .background(WindowAccessor(onWindow: viewModel.attach))

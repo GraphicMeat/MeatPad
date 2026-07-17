@@ -1,9 +1,25 @@
 import SwiftUI
 import MeatPadKit
 
-/// `Settings` scene content: theme, font size, soft wrap. All three are `@Published` on
-/// `AppModel` and persisted there, so changes apply live to every open editor.
+/// `Settings` scene: General (theme, font, wrap) + Snippets. Commands (Task 9) and Themes
+/// (Task 10) tabs are intentionally not added yet.
 struct SettingsView: View {
+    @EnvironmentObject private var appModel: AppModel
+
+    var body: some View {
+        TabView {
+            GeneralSettingsView()
+                .tabItem { Label("General", systemImage: "gearshape") }
+            SnippetsSettingsView(library: appModel.snippetLibrary)
+                .tabItem { Label("Snippets", systemImage: "text.badge.plus") }
+        }
+        .frame(width: 540, height: 460)
+    }
+}
+
+/// Theme, font size, soft wrap — all `@Published` on `AppModel` and persisted there, so
+/// changes apply live to every open editor.
+private struct GeneralSettingsView: View {
     @EnvironmentObject private var appModel: AppModel
 
     var body: some View {
@@ -23,7 +39,6 @@ struct SettingsView: View {
             Toggle("Soft Wrap", isOn: $appModel.softWrap)
         }
         .padding(20)
-        .frame(width: 360)
     }
 
     private var themeIDBinding: Binding<String> {

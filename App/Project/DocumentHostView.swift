@@ -41,6 +41,7 @@ private struct EditorPane: View {
     let url: URL
     @ObservedObject var project: ProjectViewModel
     @ObservedObject private var appModel = AppModel.shared
+    @StateObject private var snippetController = SnippetController(library: AppModel.shared.snippetLibrary)
 
     var body: some View {
         CodeEditor(
@@ -51,9 +52,11 @@ private struct EditorPane: View {
             softWrap: appModel.softWrap,
             reveal: project.revealTarget,
             onRevealApplied: { project.revealConsumed($0) },
+            snippetController: snippetController,
             onCursorChange: { _ in }
         )
         .overlay(alignment: .top) { banner }
+        .focusedSceneValue(\.snippetInsertion, SnippetInsertion(languageID: editor.language?.id, insert: { snippetController.insert($0) }))
     }
 
     @ViewBuilder
