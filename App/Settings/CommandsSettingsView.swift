@@ -209,18 +209,28 @@ enum BundleImportRunner {
     }
 
     private static func importAndApply(from url: URL) -> String {
+        let result: BundleImportResult
         do {
-            let result = try BundleImporter.importBundle(at: url)
-            for snippet in result.snippets {
-                try AppModel.shared.snippetLibrary.add(snippet)
-            }
-            for command in result.commands {
-                try AppModel.shared.commandStore.add(command)
-            }
-            let skipped = result.skippedSnippets + result.skippedCommands
-            return "Imported \(result.snippets.count) snippets, \(result.commands.count) commands (\(skipped) skipped)"
+            result = try BundleImporter.importBundle(at: url)
         } catch {
             return "Couldn't import bundle: \(error)"
         }
+        // Store adds are not atomic across the batch — on a mid-batch write failure the
+        // earlier items are already persisted, so the message must say what actually landed.
+        var addedSnippets = 0, addedCommands = 0
+        do {
+            for snippet in result.snippets {
+                try AppModel.shared.snippetLibrary.add(snippet)
+                addedSnippets += 1
+            }
+            for command in result.commands {
+                try AppModel.shared.commandStore.add(command)
+                addedCommands += 1
+            }
+        } catch {
+            return "Import stopped after \(addedSnippets) of \(result.snippets.count) snippets and \(addedCommands) of \(result.commands.count) commands: \(error)"
+        }
+        let skipped = result.skippedSnippets + result.skippedCommands
+        return "Imported \(addedSnippets) snippets, \(addedCommands) commands (\(skipped) skipped)"
     }
 }
