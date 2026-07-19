@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import LanguageServerProtocol
 import MeatPadKit
 
 /// One file's matches for the grouped results list.
@@ -108,9 +109,11 @@ final class ProjectSearchViewModel: ObservableObject {
         let idx = match.lineNumber - 1
         guard idx >= 0, idx < lines.count, lines[idx] == match.lineText else { return nil }
 
-        var offset = 0
-        for i in 0..<idx { offset += (lines[i] as NSString).length + 1 } // +1 per "\n"
-        return NSRange(location: offset + match.rangeInLine.lowerBound, length: match.rangeInLine.count)
+        let lspRange = LSPRange(
+            start: Position(line: idx, character: match.rangeInLine.lowerBound),
+            end: Position(line: idx, character: match.rangeInLine.upperBound)
+        )
+        return LSPPositionBridge.nsRange(of: lspRange, in: text)
     }
 
     /// Confirms, replaces, and summarizes. Files with unsaved edits (`FileEditorViewModel
