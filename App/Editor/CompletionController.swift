@@ -1,6 +1,7 @@
 import AppKit
 import MeatPadKit
 import STTextView
+import LanguageServerProtocol
 
 /// One row in the Ctrl+Space popup. `STCompletionItem` only requires an `NSView` to display
 /// plus `Identifiable` — a bare word is its own id, since `WordCompleter` already dedupes its
@@ -19,9 +20,12 @@ struct WordCompletionItem: STCompletionItem {
 /// `handleTab`/`insert` use.
 struct SnippetCompletionItem: STCompletionItem {
     let id: String
-    let snippet: Snippet
+    // Qualified: `LanguageServerProtocol` (imported below for `CompletionItem` et al.) has its
+    // own unrelated `Snippet` type (LSP snippet-placeholder syntax), colliding with this app's
+    // `MeatPadKit.Snippet` (a saved snippet-library entry) on bare name lookup.
+    let snippet: MeatPadKit.Snippet
 
-    init(_ snippet: Snippet) {
+    init(_ snippet: MeatPadKit.Snippet) {
         self.snippet = snippet
         self.id = "snippet:\(snippet.id)"
     }
@@ -38,6 +42,60 @@ struct SnippetCompletionItem: STCompletionItem {
         ))
         field.attributedStringValue = text
         return field
+    }
+}
+
+/// LSP completion row (merge source 0, when a server is alive for this doc's language — see
+/// `CodeEditor.Coordinator.lspHandle`). Rendered the same two-part-`NSAttributedString` way as
+/// `SnippetCompletionItem`, with a third leading part: a one-letter kind glyph so a method/
+/// function reads differently from a keyword or a variable at a glance, Xcode-completion style,
+/// without pulling in real SF Symbol images for 23 `CompletionItemKind` cases.
+struct LSPCompletionItem: STCompletionItem {
+    let id: String
+    let item: CompletionItem
+
+    /// `index` disambiguates two server results that share a label (legitimate — overloads,
+    /// or a class and its initializer) — `STCompletionItem` needs a unique `id` and the label
+    /// alone isn't guaranteed to be.
+    init(_ item: CompletionItem, index: Int) {
+        self.item = item
+        self.id = "lsp:\(index):\(item.label)"
+    }
+
+    var view: NSView {
+        let field = NSTextField(labelWithString: "")
+        let (glyph, color) = Self.glyph(for: item.kind)
+        let text = NSMutableAttributedString(
+            string: "\(glyph) ",
+            attributes: [.font: NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .bold), .foregroundColor: color]
+        )
+        text.append(NSAttributedString(
+            string: item.label,
+            attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]
+        ))
+        if let detail = item.detail, !detail.isEmpty {
+            text.append(NSAttributedString(
+                string: "  \(detail)",
+                attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor]
+            ))
+        }
+        field.attributedStringValue = text
+        return field
+    }
+
+    /// Coarse kind → (letter, tint) buckets, loosely matching Xcode's completion-icon color
+    /// coding (callables purple, members blue, types orange) without needing per-kind SF
+    /// Symbol art for all 23 `CompletionItemKind` cases.
+    private static func glyph(for kind: CompletionItemKind?) -> (String, NSColor) {
+        switch kind {
+        case .method, .function, .constructor: return ("ƒ", .systemPurple)
+        case .field, .property, .variable, .constant: return ("v", .systemBlue)
+        case .class, .struct, .interface, .enum: return ("c", .systemOrange)
+        case .enumMember: return ("e", .systemOrange)
+        case .keyword: return ("k", .systemPink)
+        case .snippet: return ("s", .systemGreen)
+        default: return ("•", .secondaryLabelColor)
+        }
     }
 }
 
@@ -129,7 +187,103 @@ final class WordCompletionViewController: STCompletionViewController {
 
         var items: [any STCompletionItem] = []
         var seen = Set<String>()
+        appendLocalSources(
+            prefix: prefix, range: range, textView: textView, languageID: languageID,
+            symbolIndex: symbolIndex, currentFileURL: currentFileURL, snippetController: snippetController,
+            items: &items, seen: &seen
+        )
+        return items.isEmpty ? nil : items
+    }
 
+    /// LSP-aware variant of `completionItems`, called only from STTextView's *async* completion
+    /// delegate hook (`CodeEditor.Coordinator` routes into this whenever a server is alive for
+    /// the doc's language — see that type's `lspHandle`; the sync hook above handles every other
+    /// case unchanged). Races `textDocument/completion` against a 150ms budget — "simpler: race
+    /// with 150ms cap, take whichever's ready" per the 0.7 LSP plan's Task 2 — so a hung or slow
+    /// server can never delay the always-local sources 1-4 beyond that bound. The loser is
+    /// cancelled; if that's the LSP request, its eventual (unused) result is simply dropped.
+    ///
+    /// No separate staleness check is needed on the response: the fork's own
+    /// `isValidCompletionRequest` (STTextView+Complete.swift) re-validates the caret/selection
+    /// snapshot after this returns and silently discards the whole result if the user kept
+    /// typing while the request was in flight (Global Constraints' "responses validated against
+    /// current buffer generation" — this is that validation, built into the fork already).
+    func completionItemsAsync(
+        textView: STTextView,
+        languageID: String?,
+        symbolIndex: ProjectSymbolIndex?,
+        currentFileURL: URL?,
+        snippetController: SnippetController?,
+        lspHandle: LSPServerHandle?,
+        fileURL: URL?
+    ) async -> [any STCompletionItem]? {
+        guard let (range, prefix) = wordRange(textView: textView) else { return nil }
+        prefixRange = range
+
+        var items: [any STCompletionItem] = []
+        var seen = Set<String>()
+
+        // 0. LSP — leads the popup, ahead of every local source. Server results may ignore our
+        // prefix entirely, so filter client-side the same way source 3 (keywords) already does;
+        // sorted by `sortText` (falling back to `label`, the LSP-recommended tiebreak) so the
+        // server's own ranking survives the merge.
+        if let lspHandle, let fileURL, let text = textView.text,
+           let position = LSPPositionBridge.position(of: range.upperBound, in: text) {
+            let params = CompletionParams(uri: fileURL.absoluteString, position: position, triggerKind: .invoked, triggerCharacter: nil)
+            let lowerPrefix = prefix.lowercased()
+            let lspItems = await Self.requestCompletions(handle: lspHandle, params: params)
+                .filter { $0.label.lowercased().hasPrefix(lowerPrefix) }
+                .sorted { ($0.sortText ?? $0.label) < ($1.sortText ?? $1.label) }
+            for (index, lspItem) in lspItems.enumerated() {
+                guard items.count < Self.cap else { break }
+                guard lspItem.label != prefix, seen.insert(lspItem.label).inserted else { continue }
+                items.append(LSPCompletionItem(lspItem, index: index))
+            }
+        }
+
+        appendLocalSources(
+            prefix: prefix, range: range, textView: textView, languageID: languageID,
+            symbolIndex: symbolIndex, currentFileURL: currentFileURL, snippetController: snippetController,
+            items: &items, seen: &seen
+        )
+        return items.isEmpty ? nil : items
+    }
+
+    /// Races `handle.completion(params)` against a 150ms sleep and returns whichever finishes
+    /// first: the server's items on a normal response, or `[]` on timeout, request failure, or
+    /// an empty/absent response. `cancelAll()` cancels the loser — almost always the LSP request
+    /// itself, on a hung server — without waiting for it any further.
+    private static func requestCompletions(handle: LSPServerHandle, params: CompletionParams) async -> [CompletionItem] {
+        await withTaskGroup(of: [CompletionItem]?.self) { group in
+            group.addTask {
+                (try? await handle.completion(params))?.items
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                return nil
+            }
+            let winner = await group.next() ?? nil
+            group.cancelAll()
+            return winner ?? []
+        }
+    }
+
+    /// Merge sources 1-4 (current document, project identifiers, language keywords, snippet
+    /// triggers) into `items`/`seen`, stopping at the shared cap. Identical for every caller —
+    /// the plain sync path above and the LSP async path both funnel through here, so "server
+    /// absent" behavior is guaranteed byte-for-byte unchanged from before LSP completion existed
+    /// (same code, not just equivalent code).
+    private func appendLocalSources(
+        prefix: String,
+        range: NSRange,
+        textView: STTextView,
+        languageID: String?,
+        symbolIndex: ProjectSymbolIndex?,
+        currentFileURL: URL?,
+        snippetController: SnippetController?,
+        items: inout [any STCompletionItem],
+        seen: inout Set<String>
+    ) {
         // Appends `word` as a plain completion row unless it's the typed prefix itself or a
         // dup of an earlier source's candidate. Returns false once the cap is hit, so each
         // source loop below can stop scanning as soon as there's no room left.
@@ -173,8 +327,6 @@ final class WordCompletionViewController: STCompletionViewController {
                 items.append(SnippetCompletionItem(snippet))
             }
         }
-
-        return items.isEmpty ? nil : items
     }
 
     func insertCompletionItem(_ item: any STCompletionItem, textView: STTextView, snippetController: SnippetController?) {
@@ -184,8 +336,44 @@ final class WordCompletionViewController: STCompletionViewController {
             snippetController?.acceptCompletion(snippetItem.snippet, replacing: range, textView: textView)
             return
         }
+        if let lspItem = item as? LSPCompletionItem {
+            insertLSPCompletion(lspItem.item, replacing: range, textView: textView)
+            return
+        }
         guard let word = (item as? WordCompletionItem)?.id else { return }
         textView.insertText(word, replacementRange: range)
+    }
+
+    /// Applies the server's `textEdit` — translated to a live-buffer `NSRange` via
+    /// `LSPPositionBridge` — when present and still resolvable against the current text;
+    /// otherwise falls back to `insertText`/the plain label at the tracked prefix range, same
+    /// as the plain-word path just above. Covers "fall back to plain word insert on anything
+    /// odd" per the plan: a stale/out-of-bounds `textEdit` range (edited since the request was
+    /// sent) silently degrades to a plain insert rather than corrupting the buffer.
+    ///
+    /// ponytail: an `insertTextFormat == .snippet` payload (`$1`, `${1:foo}`, `$0` placeholders)
+    /// is inserted as literal text, not expanded into a tab-stop session — that's LSP's own
+    /// snippet syntax, unrelated to `SnippetController`'s. Wire it through
+    /// `SnippetController`'s tab-stop machinery if plain-text LSP snippets turn out to bother
+    /// users in practice.
+    private func insertLSPCompletion(_ item: CompletionItem, replacing range: NSRange, textView: STTextView) {
+        if let textEdit = item.textEdit, let text = textView.text {
+            let lspRange: LSPRange
+            let newText: String
+            switch textEdit {
+            case .optionA(let edit):
+                lspRange = edit.range
+                newText = edit.newText
+            case .optionB(let edit):
+                lspRange = edit.insert
+                newText = edit.newText
+            }
+            if let nsRange = LSPPositionBridge.nsRange(of: lspRange, in: text) {
+                textView.insertText(newText, replacementRange: nsRange)
+                return
+            }
+        }
+        textView.insertText(item.insertText ?? item.label, replacementRange: range)
     }
 
     // MARK: Trigger-word scan (same word-run rule as SnippetController.triggerMatch)

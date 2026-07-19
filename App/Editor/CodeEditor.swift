@@ -42,6 +42,10 @@ struct CodeEditor: NSViewRepresentable {
     /// contribution (already covered by the current-document word source). `nil` alongside
     /// `symbolIndex` for project-less surfaces.
     var currentFileURL: URL? = nil
+    /// Owns this project's language servers, so Ctrl+Space can lead with LSP completions
+    /// (merge source 0) when one's alive for this doc's language. `nil` for notes and other
+    /// project-less surfaces — completion then behaves exactly as it did before LSP existed.
+    var lspManager: LSPProjectManager? = nil
     var onCursorChange: (Int) -> Void
     /// Fired on the same 150ms debounce as syntax highlighting, after a real text edit
     /// (see `scheduleHighlight`) — the LSP `textDocument/didChange` hook. `nil` for
@@ -412,9 +416,27 @@ struct CodeEditor: NSViewRepresentable {
 
         // MARK: STTextViewDelegate — Ctrl+Space completion (forwarded to CompletionController)
 
+        /// This doc's live server handle, or `nil` if there isn't one — no server detected for
+        /// the language, still starting, crashed, or this is a project-less surface (notes).
+        /// Non-nil is also the gate the sync completion hook below uses to hand off to the
+        /// async one (see its doc comment): LSP completion needs a real request/response round
+        /// trip, which the sync hook can't do.
+        private var lspHandle: LSPServerHandle? {
+            guard let languageID = parent.language?.id, let lspManager = parent.lspManager,
+                  lspManager.statusByLanguage[languageID] == .running else { return nil }
+            return lspManager.server(for: languageID)
+        }
+
+        /// Sync completion hook — STTextView's `complete(_:)` tries this first (see
+        /// STTextView+Complete.swift's `performSyncCompletion`) and only falls through to the
+        /// async hook below when this returns `nil`. Returning `nil` here whenever a server is
+        /// alive routes every LSP-backed doc through that async path instead; every other doc
+        /// (no server, or a project-less surface) is handled right here, unchanged from before
+        /// LSP completion existed — same function, same behavior, zero added latency.
         nonisolated func textView(_ textView: STTextView, completionItemsAtLocation location: any NSTextLocation) -> [any STCompletionItem]? {
             MainActor.assumeIsolated {
-                completionController.completionItems(
+                guard lspHandle == nil else { return nil }
+                return completionController.completionItems(
                     textView: textView,
                     languageID: parent.language?.id,
                     symbolIndex: parent.symbolIndex,
@@ -422,6 +444,26 @@ struct CodeEditor: NSViewRepresentable {
                     snippetController: parent.snippetController
                 )
             }
+        }
+
+        /// Async completion hook — only reached when the sync hook above returned `nil`, i.e.
+        /// only for docs with a live LSP server (see `lspHandle`). `Coordinator` is already
+        /// `@MainActor`, so — unlike the sync hook, which must stay `nonisolated` to satisfy the
+        /// fork's non-async protocol requirement — this can be a plain MainActor-isolated method
+        /// satisfying the fork's *async* requirement directly: callers already `await` it, so
+        /// the implicit actor hop that requires is exactly what a normal MainActor method gets
+        /// for free (STTextView's own demo delegate does the same — see
+        /// `PrimaryTextEditViewController.textView(_:completionItemsAtLocation:)` upstream).
+        func textView(_ textView: STTextView, completionItemsAtLocation location: any NSTextLocation) async -> [any STCompletionItem]? {
+            await completionController.completionItemsAsync(
+                textView: textView,
+                languageID: parent.language?.id,
+                symbolIndex: parent.symbolIndex,
+                currentFileURL: parent.currentFileURL,
+                snippetController: parent.snippetController,
+                lspHandle: lspHandle,
+                fileURL: parent.currentFileURL
+            )
         }
 
         nonisolated func textView(_ textView: STTextView, insertCompletionItem item: any STCompletionItem) {

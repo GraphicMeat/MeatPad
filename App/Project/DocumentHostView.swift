@@ -71,6 +71,7 @@ private struct EditorPane: View {
             snippetController: snippetController,
             symbolIndex: project.symbolIndex,
             currentFileURL: url,
+            lspManager: project.lspManager,
             onCursorChange: { cursor = $0 },
             onDocumentChanged: { project.notifyLSPDocumentChanged(url) },
             diagnostics: project.diagnosticsByURI[url.absoluteString] ?? []
