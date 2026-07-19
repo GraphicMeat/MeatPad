@@ -92,6 +92,12 @@ final class AppModel: ObservableObject {
         storageBase.appendingPathComponent("session.json")
     }
 
+    /// The resolved storage root's filesystem path — shown verbatim in the first-run
+    /// intro (and, from 0.8 Task 5, Settings → Privacy). Same `storageBase` every other
+    /// sibling directory derives from, so this is always the actual on-disk location,
+    /// override or not.
+    var storageRootPath: String { storageBase.path }
+
     private init() {
         #if DEBUG
         let startUpdater = false

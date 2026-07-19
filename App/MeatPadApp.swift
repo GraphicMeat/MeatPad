@@ -97,6 +97,15 @@ struct MeatPadApp: App {
                 .keyboardFocusRingOnly()
         }
 
+        // First-run intro (0.8 Task 4): small standalone window, opened programmatically
+        // exactly once from `AppDelegate.applicationDidFinishLaunching` — see
+        // `FirstRunView` for the gating flag.
+        Window("Welcome", id: FirstRunView.windowID) {
+            FirstRunView()
+                .keyboardFocusRingOnly()
+        }
+        .windowResizability(.contentSize)
+
         MenuBarExtra("MeatPad", systemImage: "note.text") {
             MenuBarNotesView()
                 .environmentObject(AppModel.shared)
@@ -516,6 +525,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppModel.shared.restoreSession()
+
+        if !UserDefaults.standard.bool(forKey: FirstRunView.hasSeenDefaultsKey) {
+            AppModel.shared.openWindowAction?(id: FirstRunView.windowID)
+        }
 
         #if DEBUG
         // Invariant behind the unified Cmd+W: replacing .saveItem must have removed the
