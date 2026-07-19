@@ -105,8 +105,13 @@ final class SnippetTextView: STTextView {
     /// conversion, no gutter/scroll math), then merge the snapshot back via MultiCaretController.
     override func mouseDown(with event: NSEvent) {
         if event.type == .leftMouseDown,
-           event.modifierFlags.intersection([.command, .option, .shift, .control]) == .command,
-           onDefinitionClick?(event.locationInWindow) == true {
+           event.modifierFlags.intersection([.command, .option, .shift, .control]) == .command {
+            // Always place the caret natively first (synchronous) so an empty definition
+            // response (comment/keyword/whitespace) still matches Xcode's Cmd+click parity.
+            // Async navigation/reveal from onDefinitionClick overrides the caret later when a
+            // definition resolves.
+            super.mouseDown(with: event)
+            _ = onDefinitionClick?(event.locationInWindow)
             return
         }
         if event.type == .leftMouseDown,
