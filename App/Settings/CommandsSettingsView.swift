@@ -206,14 +206,15 @@ private struct CommandEditorSheet: View {
         )
     }
 
-    /// Empty text = nil = `CommandRunner`'s own 30s default; a non-numeric entry is
-    /// ignored (leaves `timeoutSeconds` at its last valid value) rather than crashing.
+    /// Empty text = nil = `CommandRunner`'s own 30s default; a non-numeric or non-positive
+    /// entry is ignored (leaves `timeoutSeconds` at its last valid value) rather than
+    /// accepting a 0/negative timeout that would kill the process instantly or never.
     private var timeoutBinding: Binding<String> {
         Binding(
             get: { command.timeoutSeconds.map { String(Int($0)) } ?? "" },
             set: { text in
                 if text.isEmpty { command.timeoutSeconds = nil }
-                else if let value = Double(text) { command.timeoutSeconds = value }
+                else if let value = Double(text), value > 0 { command.timeoutSeconds = value }
             }
         )
     }
