@@ -1,8 +1,8 @@
 import SwiftUI
 import MeatPadKit
 
-/// Bottom status bar for a note/code editor surface: language picker, line/char counts,
-/// and the caret line's char count. Stateless — all values are handed in by the host.
+/// Bottom status bar for a note/code editor surface: language picker, line/word/char counts,
+/// and the caret line's word/char counts. Stateless — all values are handed in by the host.
 struct EditorStatusBar: View {
     let text: String
     let cursor: Int
@@ -11,6 +11,7 @@ struct EditorStatusBar: View {
     let onSelectLanguage: (String?) -> Void
 
     var body: some View {
+        let line = Self.currentLine(of: text, cursor: cursor)
         HStack(spacing: 12) {
             Menu {
                 Button(languageOverride == nil ? "✓ Automatic" : "Automatic") { onSelectLanguage(nil) }
@@ -29,8 +30,9 @@ struct EditorStatusBar: View {
             Spacer()
 
             Text("\(Self.lineCount(of: text)) lines")
+            Text("\(Self.wordCount(of: text)) words")
             Text("\(text.count) chars")
-            Text("line \(Self.currentLineLength(of: text, cursor: cursor)) chars")
+            Text("line \(Self.wordCount(of: line)) words \(line.count) chars")
         }
         .font(.caption)
         .monospacedDigit()
@@ -53,7 +55,11 @@ struct EditorStatusBar: View {
         (text as NSString).components(separatedBy: "\n").count
     }
 
-    static func currentLineLength(of text: String, cursor: Int) -> Int {
+    static func wordCount(of text: String) -> Int {
+        text.split(whereSeparator: \.isWhitespace).count
+    }
+
+    static func currentLine(of text: String, cursor: Int) -> String {
         let ns = text as NSString
         let clamped = min(max(cursor, 0), ns.length)
         let range = ns.lineRange(for: NSRange(location: clamped, length: 0))
@@ -63,6 +69,6 @@ struct EditorStatusBar: View {
         } else if line.hasSuffix("\n") || line.hasSuffix("\r") {
             line.removeLast()
         }
-        return line.count
+        return line
     }
 }
