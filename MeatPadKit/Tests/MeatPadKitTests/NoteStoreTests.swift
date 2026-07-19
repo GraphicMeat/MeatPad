@@ -176,6 +176,91 @@ final class NoteStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: originalTxt.path))
     }
 
+    func testTrashPopulatesTrashedNotesAndFilesExistInTrash() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+
+        try store.trash(id: note.id)
+
+        XCTAssertTrue(store.trashedNotes.contains(where: { $0.id == note.id }))
+        let trashedTxt = tempDir.appendingPathComponent(".trash/\(note.id.uuidString).txt")
+        let trashedJSON = tempDir.appendingPathComponent(".trash/\(note.id.uuidString).json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trashedTxt.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trashedJSON.path))
+    }
+
+    // MARK: - restore
+
+    func testRestoreMovesFilesBackAndReappearsInNotes() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+        try store.save(id: note.id, contents: "restore me", cursor: 0)
+        try store.trash(id: note.id)
+
+        try store.restore(id: note.id)
+
+        XCTAssertTrue(store.notes.contains(where: { $0.id == note.id }))
+        XCTAssertFalse(store.trashedNotes.contains(where: { $0.id == note.id }))
+        XCTAssertEqual(try store.contents(of: note.id), "restore me")
+
+        let txt = tempDir.appendingPathComponent("\(note.id.uuidString).txt")
+        let json = tempDir.appendingPathComponent("\(note.id.uuidString).json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: txt.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: json.path))
+        let trashedTxt = tempDir.appendingPathComponent(".trash/\(note.id.uuidString).txt")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: trashedTxt.path))
+    }
+
+    func testRestoreReAddsNoteToSearchIndex() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+        try store.save(id: note.id, contents: "alpha beta", cursor: 0)
+        try store.trash(id: note.id)
+
+        try store.restore(id: note.id)
+
+        XCTAssertEqual(store.searchIndex.search("beta", notes: store.notes).map(\.noteID), [note.id])
+    }
+
+    func testRestoreUnknownIDThrowsNotFound() throws {
+        let store = try makeStore()
+        let bogus = UUID()
+        XCTAssertThrowsError(try store.restore(id: bogus)) { XCTAssertEqual($0 as? NoteStoreError, .notFound(bogus)) }
+    }
+
+    // MARK: - delete (permanent)
+
+    func testDeleteRemovesFilesPermanentlyAndFromTrashedNotes() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+        try store.trash(id: note.id)
+
+        try store.delete(id: note.id)
+
+        XCTAssertFalse(store.trashedNotes.contains(where: { $0.id == note.id }))
+        let trashedTxt = tempDir.appendingPathComponent(".trash/\(note.id.uuidString).txt")
+        let trashedJSON = tempDir.appendingPathComponent(".trash/\(note.id.uuidString).json")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: trashedTxt.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: trashedJSON.path))
+    }
+
+    func testDeleteUnknownIDThrowsNotFound() throws {
+        let store = try makeStore()
+        let bogus = UUID()
+        XCTAssertThrowsError(try store.delete(id: bogus)) { XCTAssertEqual($0 as? NoteStoreError, .notFound(bogus)) }
+    }
+
+    func testReloadSeesTrashedNotesFromDisk() throws {
+        let store1 = try makeStore()
+        let note = try store1.createNote()
+        try store1.trash(id: note.id)
+
+        let store2 = try makeStore()
+
+        XCTAssertTrue(store2.trashedNotes.contains(where: { $0.id == note.id }))
+        XCTAssertFalse(store2.notes.contains(where: { $0.id == note.id }))
+    }
+
     // MARK: - search index
 
     func testSaveIndexesContentsForSearch() throws {

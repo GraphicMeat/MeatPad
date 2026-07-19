@@ -7,12 +7,14 @@ enum FolderSelection: Hashable, RawRepresentable {
     case all
     case defaultFolder          // the implicit "Notes" folder (Note.folder == nil)
     case folder(String)
+    case trash
 
     var rawValue: String {
         switch self {
         case .all: return "all"
         case .defaultFolder: return "default"
         case .folder(let name): return "f:\(name)"
+        case .trash: return "trash"
         }
     }
 
@@ -20,6 +22,7 @@ enum FolderSelection: Hashable, RawRepresentable {
         switch rawValue {
         case "all": self = .all
         case "default": self = .defaultFolder
+        case "trash": self = .trash
         default:
             guard rawValue.hasPrefix("f:") else { return nil }
             self = .folder(String(rawValue.dropFirst(2)))
@@ -50,12 +53,14 @@ struct NotesBrowserWindow: View {
     @State private var newFolderShown = false
     @State private var renameTarget: String?
     @State private var deleteTarget: String?
+    @State private var permanentDeleteTarget: UUID?
     @State private var folderError: String?
 
     private var folderFilteredNotes: [Note] {
+        if case .trash = folderSelection { return noteStore.trashedNotes }
         var notes = noteStore.notes
         switch folderSelection {
-        case .all: break
+        case .all, .trash: break
         case .defaultFolder:
             // Unknown-folder notes (folder name absent from folders.json) fall back here.
             notes = notes.filter { $0.folder == nil || !noteStore.folders.contains($0.folder!) }
@@ -68,6 +73,8 @@ struct NotesBrowserWindow: View {
     /// nil when not searching (empty query) — callers fall back to plain folder order.
     /// Synchronous: the index is in-memory and note counts are small, so no debounce/async.
     private var searchMatches: [NoteSearchMatch]? {
+        // Trashed notes aren't indexed — show a plain list, no search ordering.
+        if case .trash = folderSelection { return nil }
         guard !query.isEmpty else { return nil }
         return noteStore.searchIndex.search(query, notes: folderFilteredNotes)
     }
@@ -132,6 +139,20 @@ struct NotesBrowserWindow: View {
                 }
             }
         }
+        .confirmationDialog(
+            "Delete “\(noteStore.trashedNotes.first(where: { $0.id == permanentDeleteTarget })?.title ?? "")” permanently?",
+            isPresented: Binding(get: { permanentDeleteTarget != nil }, set: { if !$0 { permanentDeleteTarget = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Permanently", role: .destructive) {
+                if let id = permanentDeleteTarget {
+                    try? noteStore.delete(id: id)
+                    if selection == id { selection = nil }
+                }
+            }
+        } message: {
+            Text("This can’t be undone.")
+        }
         .alert("Folder Error", isPresented: Binding(get: { folderError != nil }, set: { if !$0 { folderError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -153,6 +174,7 @@ struct NotesBrowserWindow: View {
                         Button("Delete…", role: .destructive) { deleteTarget = name }
                     }
             }
+            folderRow(.trash, name: String(localized: "Trash"), icon: "trash", count: noteStore.trashedNotes.count)
         }
         .scrollContentBackground(.hidden)
         .navigationSplitViewColumnWidth(min: 150, ideal: 180)
@@ -209,9 +231,14 @@ struct NotesBrowserWindow: View {
                 }
             }
             .contextMenu {
-                Button("Open in New Window") { openInNewWindow(note.id) }
-                moveMenu(for: note)
-                Button("Move to Trash", role: .destructive) { trash(note.id) }
+                if case .trash = folderSelection {
+                    Button("Restore") { restore(note.id) }
+                    Button("Delete Permanently…", role: .destructive) { permanentDeleteTarget = note.id }
+                } else {
+                    Button("Open in New Window") { openInNewWindow(note.id) }
+                    moveMenu(for: note)
+                    Button("Move to Trash", role: .destructive) { trash(note.id) }
+                }
             }
         }
         .scrollContentBackground(.hidden)
@@ -231,6 +258,7 @@ struct NotesBrowserWindow: View {
                     Label("New Note", systemImage: "square.and.pencil")
                 }
                 .keyboardShortcut("n", modifiers: [.command, .option])
+                .disabled(folderSelection == .trash)
             }
         }
     }
@@ -291,6 +319,12 @@ struct NotesBrowserWindow: View {
 
     private func trash(_ id: UUID) {
         try? noteStore.trash(id: id)
+        if selection == id { selection = nil }
+    }
+
+    /// Restores a trashed note; clears selection since it leaves the trash list.
+    private func restore(_ id: UUID) {
+        try? noteStore.restore(id: id)
         if selection == id { selection = nil }
     }
 

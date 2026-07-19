@@ -17,6 +17,10 @@ public final class NoteStore: ObservableObject {
     /// Sorted by `modified`, most recent first.
     @Published public private(set) var notes: [Note] = []
 
+    /// Trashed notes (files live under `<root>/.trash/`), sorted most recent first.
+    /// Deliberately NOT added to `searchIndex` — trash isn't searchable.
+    @Published public private(set) var trashedNotes: [Note] = []
+
     /// User-created folders in creation order. The default "Notes" folder is implicit
     /// and never appears here.
     @Published public private(set) var folders: [String] = []
@@ -45,6 +49,7 @@ public final class NoteStore: ObservableObject {
         try fm.createDirectory(at: rootURL, withIntermediateDirectories: true)
         try fm.createDirectory(at: trashURL, withIntermediateDirectories: true)
         notes = try Self.loadNotes(from: rootURL)
+        trashedNotes = (try? Self.loadNotes(from: trashURL)) ?? [] // already sorted, most recent first
         folders = Self.loadFolders(from: foldersURL)
         // Eager: notes are small, and search must work before the user touches anything.
         for note in notes {
@@ -97,13 +102,43 @@ public final class NoteStore: ObservableObject {
     }
 
     public func trash(id: UUID) throws {
-        guard notes.contains(where: { $0.id == id }) else { throw NoteStoreError.notFound(id) }
+        guard let note = notes.first(where: { $0.id == id }) else { throw NoteStoreError.notFound(id) }
         let fm = FileManager.default
         for url in [textURL(for: id), jsonURL(for: id)] where fm.fileExists(atPath: url.path) {
             try fm.moveItem(at: url, to: trashURL.appendingPathComponent(url.lastPathComponent))
         }
         notes.removeAll { $0.id == id }
+        trashedNotes.append(note)
+        trashedNotes.sort { $0.modified > $1.modified }
         searchIndex.remove(id: id)
+    }
+
+    /// Moves a trashed note's files back to root, re-lists it in `notes`, and re-indexes it.
+    public func restore(id: UUID) throws {
+        guard let note = trashedNotes.first(where: { $0.id == id }) else { throw NoteStoreError.notFound(id) }
+        let fm = FileManager.default
+        for name in ["\(id.uuidString).txt", "\(id.uuidString).json"] {
+            let src = trashURL.appendingPathComponent(name)
+            if fm.fileExists(atPath: src.path) {
+                try fm.moveItem(at: src, to: rootURL.appendingPathComponent(name))
+            }
+        }
+        trashedNotes.removeAll { $0.id == id }
+        notes.append(note)
+        resort()
+        let contents = (try? String(contentsOf: textURL(for: id), encoding: .utf8)) ?? ""
+        searchIndex.update(id: id, contents: contents)
+    }
+
+    /// Permanently removes a trashed note's files. searchIndex was already cleared at trash time.
+    public func delete(id: UUID) throws {
+        guard trashedNotes.contains(where: { $0.id == id }) else { throw NoteStoreError.notFound(id) }
+        let fm = FileManager.default
+        for name in ["\(id.uuidString).txt", "\(id.uuidString).json"] {
+            let url = trashURL.appendingPathComponent(name)
+            if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
+        }
+        trashedNotes.removeAll { $0.id == id }
     }
 
     // MARK: - Folders
