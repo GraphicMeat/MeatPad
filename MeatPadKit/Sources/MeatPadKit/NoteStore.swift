@@ -147,6 +147,18 @@ public final class NoteStore: ObservableObject {
         if let firstError { throw firstError }
     }
 
+    /// Moves a note to a folder (nil = default). Sidecar-only: does NOT touch `modified`
+    /// or re-sort — organizing isn't an edit.
+    public func move(id: UUID, to folder: String?) throws {
+        guard var note = notes.first(where: { $0.id == id }) else { throw NoteStoreError.notFound(id) }
+        if let folder { guard folders.contains(folder) else { throw NoteStoreError.folderNotFound(folder) } }
+        note.folder = folder
+        try writeSidecar(note)
+        if let idx = notes.firstIndex(where: { $0.id == id }) {
+            notes[idx] = note
+        }
+    }
+
     /// Trims, rejects empty and the reserved default-folder name.
     private func validated(_ name: String) throws -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)

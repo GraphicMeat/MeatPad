@@ -363,4 +363,47 @@ final class NoteStoreTests: XCTestCase {
         let reloaded = try makeStore()
         XCTAssertNil(reloaded.notes.first(where: { $0.id == note.id })?.folder)
     }
+
+    func testCreateNoteInFolderPersists() throws {
+        let store = try makeStore()
+        try store.createFolder("Work")
+        let note = try store.createNote(in: "Work")
+        let reloaded = try makeStore()
+        XCTAssertEqual(reloaded.notes.first(where: { $0.id == note.id })?.folder, "Work")
+    }
+
+    func testMoveNoteBetweenFoldersAndToDefault() throws {
+        let store = try makeStore()
+        try store.createFolder("Work")
+        let note = try store.createNote()
+        try store.move(id: note.id, to: "Work")
+        XCTAssertEqual(store.notes.first(where: { $0.id == note.id })?.folder, "Work")
+        try store.move(id: note.id, to: nil)
+        XCTAssertNil(store.notes.first(where: { $0.id == note.id })?.folder)
+    }
+
+    func testMoveDoesNotTouchModified() throws {
+        let store = try makeStore()
+        try store.createFolder("Work")
+        let note = try store.createNote()
+        let before = store.notes.first(where: { $0.id == note.id })!.modified
+        try store.move(id: note.id, to: "Work")
+        XCTAssertEqual(store.notes.first(where: { $0.id == note.id })?.modified, before)
+    }
+
+    func testMoveToUnknownFolderThrows() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+        XCTAssertThrowsError(try store.move(id: note.id, to: "Nope")) { error in
+            XCTAssertEqual(error as? NoteStoreError, .folderNotFound("Nope"))
+        }
+    }
+
+    func testMoveUnknownNoteThrows() throws {
+        let store = try makeStore()
+        let ghost = UUID()
+        XCTAssertThrowsError(try store.move(id: ghost, to: nil)) { error in
+            XCTAssertEqual(error as? NoteStoreError, .notFound(ghost))
+        }
+    }
 }
