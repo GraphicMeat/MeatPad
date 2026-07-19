@@ -62,8 +62,8 @@ final class FileEditorViewModel: ObservableObject {
 
         let alert = NSAlert()
         alert.messageText = failures.count == 1
-            ? "Couldn't save “\(failures[0].url.lastPathComponent)”."
-            : "Couldn't save \(failures.count) documents."
+            ? String(localized: "Couldn't save “\(failures[0].url.lastPathComponent)”.")
+            : String(localized: "Couldn't save \(failures.count) documents.")
         alert.informativeText = failures
             .map { "\($0.url.lastPathComponent): \($0.error.localizedDescription)" }
             .joined(separator: "\n")

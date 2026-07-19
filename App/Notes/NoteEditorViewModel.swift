@@ -17,7 +17,7 @@ final class NoteEditorViewModel: ObservableObject {
     @Published private(set) var exists: Bool
     @Published var text: String = ""
     @Published private(set) var languageOverride: String?
-    @Published private(set) var title: String = "New Note"
+    @Published private(set) var title: String = String(localized: "New Note")
 
     private let store: NoteStore
     private let debouncer = Debouncer(delay: 1)

@@ -30,12 +30,12 @@ struct ProjectSearchView: View {
                 }
             }
 
-            GlassSearchField(prompt: "Find in files", text: $viewModel.query, focused: $queryFocused)
+            GlassSearchField(prompt: String(localized: "Find in files"), text: $viewModel.query, focused: $queryFocused)
 
             HStack(spacing: 6) {
-                toggle("Aa", icon: nil, isOn: $viewModel.caseSensitive, help: "Match Case")
-                toggle("Regex", icon: "asterisk", isOn: $viewModel.isRegex, help: "Regular Expression")
-                toggle("Word", icon: "textformat", isOn: $viewModel.wholeWord, help: viewModel.isRegex ? "Not available with regex" : "Whole Word")
+                toggle("Aa", icon: nil, isOn: $viewModel.caseSensitive, help: String(localized: "Match Case"))
+                toggle(String(localized: "Regex"), icon: "asterisk", isOn: $viewModel.isRegex, help: String(localized: "Regular Expression"))
+                toggle(String(localized: "Word"), icon: "textformat", isOn: $viewModel.wholeWord, help: viewModel.isRegex ? String(localized: "Not available with regex") : String(localized: "Whole Word"))
                     .disabled(viewModel.isRegex)
             }
 

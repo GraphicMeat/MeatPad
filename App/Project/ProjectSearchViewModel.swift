@@ -140,12 +140,16 @@ final class ProjectSearchViewModel: ObservableObject {
         let matchesToReplace = results.filter { !dirtyFiles.contains($0.file) && !staleFiles.contains($0.file) }
 
         let confirm = NSAlert()
-        confirm.messageText = "Replace \(results.count) match\(results.count == 1 ? "" : "es") in \(byFile.count) file\(byFile.count == 1 ? "" : "s")?"
+        confirm.messageText = results.count == 1
+            ? String(localized: "Replace 1 match in 1 file?")
+            : String(localized: "Replace \(results.count) matches in \(byFile.count) files?")
         if !dirtyFiles.isEmpty {
-            confirm.informativeText = "\(dirtyFiles.count) file\(dirtyFiles.count == 1 ? "" : "s") have unsaved edits and will be skipped."
+            confirm.informativeText = dirtyFiles.count == 1
+                ? String(localized: "1 file has unsaved edits and will be skipped.")
+                : String(localized: "\(dirtyFiles.count) files have unsaved edits and will be skipped.")
         }
-        confirm.addButton(withTitle: "Replace")
-        confirm.addButton(withTitle: "Cancel")
+        confirm.addButton(withTitle: String(localized: "Replace"))
+        confirm.addButton(withTitle: String(localized: "Cancel"))
         guard confirm.runModal() == .alertFirstButtonReturn else { return }
 
         guard matchesToReplace.isEmpty == false else {
@@ -164,20 +168,24 @@ final class ProjectSearchViewModel: ObservableObject {
             scheduleSearch() // results are stale now
         } catch {
             let alert = NSAlert()
-            alert.messageText = "Replace failed."
+            alert.messageText = String(localized: "Replace failed.")
             alert.informativeText = error.localizedDescription
-            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: String(localized: "OK"))
             alert.runModal()
         }
     }
 
     private func showSummary(replaced: Int, skipped: Int) {
         let alert = NSAlert()
-        alert.messageText = "Replaced \(replaced) match\(replaced == 1 ? "" : "es")."
+        alert.messageText = replaced == 1
+            ? String(localized: "Replaced 1 match.")
+            : String(localized: "Replaced \(replaced) matches.")
         if skipped > 0 {
-            alert.informativeText = "\(skipped) match\(skipped == 1 ? "" : "es") skipped."
+            alert.informativeText = skipped == 1
+                ? String(localized: "1 match skipped.")
+                : String(localized: "\(skipped) matches skipped.")
         }
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: String(localized: "OK"))
         alert.runModal()
     }
 }

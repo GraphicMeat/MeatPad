@@ -41,7 +41,7 @@ struct MenuBarNotesView: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
 
-                GlassSearchField(prompt: "Search notes", text: $query)
+                GlassSearchField(prompt: String(localized: "Search notes"), text: $query)
                     .padding(10)
 
                 if filtered.isEmpty {

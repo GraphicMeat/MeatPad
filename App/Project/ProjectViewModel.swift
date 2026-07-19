@@ -183,7 +183,7 @@ final class ProjectViewModel: ObservableObject {
             banners[url] = nil
             dismissedChanges.remove(url)
         } catch {
-            presentError(error, verb: "save", url: url)
+            presentError(error, verb: String(localized: "save"), url: url)
         }
     }
 
@@ -199,18 +199,18 @@ final class ProjectViewModel: ObservableObject {
             return
         }
         let alert = NSAlert()
-        alert.messageText = "Save changes to “\(url.lastPathComponent)” before closing?"
-        alert.informativeText = "Your changes will be lost if you don't save them."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Discard")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(localized: "Save changes to “\(url.lastPathComponent)” before closing?")
+        alert.informativeText = String(localized: "Your changes will be lost if you don't save them.")
+        alert.addButton(withTitle: String(localized: "Save"))
+        alert.addButton(withTitle: String(localized: "Discard"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         // `vm` is captured strongly only for the sheet's lifetime; released with the
         // completion handler. `self` weak so a dismissed sheet can't pin the window's VM.
         let handle: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             switch response {
             case .alertFirstButtonReturn:
                 do { try vm.save(); self?.closeTab(url) }
-                catch { self?.presentError(error, verb: "save", url: url) }
+                catch { self?.presentError(error, verb: String(localized: "save"), url: url) }
             case .alertSecondButtonReturn:
                 self?.closeTab(url)
             default:
@@ -255,12 +255,12 @@ final class ProjectViewModel: ObservableObject {
 
         let alert = NSAlert()
         alert.messageText = dirty.count == 1
-            ? "1 document has unsaved changes."
-            : "\(dirty.count) documents have unsaved changes."
-        alert.informativeText = "Do you want to save your changes before closing?"
-        alert.addButton(withTitle: "Save All & Close")
-        alert.addButton(withTitle: "Discard & Close")
-        alert.addButton(withTitle: "Cancel")
+            ? String(localized: "1 document has unsaved changes.")
+            : String(localized: "\(dirty.count) documents have unsaved changes.")
+        alert.informativeText = String(localized: "Do you want to save your changes before closing?")
+        alert.addButton(withTitle: String(localized: "Save All & Close"))
+        alert.addButton(withTitle: String(localized: "Discard & Close"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             return FileEditorViewModel.saveAllReportingFailures(dirty)
@@ -286,9 +286,9 @@ final class ProjectViewModel: ObservableObject {
 
     private func presentError(_ error: Error, verb: String, url: URL) {
         let alert = NSAlert()
-        alert.messageText = "Couldn't \(verb) “\(url.lastPathComponent)”."
+        alert.messageText = String(localized: "Couldn't \(verb) “\(url.lastPathComponent)”.")
         alert.informativeText = error.localizedDescription
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: String(localized: "OK"))
         if let window { alert.beginSheetModal(for: window, completionHandler: nil) }
         else { alert.runModal() }
     }

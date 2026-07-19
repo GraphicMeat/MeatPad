@@ -44,8 +44,8 @@ struct EditorStatusBar: View {
     }
 
     private var menuLabel: String {
-        let name = language?.name ?? "Plain Text"
-        return languageOverride == nil ? "Automatic — \(name)" : name
+        let name = language?.name ?? String(localized: "Plain Text")
+        return languageOverride == nil ? String(localized: "Automatic — \(name)") : name
     }
 
     // ponytail: O(n) scan per render (newline count + line lookup); fine at note/file

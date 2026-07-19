@@ -95,12 +95,12 @@ private struct EditorPane: View {
     private var banner: some View {
         switch project.banners[url] {
         case .changedOnDisk:
-            BannerBar(message: "File changed on disk") {
+            BannerBar(message: String(localized: "File changed on disk")) {
                 Button("Reload") { project.reload(url) }
                 Button("Keep Mine") { project.dismissBanner(url) }
             }
         case .deleted:
-            BannerBar(message: "File was deleted on disk") {
+            BannerBar(message: String(localized: "File was deleted on disk")) {
                 Button("Dismiss") { project.dismissBanner(url) }
             }
         case nil:

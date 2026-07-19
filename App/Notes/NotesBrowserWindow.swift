@@ -123,8 +123,8 @@ struct NotesBrowserWindow: View {
     @ViewBuilder
     private var folderSidebar: some View {
         List(selection: $folderSelection) {
-            folderRow(.all, name: "All Notes", icon: "tray.full", count: noteStore.notes.count)
-            folderRow(.defaultFolder, name: "Notes", icon: "folder", count: noteStore.notes.filter { $0.folder == nil || !noteStore.folders.contains($0.folder!) }.count)
+            folderRow(.all, name: String(localized: "All Notes"), icon: "tray.full", count: noteStore.notes.count)
+            folderRow(.defaultFolder, name: String(localized: "Notes"), icon: "folder", count: noteStore.notes.filter { $0.folder == nil || !noteStore.folders.contains($0.folder!) }.count)
             ForEach(noteStore.folders, id: \.self) { name in
                 folderRow(.folder(name), name: name, icon: "folder", count: noteStore.notes.filter { $0.folder == name }.count)
                     .contextMenu {
@@ -274,10 +274,10 @@ struct NotesBrowserWindow: View {
 
     private func message(for error: Error) -> String {
         switch error as? NoteStoreError {
-        case .folderExists(let name): return "A folder named “\(name)” already exists."
-        case .invalidFolderName: return "Folder names can’t be empty or “Notes”."
-        case .folderNotFound(let name): return "Folder “\(name)” no longer exists."
-        default: return "Something went wrong: \(error.localizedDescription)"
+        case .folderExists(let name): return String(localized: "A folder named “\(name)” already exists.")
+        case .invalidFolderName: return String(localized: "Folder names can’t be empty or “Notes”.")
+        case .folderNotFound(let name): return String(localized: "Folder “\(name)” no longer exists.")
+        default: return String(localized: "Something went wrong: \(error.localizedDescription)")
         }
     }
 }

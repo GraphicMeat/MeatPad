@@ -27,8 +27,8 @@ struct ProjectWindow: View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 HStack(spacing: 2) {
-                    sidebarButton("Files", icon: "folder", mode: .files)
-                    sidebarButton("Search", icon: "magnifyingglass", mode: .search)
+                    sidebarButton(String(localized: "Files"), icon: "folder", mode: .files)
+                    sidebarButton(String(localized: "Search"), icon: "magnifyingglass", mode: .search)
                 }
                 .padding(3)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))

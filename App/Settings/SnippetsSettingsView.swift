@@ -49,7 +49,7 @@ struct SnippetsSettingsView: View {
                 Text(snippet.trigger).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Text(snippet.languageIDs.isEmpty ? "All" : snippet.languageIDs.joined(separator: ", "))
+            Text(snippet.languageIDs.isEmpty ? String(localized: "All") : snippet.languageIDs.joined(separator: ", "))
                 .font(.caption).foregroundStyle(.secondary)
             if isBuiltin(snippet) {
                 Text("Built-in")
@@ -64,7 +64,7 @@ struct SnippetsSettingsView: View {
 
     private var toolbar: some View {
         HStack(spacing: 4) {
-            Button { editingSnippet = Snippet(name: "New Snippet", trigger: "", languageIDs: [], body: "") } label: {
+            Button { editingSnippet = Snippet(name: String(localized: "New Snippet"), trigger: "", languageIDs: [], body: "") } label: {
                 Image(systemName: "plus")
             }
             .help("Add snippet")
@@ -97,7 +97,7 @@ struct SnippetsSettingsView: View {
     private func duplicateSelected() {
         guard let snippet = selectedSnippet else { return }
         // Fresh UUID → a new user snippet; keeping trigger + languages shadows a builtin.
-        editingSnippet = Snippet(name: snippet.name + " Copy", trigger: snippet.trigger, languageIDs: snippet.languageIDs, body: snippet.body)
+        editingSnippet = Snippet(name: String(localized: "\(snippet.name) Copy"), trigger: snippet.trigger, languageIDs: snippet.languageIDs, body: snippet.body)
     }
 
     private func deleteSelected() {
@@ -123,7 +123,7 @@ private struct SnippetEditorSheet: View {
             TextField("Name", text: $snippet.name)
             TextField("Trigger", text: $snippet.trigger)
 
-            DisclosureGroup("Languages: \(snippet.languageIDs.isEmpty ? "All" : snippet.languageIDs.joined(separator: ", "))") {
+            DisclosureGroup("Languages: \(snippet.languageIDs.isEmpty ? String(localized: "All") : snippet.languageIDs.joined(separator: ", "))") {
                 ScrollView {
                     VStack(alignment: .leading) {
                         ForEach(Languages.all) { language in
@@ -163,11 +163,11 @@ private struct SnippetEditorSheet: View {
             _ = try SnippetParser.parse(snippet.body)
             return nil
         } catch SnippetParseError.unbalancedBrace {
-            return "Unbalanced brace in snippet body."
+            return String(localized: "Unbalanced brace in snippet body.")
         } catch SnippetParseError.invalidStop {
-            return "Invalid tab stop (regex transforms aren't supported)."
+            return String(localized: "Invalid tab stop (regex transforms aren't supported).")
         } catch {
-            return "Couldn't parse snippet body."
+            return String(localized: "Couldn't parse snippet body.")
         }
     }
 

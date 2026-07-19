@@ -18,7 +18,7 @@ struct RelativeTimeText: View {
     }
 
     private static func label(for date: Date, now: Date) -> String {
-        if now.timeIntervalSince(date) < 60 { return "now" }
+        if now.timeIntervalSince(date) < 60 { return String(localized: "now") }
         return formatter.localizedString(for: date, relativeTo: now)
     }
 }

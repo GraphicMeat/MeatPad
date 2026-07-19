@@ -63,7 +63,7 @@ struct CommandsSettingsView: View {
                     Text(key).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Text(command.languageIDs.isEmpty ? "All" : command.languageIDs.joined(separator: ", "))
+            Text(command.languageIDs.isEmpty ? String(localized: "All") : command.languageIDs.joined(separator: ", "))
                 .font(.caption).foregroundStyle(.secondary)
         }
         .contentShape(Rectangle())
@@ -73,7 +73,7 @@ struct CommandsSettingsView: View {
     private var toolbar: some View {
         HStack(spacing: 4) {
             Button {
-                editingCommand = SavedCommand(name: "New Command", script: "", input: .selection, output: .replaceSelection)
+                editingCommand = SavedCommand(name: String(localized: "New Command"), script: "", input: .selection, output: .replaceSelection)
             } label: { Image(systemName: "plus") }
                 .help("Add command")
             Button { duplicateSelected() } label: { Image(systemName: "plus.square.on.square") }
@@ -96,7 +96,7 @@ struct CommandsSettingsView: View {
     private func duplicateSelected() {
         guard let command = selectedCommand else { return }
         editingCommand = SavedCommand(
-            name: command.name + " Copy", script: command.script, input: command.input,
+            name: String(localized: "\(command.name) Copy"), script: command.script, input: command.input,
             output: command.output, keyEquivalent: nil, languageIDs: command.languageIDs
         )
     }
@@ -142,7 +142,7 @@ private struct CommandEditorSheet: View {
                     .foregroundStyle(.orange).font(.caption)
             }
 
-            DisclosureGroup("Languages: \(command.languageIDs.isEmpty ? "All" : command.languageIDs.joined(separator: ", "))") {
+            DisclosureGroup("Languages: \(command.languageIDs.isEmpty ? String(localized: "All") : command.languageIDs.joined(separator: ", "))") {
                 ScrollView {
                     VStack(alignment: .leading) {
                         ForEach(Languages.all) { language in
@@ -213,7 +213,7 @@ enum BundleImportRunner {
         do {
             result = try BundleImporter.importBundle(at: url)
         } catch {
-            return "Couldn't import bundle: \(error)"
+            return String(localized: "Couldn't import bundle: \(error.localizedDescription)")
         }
         // Store adds are not atomic across the batch — on a mid-batch write failure the
         // earlier items are already persisted, so the message must say what actually landed.
@@ -228,9 +228,9 @@ enum BundleImportRunner {
                 addedCommands += 1
             }
         } catch {
-            return "Import stopped after \(addedSnippets) of \(result.snippets.count) snippets and \(addedCommands) of \(result.commands.count) commands: \(error)"
+            return String(localized: "Import stopped after \(addedSnippets) of \(result.snippets.count) snippets and \(addedCommands) of \(result.commands.count) commands: \(error.localizedDescription)")
         }
         let skipped = result.skippedSnippets + result.skippedCommands
-        return "Imported \(addedSnippets) snippets, \(addedCommands) commands (\(skipped) skipped)"
+        return String(localized: "Imported \(addedSnippets) snippets, \(addedCommands) commands (\(skipped) skipped)")
     }
 }

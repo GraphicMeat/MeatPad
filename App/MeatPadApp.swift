@@ -321,11 +321,11 @@ private struct MacroCommandItems: View {
     /// plumbing needed since this isn't tied to any particular window.
     private func promptSaveLastMacro() {
         let alert = NSAlert()
-        alert.messageText = "Save Macro As"
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(localized: "Save Macro As")
+        alert.addButton(withTitle: String(localized: "Save"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        field.placeholderString = "Macro Name"
+        field.placeholderString = String(localized: "Macro Name")
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -338,9 +338,9 @@ private struct MacroCommandItems: View {
             // nothing to attach to — same blocking-`NSAlert` style as the prompt above
             // and `ProjectViewModel.presentError`.
             let errorAlert = NSAlert()
-            errorAlert.messageText = "Couldn't Save Macro"
+            errorAlert.messageText = String(localized: "Couldn't Save Macro")
             errorAlert.informativeText = error.localizedDescription
-            errorAlert.addButton(withTitle: "OK")
+            errorAlert.addButton(withTitle: String(localized: "OK"))
             errorAlert.runModal()
         }
     }
@@ -392,7 +392,7 @@ private struct LanguageCommands: View {
     @FocusedValue(\.noteEditor) private var editor
 
     var body: some View {
-        Button(label(for: nil, name: "Automatic")) { editor?.setLanguage(nil) }
+        Button(label(for: nil, name: String(localized: "Automatic"))) { editor?.setLanguage(nil) }
             .disabled(editor == nil)
         Divider()
         ForEach(Languages.all) { language in
@@ -451,12 +451,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         let count = dirty.count
         alert.messageText = count == 1
-            ? "1 document has unsaved changes."
-            : "\(count) documents have unsaved changes."
-        alert.informativeText = "Do you want to save your changes before quitting?"
-        alert.addButton(withTitle: "Save All")
-        alert.addButton(withTitle: "Discard All")
-        alert.addButton(withTitle: "Cancel")
+            ? String(localized: "1 document has unsaved changes.")
+            : String(localized: "\(count) documents have unsaved changes.")
+        alert.informativeText = String(localized: "Do you want to save your changes before quitting?")
+        alert.addButton(withTitle: String(localized: "Save All"))
+        alert.addButton(withTitle: String(localized: "Discard All"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             // Any save failure (disk full, read-only…) cancels the quit so nothing is
