@@ -99,4 +99,24 @@ final class ThemeTests: XCTestCase {
             XCTAssertTrue(missing.isEmpty, "\(theme.id) missing token keys: \(missing)")
         }
     }
+
+    // MARK: - Markdown text.* captures
+
+    func testBuiltinThemesResolveMarkdownTextCaptures() {
+        for theme in BuiltinThemes.all {
+            XCTAssertNotNil(theme.color(forCapture: "text.title"), "\(theme.id) missing text.title")
+            XCTAssertNotNil(theme.color(forCapture: "text.literal"), "\(theme.id) missing text.literal")
+            XCTAssertNotNil(theme.color(forCapture: "text.uri"), "\(theme.id) missing text.uri")
+        }
+    }
+
+    func testBuiltinThemesResolvePunctuationSpecialViaPrefixFallback() {
+        for theme in BuiltinThemes.all {
+            XCTAssertEqual(
+                theme.color(forCapture: "punctuation.special"),
+                theme.tokenColors["punctuation"],
+                "\(theme.id) punctuation.special should fall back to punctuation"
+            )
+        }
+    }
 }

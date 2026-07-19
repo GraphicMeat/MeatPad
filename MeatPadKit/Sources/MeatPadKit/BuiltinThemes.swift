@@ -24,6 +24,12 @@ public enum BuiltinThemes {
             "property": RGBAColor(hex: "#85E89D")!,
             "operator": RGBAColor(hex: "#F97583")!,
             "punctuation": RGBAColor(hex: "#D4D4D8")!,
+            "text.title": RGBAColor(hex: "#FFAB70")!,
+            "text.emphasis": RGBAColor(hex: "#B392F0")!,
+            "text.strong": RGBAColor(hex: "#F97583")!,
+            "text.literal": RGBAColor(hex: "#9ECBFF")!,
+            "text.reference": RGBAColor(hex: "#85E89D")!,
+            "text.uri": RGBAColor(hex: "#6A737D")!,
         ]
     )
 
@@ -49,6 +55,12 @@ public enum BuiltinThemes {
             "property": RGBAColor(hex: "#22863A")!,
             "operator": RGBAColor(hex: "#D73A49")!,
             "punctuation": RGBAColor(hex: "#24292E")!,
+            "text.title": RGBAColor(hex: "#E36209")!,
+            "text.emphasis": RGBAColor(hex: "#6F42C1")!,
+            "text.strong": RGBAColor(hex: "#D73A49")!,
+            "text.literal": RGBAColor(hex: "#032F62")!,
+            "text.reference": RGBAColor(hex: "#22863A")!,
+            "text.uri": RGBAColor(hex: "#6A737D")!,
         ]
     )
 
