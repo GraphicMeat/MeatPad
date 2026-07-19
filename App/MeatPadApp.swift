@@ -60,6 +60,8 @@ struct MeatPadApp: App {
                     .keyboardShortcut("g", modifiers: .command)
                 Button("Find Previous") { MeatPadApp.finder(.previousMatch) }
                     .keyboardShortcut("g", modifiers: [.command, .shift])
+                Divider()
+                FoldAllCommands()
             }
             CommandMenu("Commands") {
                 SavedCommandItems()
@@ -206,6 +208,26 @@ private struct SelectNextOccurrenceCommand: View {
         }
         .keyboardShortcut("d", modifiers: .command)
         .disabled(context == nil)
+    }
+}
+
+/// Cmd+Opt+Shift+Left/Right: fold/unfold every top-level region in the focused editor.
+/// Fold/unfold-at-caret (Cmd+Opt+Left/Right) has no menu item — it's intercepted at the raw
+/// key-event level in `SnippetTextView.keyDown` (see that file) since editor key-binding
+/// chords don't need a menu seam. Fold All / Unfold All aren't caret-relative, so they route
+/// through the same `@FocusedValue(\.editorCommandContext)` pattern as the other editor
+/// commands here, reaching the focused editor's `FoldController` via
+/// `EditorCommandContext.foldAll`/`unfoldAll`.
+private struct FoldAllCommands: View {
+    @FocusedValue(\.editorCommandContext) private var context
+
+    var body: some View {
+        Button("Fold All") { context?.foldAll() }
+            .keyboardShortcut(.leftArrow, modifiers: [.command, .option, .shift])
+            .disabled(context == nil)
+        Button("Unfold All") { context?.unfoldAll() }
+            .keyboardShortcut(.rightArrow, modifiers: [.command, .option, .shift])
+            .disabled(context == nil)
     }
 }
 

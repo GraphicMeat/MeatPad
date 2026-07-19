@@ -39,6 +39,11 @@ struct EditorCommandContext {
     /// Direct access to the focused editor's STTextView — for actions (macro replay) that
     /// need the view itself rather than one of the text-mutation closures above.
     let textView: () -> STTextView?
+    /// Fold All / Unfold All (Task 6) — routed to the focused editor's `FoldController` via
+    /// `SnippetTextView.onFoldAll`/`onUnfoldAll`, the same closure seam `onFoldToggle` uses
+    /// for the keyboard fold/unfold-at-caret commands.
+    let foldAll: () -> Void
+    let unfoldAll: () -> Void
 
     /// Standard context over an editor's STTextView. `fileURL`/`projectRoot` are nil for notes.
     @MainActor
@@ -79,7 +84,9 @@ struct EditorCommandContext {
                 guard let tv = textView() else { return }
                 tv.insertText(output, replacementRange: NSRange(location: tv.textSelection.location, length: 0))
             },
-            textView: textView
+            textView: textView,
+            foldAll: { (textView() as? SnippetTextView)?.onFoldAll?() },
+            unfoldAll: { (textView() as? SnippetTextView)?.onUnfoldAll?() }
         )
     }
 

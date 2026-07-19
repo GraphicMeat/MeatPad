@@ -54,6 +54,8 @@ struct CodeEditor: NSViewRepresentable {
         textView.onCancel = { [weak coord] in MainActor.assumeIsolated { coord?.snippetCancel() ?? false } }
         textView.onCompletionTrigger = { [weak coord] in MainActor.assumeIsolated { coord?.triggerCompletion() ?? false } }
         textView.onFoldToggle = { [weak coord] fold in MainActor.assumeIsolated { coord?.foldToggle(fold: fold) ?? false } }
+        textView.onFoldAll = { [weak coord] in MainActor.assumeIsolated { coord?.foldController.foldAll() } }
+        textView.onUnfoldAll = { [weak coord] in MainActor.assumeIsolated { coord?.foldController.unfoldAll() } }
         coord.foldController.attach(to: textView)
 
         textView.textDelegate = coord

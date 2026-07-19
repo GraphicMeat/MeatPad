@@ -76,8 +76,32 @@ final class FoldController {
             }
         }
 
-        // Re-derive every collapsed NSTextRange from the fresh regions rather than trusting
-        // whatever we handed the fork before this edit — offsets always go stale across edits.
+        applyFoldedHeads(text: text)
+    }
+
+    // MARK: Fold All / Unfold All
+
+    /// Fold every top-level region (`level == 0` — regions already nested inside another
+    /// folded region collapse along with it, same as a manual fold of an outer head).
+    func foldAll() {
+        guard let textView else { return }
+        foldedHeads.formUnion(regions.filter { $0.level == 0 }.map(\.headLineRange.lowerBound))
+        applyFoldedHeads(text: textView.text ?? "")
+    }
+
+    /// Clear every folded head and refresh the gutter chevrons.
+    func unfoldAll() {
+        guard let textView else { return }
+        foldedHeads.removeAll()
+        applyFoldedHeads(text: textView.text ?? "")
+    }
+
+    /// Re-derive every collapsed `NSTextRange` from the current `regions` + `foldedHeads`,
+    /// apply to `textView.foldedRanges`, and rebuild the gutter chevrons. The single path
+    /// `refresh()`, `foldAll()`, and `unfoldAll()` all recompute through — offsets always go
+    /// stale across edits, so nothing here ever trusts a previously-converted range.
+    private func applyFoldedHeads(text: String) {
+        guard let textView else { return }
         let contentManager = textView.textContentManager
         collapsedRanges = Dictionary(uniqueKeysWithValues: regions.compactMap { region -> (Int, NSTextRange)? in
             let head = region.headLineRange.lowerBound
@@ -85,7 +109,6 @@ final class FoldController {
             return (head, range)
         })
         textView.foldedRanges = Array(collapsedRanges.values)
-
         rebuildChevrons(text: text)
     }
 

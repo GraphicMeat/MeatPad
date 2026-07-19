@@ -22,6 +22,9 @@ final class SnippetTextView: STTextView {
     var onCompletionTrigger: (() -> Bool)?
     /// Fold (true) / unfold (false) the region at the caret. Returns true to consume the key.
     var onFoldToggle: ((_ fold: Bool) -> Bool)?
+    /// Fold All / Unfold All, routed from the Edit menu via `EditorCommandContext`.
+    var onFoldAll: (() -> Void)?
+    var onUnfoldAll: (() -> Void)?
 
     override func insertTab(_ sender: Any?) {
         if onInsertTab?() == true { return }
