@@ -113,6 +113,21 @@ final class HighlighterTests: XCTestCase {
         XCTAssertFalse(keyword.isEmpty, "expected a keyword span over 'func' inside the fenced swift block (proves fenced-code injection); got \(all)")
     }
 
+    func testNoStaleInjectionSpansAfterFencedBlockRemoved() throws {
+        let hl = try XCTUnwrap(Highlighter(languageID: "markdown"))
+        let fenced = "```swift\nfunc f() {}\n```"
+        hl.setText(fenced)
+        let withFence = hl.highlights(in: NSRange(location: 0, length: (fenced as NSString).length))
+        XCTAssertFalse(spans(withFence, containing: "keyword", covering: (fenced as NSString).range(of: "func").location).isEmpty,
+                        "expected a keyword span over 'func' inside the fenced swift block; got \(withFence)")
+
+        let prose = "just some plain prose, no code fence here"
+        hl.setText(prose)
+        let withoutFence = hl.highlights(in: NSRange(location: 0, length: (prose as NSString).length))
+        XCTAssertTrue(withoutFence.filter { $0.capture.contains("keyword") }.isEmpty,
+                       "expected no stale keyword spans after the fenced block was removed; got \(withoutFence)")
+    }
+
     func testCaptureNamesHaveNoLeadingAt() throws {
         let hl = try XCTUnwrap(Highlighter(languageID: "json"))
         hl.setText(#"{"a": 1}"#)
