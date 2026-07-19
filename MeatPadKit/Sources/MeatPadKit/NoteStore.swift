@@ -212,7 +212,7 @@ public final class NoteStore: ObservableObject {
     public static func defaultRoot(defaults: UserDefaults = .standard) -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         var base = appSupport.appendingPathComponent("MeatPad", isDirectory: true)
-        if let override = defaults.string(forKey: storageRootOverrideKey) {
+        if let override = defaults.string(forKey: storageRootOverrideKey), override.hasPrefix("/") {
             var isDirectory: ObjCBool = false
             if FileManager.default.fileExists(atPath: override, isDirectory: &isDirectory), isDirectory.boolValue {
                 base = URL(fileURLWithPath: override, isDirectory: true)

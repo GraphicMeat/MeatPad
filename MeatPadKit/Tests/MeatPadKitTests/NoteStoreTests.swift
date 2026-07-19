@@ -81,6 +81,22 @@ final class NoteStoreTests: XCTestCase {
         XCTAssertEqual(root, tempDir.appendingPathComponent("Notes", isDirectory: true))
     }
 
+    func testDefaultRootIgnoresRelativeOverride() throws {
+        let defaults = makeDefaultsSuite()
+        defaults.set("relative/path", forKey: NoteStore.storageRootOverrideKey)
+        XCTAssertTrue(NoteStore.defaultRoot(defaults: defaults).path.hasSuffix("/MeatPad/Notes"))
+    }
+
+    func testDefaultRootIgnoresOverridePointingAtFile() throws {
+        let defaults = makeDefaultsSuite()
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let fileURL = tempDir.appendingPathComponent("not-a-directory")
+        try Data().write(to: fileURL)
+        defaults.set(fileURL.path, forKey: NoteStore.storageRootOverrideKey)
+
+        XCTAssertTrue(NoteStore.defaultRoot(defaults: defaults).path.hasSuffix("/MeatPad/Notes"))
+    }
+
     // MARK: - save
 
     func testSaveUpdatesContentsAndTitleFromFirstLine() throws {

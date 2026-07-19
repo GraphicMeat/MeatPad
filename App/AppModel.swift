@@ -81,9 +81,15 @@ final class AppModel: ObservableObject {
     private static let softWrapDefaultsKey = "softWrap"
     private static let recentProjectsDefaultsKey = "recentProjectPaths"
 
+    /// The storage base (`~/Library/Application Support/MeatPad`, or the override root),
+    /// resolved once in `init` and reused by every use site — never re-derived from
+    /// `NoteStore.defaultRoot()`, which would re-read the override default and could
+    /// disagree if the override key changes during the app's lifetime.
+    private let storageBase: URL
+
     /// Sibling of the Notes directory (not inside it, so it's never mistaken for a note).
-    private static var sessionURL: URL {
-        NoteStore.defaultRoot().deletingLastPathComponent().appendingPathComponent("session.json")
+    private var sessionURL: URL {
+        storageBase.appendingPathComponent("session.json")
     }
 
     private init() {
@@ -106,6 +112,7 @@ final class AppModel: ObservableObject {
             fatalError("MeatPad couldn't set up its notes folder at \(notesRoot.path): \(error)")
         }
         let base = notesRoot.deletingLastPathComponent()
+        storageBase = base
         let snippetsDir = base.appendingPathComponent("Snippets", isDirectory: true)
         snippetLibrary = SnippetLibrary(userDirectory: snippetsDir)
         let commandsDir = base.appendingPathComponent("Commands", isDirectory: true)
@@ -224,7 +231,7 @@ final class AppModel: ObservableObject {
     /// `WindowGroup(for:)` dedups by value.
     func restoreSession() {
         guard let openWindowAction else { return }
-        let state = SessionState.load(from: Self.sessionURL)
+        let state = SessionState.load(from: sessionURL)
         let idsToRestore = (state?.openNoteIDs ?? []).filter { id in noteStore.notes.contains { $0.id == id } }
         let projectsToRestore = (state?.openProjects ?? []).filter { session in
             var isDirectory: ObjCBool = false
@@ -255,7 +262,7 @@ final class AppModel: ObservableObject {
             ProjectSession(root: vm.root.path, openTabs: vm.tabs.map(\.path), selectedTab: vm.selectedTab?.path)
         }
         try? SessionState(openNoteIDs: openNoteIDs, browserOpen: browserOpen, openProjects: openProjects)
-            .save(to: Self.sessionURL)
+            .save(to: sessionURL)
     }
 
     private func scheduleSessionSave() {
