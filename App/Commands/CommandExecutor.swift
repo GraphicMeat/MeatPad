@@ -44,6 +44,15 @@ struct EditorCommandContext {
     /// for the keyboard fold/unfold-at-caret commands.
     let foldAll: () -> Void
     let unfoldAll: () -> Void
+    /// Go to Definition (Task 4), keyboard/menu path — Cmd+click routes through
+    /// `CodeEditor.onGoToDefinition` instead (no focused-editor lookup needed there; the
+    /// click already carries its own editor). Always a callable no-op closure (same shape
+    /// as `foldAll`/`unfoldAll`); `goToDefinitionAvailable` is the menu's separate
+    /// enablement check so `MeatPadApp` doesn't need to know how availability is derived
+    /// (no server alive for the language → disabled, never a dead click). Defaults to
+    /// "unavailable, no-op" so note windows (no LSP) need no changes at their call sites.
+    let goToDefinitionAvailable: Bool
+    let goToDefinition: () -> Void
 
     /// Standard context over an editor's STTextView. `fileURL`/`projectRoot` are nil for notes.
     @MainActor
@@ -54,7 +63,9 @@ struct EditorCommandContext {
         languageID: String?,
         displayName: String,
         fileURL: URL? = nil,
-        projectRoot: URL? = nil
+        projectRoot: URL? = nil,
+        goToDefinitionAvailable: Bool = false,
+        goToDefinition: @escaping () -> Void = {}
     ) -> EditorCommandContext {
         EditorCommandContext(
             hostID: hostID,
@@ -86,7 +97,9 @@ struct EditorCommandContext {
             },
             textView: textView,
             foldAll: { (textView() as? SnippetTextView)?.onFoldAll?() },
-            unfoldAll: { (textView() as? SnippetTextView)?.onUnfoldAll?() }
+            unfoldAll: { (textView() as? SnippetTextView)?.onUnfoldAll?() },
+            goToDefinitionAvailable: goToDefinitionAvailable,
+            goToDefinition: goToDefinition
         )
     }
 

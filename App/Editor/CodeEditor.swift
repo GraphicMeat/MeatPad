@@ -55,6 +55,12 @@ struct CodeEditor: NSViewRepresentable {
     /// URI upstream (`ProjectViewModel.diagnosticsByURI`). Empty for notes and any other
     /// project-less surface — the default, so existing call sites are unaffected.
     var diagnostics: [Diagnostic] = []
+    /// Cmd+click go-to-definition (0.7 LSP plan Task 4): fired with the UTF-16 offset under
+    /// the click and the click's own screen point (anchor for the multiple-locations
+    /// picker). `nil` for notes and other project-less surfaces — `SnippetTextView
+    /// .onDefinitionClick` is then never wired up (see `makeNSView`), so Cmd+click behaves
+    /// exactly like a plain click, unchanged from before this feature existed.
+    var onGoToDefinition: ((Int, NSPoint) -> Void)? = nil
 
     /// SF Mono at the given point size.
     static func font(size: CGFloat) -> NSFont {
@@ -87,6 +93,7 @@ struct CodeEditor: NSViewRepresentable {
             textView.installHoverTracking()
             textView.onHoverMouseMoved = { [weak coord] event in MainActor.assumeIsolated { coord?.hoverMouseMoved(event) } }
             textView.onHoverDismiss = { [weak coord] in MainActor.assumeIsolated { coord?.lspController.dismissHover() } }
+            textView.onDefinitionClick = { [weak coord] point in MainActor.assumeIsolated { coord?.definitionClick(at: point) ?? false } }
         }
 
         textView.textDelegate = coord
@@ -274,6 +281,21 @@ struct CodeEditor: NSViewRepresentable {
         /// crashed/not installed) — `LSPController.mouseMoved` degrades silently in that case.
         func hoverMouseMoved(_ event: NSEvent) {
             lspController.mouseMoved(event, handle: lspHandle, fileURL: parent.currentFileURL)
+        }
+
+        /// Hit-tests a Cmd+click's window-space point to a character offset and forwards it
+        /// (plus the click's screen point, the picker's anchor) to `parent.onGoToDefinition`.
+        /// Returns `false` — SnippetTextView then falls through to `super.mouseDown`'s normal
+        /// click placement — whenever no server is alive for this doc (`lspHandle == nil`,
+        /// the same gate the async completion hook uses) or the point doesn't land on text.
+        func definitionClick(at pointInWindow: NSPoint) -> Bool {
+            guard let textView, let window = textView.window, lspHandle != nil,
+                  parent.onGoToDefinition != nil else { return false }
+            let screenPoint = window.convertPoint(toScreen: pointInWindow)
+            let charIndex = textView.characterIndex(for: screenPoint)
+            guard charIndex != NSNotFound else { return false }
+            parent.onGoToDefinition?(charIndex, screenPoint)
+            return true
         }
 
         func rebuildHighlighter(languageID: String?) {

@@ -135,6 +135,10 @@ final class ProjectViewModel: ObservableObject {
             tabs = [pending]
             selectedTab = pending
             AppModel.shared.pendingFileOpen = nil
+            if let range = AppModel.shared.pendingFileOpenReveal {
+                revealTarget = RevealTarget(token: UUID(), range: range)
+                AppModel.shared.pendingFileOpenReveal = nil
+            }
         }
         // Restored/pre-opened tabs above bypass `open(file:)` (they assign `tabs`
         // directly to preserve order/selection), so notify the LSP manager for them here.
@@ -208,6 +212,76 @@ final class ProjectViewModel: ObservableObject {
     func open(file: URL, reveal range: NSRange) {
         open(file: file)
         revealTarget = RevealTarget(token: UUID(), range: range)
+    }
+
+    // MARK: - Go to Definition (0.7 LSP plan Task 4)
+
+    /// Requests `textDocument/definition` at `offset` (UTF-16, in `url`'s buffer) and
+    /// navigates to the result — see `navigateToDefinition`. No-op whenever no server is
+    /// alive for `languageID`: same silent-degrade contract every other LSP feature uses
+    /// (the menu item is separately disabled via `lspStatusByLanguage`; Cmd+click never
+    /// even reaches here in that case — see `CodeEditor.Coordinator.definitionClick`).
+    /// `screenAnchor` (screen coordinates) only matters for the multiple-locations picker.
+    func goToDefinition(from url: URL, languageID: String?, offset: Int, screenAnchor: NSPoint) {
+        guard let languageID, lspStatusByLanguage[languageID] == .running,
+              let handle = lspManager.server(for: languageID) else { return }
+        Task { [weak self] in
+            guard let text = EditorRegistry.shared.fileViewModel(for: url)?.text,
+                  let position = LSPPositionBridge.position(of: offset, in: text) else { return }
+            let params = TextDocumentPositionParams(uri: url.absoluteString, position: position)
+            // Double-optional flatten (mirrors LSPController.requestHover): `definition`
+            // throws on transport failure, and its own successful result is itself
+            // optional (server found nothing).
+            let response = (try? await handle.definition(params: params)) ?? nil
+            let locations = GoToDefinition.locations(from: response)
+            guard let self, !locations.isEmpty else { return }
+            if locations.count == 1 {
+                self.navigateToDefinition(locations[0])
+            } else {
+                GoToDefinition.presentPicker(locations: locations, at: screenAnchor) { [weak self] chosen in
+                    self?.navigateToDefinition(chosen)
+                }
+            }
+        }
+    }
+
+    /// One resolved `Location` → the actual jump. Same-project file → `open(file:reveal:)`.
+    /// Outside `root` → `openOutsideProject`. The target's *current* text (live buffer if
+    /// already open somewhere, else read fresh off disk) converts `location.range` to an
+    /// `NSRange`; a conversion failure (e.g. the file changed since the server computed the
+    /// range) still opens the file, just without a specific reveal, rather than dropping
+    /// the whole navigation.
+    private func navigateToDefinition(_ location: Location) {
+        guard let targetURL = URL(string: location.uri) else { return }
+        let rootPath = root.standardizedFileURL.path
+        let targetPath = targetURL.standardizedFileURL.path
+        guard targetPath == rootPath || targetPath.hasPrefix(rootPath + "/") else {
+            openOutsideProject(targetURL, range: location.range)
+            return
+        }
+        let text = EditorRegistry.shared.fileViewModel(for: targetURL)?.text
+            ?? (try? String(contentsOf: targetURL, encoding: .utf8)) ?? ""
+        let range = LSPPositionBridge.nsRange(of: location.range, in: text) ?? NSRange(location: 0, length: 0)
+        open(file: targetURL, reveal: range)
+    }
+
+    /// Outside this project's root: no standalone single-file window scene exists in this
+    /// app (only `WindowGroup("Project", for: URL.self)`), so the lazy-correct stand-in is
+    /// the same mechanism Cmd+O already uses to open one file outside any open project —
+    /// a *new* project window rooted at the file's parent folder, with the file pre-opened
+    /// (and, here, pre-scrolled — see `pendingFileOpenReveal`). `EditorRegistry
+    /// .fileViewModel(for:)` returning `nil` is this app's one existing "is this file
+    /// openable" check (`FileDocumentModel`'s own read failure), reused rather than
+    /// duplicated. Unreadable → reveal in Finder instead (`FileTreeView`'s own fallback for
+    /// the same situation).
+    private func openOutsideProject(_ url: URL, range: LSPRange) {
+        guard let vm = EditorRegistry.shared.fileViewModel(for: url) else {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            return
+        }
+        AppModel.shared.pendingFileOpen = url
+        AppModel.shared.pendingFileOpenReveal = LSPPositionBridge.nsRange(of: range, in: vm.text)
+        AppModel.shared.openWindowAction?(value: url.deletingLastPathComponent())
     }
 
     /// Called by the editor after it actually scrolled/selected the target. Token-guarded

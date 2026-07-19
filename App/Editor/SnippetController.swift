@@ -35,6 +35,17 @@ final class SnippetTextView: STTextView {
     /// Fired on `mouseExited` (cursor left the text view) and `resignFirstResponder` (editor
     /// lost focus) — both are hover dismiss triggers per the 0.7 LSP plan.
     var onHoverDismiss: (() -> Void)?
+    /// Cmd+click go-to-definition (0.7 LSP plan Task 4), checked in `mouseDown` below.
+    /// Takes the raw window-space click point; returns `true` when it fired a request
+    /// (consuming the click) or `false` to fall through to normal click placement — no
+    /// live server for this doc, or the click didn't land on text. Only wired up (like
+    /// `onHoverMouseMoved`) when `CodeEditor.makeNSView` sees a live `lspManager`, so
+    /// Cmd+click on a project-less surface (notes) is untouched: plain click placement,
+    /// same as before this feature existed. Cmd+click is free to claim here — the fork's
+    /// own `mouseDown` (STTextView+Mouse.swift) only special-cases Shift/Control/Option,
+    /// never Command, and multi-caret already owns Option+Click (see below) — verified by
+    /// reading the fork source, not just by "it happened not to conflict."
+    var onDefinitionClick: ((NSPoint) -> Bool)?
 
     /// `.inVisibleRect` keeps the tracking area's rect in sync with the view's own bounds as it
     /// resizes/scrolls, so this only needs to run once (`makeNSView`, not `updateTrackingAreas`).
@@ -93,6 +104,11 @@ final class SnippetTextView: STTextView {
     /// current selections, let `super` place a single caret at the click (native point → caret
     /// conversion, no gutter/scroll math), then merge the snapshot back via MultiCaretController.
     override func mouseDown(with event: NSEvent) {
+        if event.type == .leftMouseDown,
+           event.modifierFlags.intersection([.command, .option, .shift, .control]) == .command,
+           onDefinitionClick?(event.locationInWindow) == true {
+            return
+        }
         if event.type == .leftMouseDown,
            event.modifierFlags.intersection([.command, .option, .shift, .control]) == .option {
             let existing = textLayoutManager.textSelections

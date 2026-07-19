@@ -74,7 +74,10 @@ private struct EditorPane: View {
             lspManager: project.lspManager,
             onCursorChange: { cursor = $0 },
             onDocumentChanged: { project.notifyLSPDocumentChanged(url) },
-            diagnostics: project.diagnosticsByURI[url.absoluteString] ?? []
+            diagnostics: project.diagnosticsByURI[url.absoluteString] ?? [],
+            onGoToDefinition: { offset, screenPoint in
+                project.goToDefinition(from: url, languageID: editor.language?.id, offset: offset, screenAnchor: screenPoint)
+            }
         )
         .safeAreaInset(edge: .bottom, spacing: 0) {
             EditorStatusBar(
@@ -100,7 +103,14 @@ private struct EditorPane: View {
             languageID: editor.language?.id,
             displayName: url.lastPathComponent,
             fileURL: url,
-            projectRoot: project.root
+            projectRoot: project.root,
+            goToDefinitionAvailable: project.lspStatusByLanguage[editor.language?.id ?? ""] == .running,
+            goToDefinition: {
+                guard let tv = snippetController.textView else { return }
+                let offset = tv.textSelection.location
+                let rect = tv.firstRect(forCharacterRange: NSRange(location: offset, length: 0), actualRange: nil)
+                project.goToDefinition(from: url, languageID: editor.language?.id, offset: offset, screenAnchor: NSPoint(x: rect.minX, y: rect.minY))
+            }
         ))
     }
 

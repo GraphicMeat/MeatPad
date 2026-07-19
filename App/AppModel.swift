@@ -55,6 +55,12 @@ final class AppModel: ObservableObject {
     /// the parent opens as the project and the new `ProjectViewModel` consumes this to
     /// pre-open the file as a tab. Plain var (consumed once, imperatively).
     var pendingFileOpen: URL?
+    /// Optional one-shot scroll target for `pendingFileOpen`, in the *target file's* own
+    /// UTF-16 coordinates — set alongside it by Go to Definition (0.7 LSP plan Task 4) when
+    /// the definition lives outside the current project root, so the new window's
+    /// `ProjectViewModel` can jump straight to the line instead of just opening the file.
+    /// `nil` (the Cmd+O path never sets it) means "just open the tab, no reveal."
+    var pendingFileOpenReveal: NSRange?
 
     /// Saved tabs/selection for a project window about to be reopened by session
     /// restore, keyed by standardized root URL. `ProjectViewModel.init` consumes (and

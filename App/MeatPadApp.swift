@@ -72,6 +72,9 @@ struct MeatPadApp: App {
                 Divider()
                 InsertSnippetCommands()
             }
+            CommandMenu("Navigate") {
+                GoToDefinitionCommand()
+            }
         }
 
         WindowGroup("Project", for: URL.self) { $folderURL in
@@ -228,6 +231,25 @@ private struct FoldAllCommands: View {
         Button("Unfold All") { context?.unfoldAll() }
             .keyboardShortcut(.rightArrow, modifiers: [.command, .option, .shift])
             .disabled(context == nil)
+    }
+}
+
+/// ⌃⌘J: Go to Definition (0.7 LSP plan Task 4) — Xcode's own shortcut for the same
+/// feature. Picked because this app has no Control-modifier shortcuts yet (grepped every
+/// `.keyboardShortcut` in this file first — the taken combos are all plain-Cmd or
+/// Cmd+Option/Shift), so it's guaranteed conflict-free, and reusing prior art beats
+/// inventing a new one. The mouse-driven trigger is Cmd+click (`SnippetTextView
+/// .onDefinitionClick`, wired in `CodeEditor`) — both funnel into the same
+/// `ProjectViewModel.goToDefinition`. Disabled with no editor focused or (via
+/// `goToDefinitionAvailable`) when the focused editor has no live LSP server for its
+/// language — notes never set it, so it's always disabled there.
+private struct GoToDefinitionCommand: View {
+    @FocusedValue(\.editorCommandContext) private var context
+
+    var body: some View {
+        Button("Go to Definition") { context?.goToDefinition() }
+            .keyboardShortcut("j", modifiers: [.command, .control])
+            .disabled(context?.goToDefinitionAvailable != true)
     }
 }
 
