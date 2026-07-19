@@ -421,6 +421,13 @@ final class ProjectViewModel: ObservableObject {
     /// slow prompt racing a server crash is possible) rather than assuming the caller did.
     func performRename(_ request: RenameSymbolRequest, newName: String) {
         guard let handle = lspManager.server(for: request.languageID) else { return }
+        // Captured synchronously, before the request goes out — the origin file's buffer
+        // generation the server's edits get computed against. `textDocument/rename` goes
+        // straight to `handle`, not through `LSPProjectManager`'s per-language FIFO
+        // (`enqueue`), so there's no way to flush a `documentChanged` ahead of it with an
+        // ordering guarantee; the apply-time compare below (`RenameSymbol.apply`) is what
+        // actually catches staleness, this is just its baseline.
+        let originTextAtRequest = EditorRegistry.shared.fileViewModel(for: request.fileURL)?.text
         Task { [weak self] in
             let params = RenameParams(
                 textDocument: TextDocumentIdentifier(uri: request.fileURL.absoluteString),
@@ -433,7 +440,10 @@ final class ProjectViewModel: ObservableObject {
                 return
             }
             guard let self else { return }
-            let outcome = RenameSymbol.apply(edit, originatingFile: request.fileURL, originatingOffset: request.offset)
+            let outcome = RenameSymbol.apply(
+                edit, originatingFile: request.fileURL, originatingOffset: request.offset,
+                originatingTextAtRequest: originTextAtRequest
+            )
             if let caret = outcome.originatingCaret {
                 self.open(file: request.fileURL, reveal: NSRange(location: caret, length: 0))
             }

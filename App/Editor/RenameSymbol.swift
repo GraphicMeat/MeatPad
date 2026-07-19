@@ -55,8 +55,21 @@ enum RenameSymbol {
     /// or corrupts another's. A `WorkspaceEditDocumentChange` whose URI doesn't parse is
     /// dropped silently: no server this app talks to has ever been observed emitting one,
     /// and there's no sane filename to report it under.
+    ///
+    /// `originatingTextAtRequest`: the origin file's `vm.text` snapshot taken right before
+    /// `textDocument/rename` was sent (see `ProjectViewModel.performRename`). `didChange` is
+    /// debounced, so the server can compute edits against text that's already stale by the
+    /// time this returns — a range that's still in-bounds but shifted would silently apply
+    /// at the wrong offsets, and rename has no undo to recover with. Guarded the same way
+    /// `LSPController.requestHover` guards its own round trip (`LSPController.swift`:
+    /// `textView.text == text` before presenting) — capture, compare at apply time, drop if
+    /// stale rather than guess. Only the origin file needs this: it's the only open file the
+    /// user can be typing in during the round trip (single window, sheet-modal focus). Other
+    /// open files touched by the same rename aren't covered by this guard — they could still
+    /// be mutated by an external process/background watcher mid-round-trip; that exposure
+    /// predates this fix and isn't new here.
     @MainActor
-    static func apply(_ edit: WorkspaceEdit, originatingFile: URL, originatingOffset: Int) -> Outcome {
+    static func apply(_ edit: WorkspaceEdit, originatingFile: URL, originatingOffset: Int, originatingTextAtRequest: String?) -> Outcome {
         let originating = originatingFile.standardizedFileURL
         var results: [FileResult] = []
         var originatingCaret: Int?
@@ -64,6 +77,16 @@ enum RenameSymbol {
         for fileEdit in WorkspaceEditApplier.normalize(edit) {
             guard let url = URL(string: fileEdit.uri) else { continue }
             let isOriginating = url.standardizedFileURL == originating
+
+            if isOriginating, let snapshot = originatingTextAtRequest,
+               currentText(of: url) != snapshot {
+                results.append(FileResult(
+                    url: url, success: false,
+                    reason: String(localized: "Skipped — this file changed while the rename was in progress.")
+                ))
+                continue
+            }
+
             let (success, reason, caret) = applyToFile(
                 url: url, edits: fileEdit.edits,
                 captureCaretFrom: isOriginating ? originatingOffset : nil
@@ -72,6 +95,14 @@ enum RenameSymbol {
             if isOriginating, success { originatingCaret = caret }
         }
         return Outcome(results: results, originatingCaret: originatingCaret)
+    }
+
+    /// Current buffer text for `url` if it's open — same "only trust `allFileViewModels`,
+    /// never `fileViewModel(for:)`'s throwaway-creation path" rule `applyToFile` follows.
+    @MainActor
+    private static func currentText(of url: URL) -> String? {
+        EditorRegistry.shared.allFileViewModels()
+            .first { $0.document.url.standardizedFileURL == url.standardizedFileURL }?.text
     }
 
     /// One file's edits. `captureCaretFrom` is the pre-rename caret offset to translate
