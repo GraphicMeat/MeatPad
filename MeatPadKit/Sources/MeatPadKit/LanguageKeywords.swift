@@ -82,7 +82,7 @@ public enum LanguageKeywords {
             "else", "enum", "explicit", "export", "extern", "false", "float",
             "for", "friend", "goto", "if", "inline", "int", "long", "mutable",
             "namespace", "new", "noexcept", "nullptr", "operator", "private",
-            "protected", "public", "register", "reinterpret_cast", "require", "requires", "return",
+            "protected", "public", "register", "reinterpret_cast", "requires", "return",
             "short", "signed", "sizeof", "static", "static_assert", "static_cast", "struct",
             "switch", "template", "this", "throw", "true", "try", "typedef",
             "typeid", "typename", "union", "unsigned", "using", "virtual", "void",

@@ -38,6 +38,7 @@ final class LanguageKeywordsTests: XCTestCase {
     func testCppContainsCoreKeywords() {
         let keywords = LanguageKeywords.keywords(for: "cpp")
         XCTAssertTrue(keywords.contains("static_assert"))
+        XCTAssertFalse(keywords.contains("require"))
     }
 
     func testMarkupAndDataLanguagesReturnEmpty() {
