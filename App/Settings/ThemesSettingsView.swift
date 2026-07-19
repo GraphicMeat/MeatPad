@@ -153,8 +153,6 @@ struct ThemesSettingsView: View {
             ColorPicker("Foreground", selection: colorBinding(theme, \.editorForeground))
             ColorPicker("Current Line", selection: colorBinding(theme, \.currentLine))
             ColorPicker("Selection", selection: colorBinding(theme, \.selection))
-            Text("Selection color is applied when supported by the text view (FB11984872).")
-                .font(.caption2).foregroundStyle(.secondary)
             ColorPicker("Caret", selection: colorBinding(theme, \.caret))
             ColorPicker("Gutter", selection: colorBinding(theme, \.gutterForeground))
             Toggle("Dark Theme", isOn: boolBinding(theme, \.isDark))
