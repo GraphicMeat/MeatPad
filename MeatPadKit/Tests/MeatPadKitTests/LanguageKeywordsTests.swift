@@ -8,6 +8,7 @@ final class LanguageKeywordsTests: XCTestCase {
         XCTAssertTrue(keywords.contains("func"))
         XCTAssertTrue(keywords.contains("guard"))
         XCTAssertTrue(keywords.contains("protocol"))
+        XCTAssertTrue(keywords.contains("any"))
     }
 
     func testPythonContainsCoreKeywords() {
@@ -26,6 +27,17 @@ final class LanguageKeywordsTests: XCTestCase {
         let keywords = LanguageKeywords.keywords(for: "go")
         XCTAssertTrue(keywords.contains("func"))
         XCTAssertTrue(keywords.contains("chan"))
+    }
+
+    func testTypeScriptContainsCoreKeywords() {
+        let keywords = LanguageKeywords.keywords(for: "typescript")
+        XCTAssertTrue(keywords.contains("any"))
+        XCTAssertTrue(keywords.contains("satisfies"))
+    }
+
+    func testCppContainsCoreKeywords() {
+        let keywords = LanguageKeywords.keywords(for: "cpp")
+        XCTAssertTrue(keywords.contains("static_assert"))
     }
 
     func testMarkupAndDataLanguagesReturnEmpty() {

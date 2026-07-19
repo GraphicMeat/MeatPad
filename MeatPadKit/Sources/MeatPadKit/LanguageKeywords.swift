@@ -21,13 +21,13 @@ public enum LanguageKeywords {
         "protected", "public", "return", "static", "super", "switch", "this", "throw",
         "true", "try", "typeof", "undefined", "var", "void", "while", "with", "yield",
         // TypeScript-specific
-        "abstract", "as", "asserts", "declare", "from", "infer", "is", "keyof",
-        "module", "namespace", "never", "readonly", "require", "type", "unknown",
+        "abstract", "any", "as", "asserts", "declare", "from", "infer", "is", "keyof",
+        "module", "namespace", "never", "override", "readonly", "require", "satisfies", "type", "unknown",
     ].sorted()
 
     private static let table: [String: [String]] = [
         "swift": [
-            "actor", "as", "associatedtype", "async", "await", "break", "case",
+            "actor", "any", "as", "associatedtype", "async", "await", "break", "case",
             "catch", "class", "continue", "convenience", "default", "defer",
             "deinit", "didSet", "do", "dynamic", "else", "enum", "extension",
             "fallthrough", "false", "fileprivate", "final", "for", "func", "get",
@@ -77,13 +77,13 @@ public enum LanguageKeywords {
 
         "cpp": [
             "alignas", "alignof", "and", "auto", "bool", "break", "case", "catch",
-            "char", "class", "const", "constexpr", "const_cast", "continue",
+            "char", "class", "concept", "const", "constexpr", "const_cast", "continue",
             "decltype", "default", "delete", "do", "double", "dynamic_cast",
             "else", "enum", "explicit", "export", "extern", "false", "float",
             "for", "friend", "goto", "if", "inline", "int", "long", "mutable",
             "namespace", "new", "noexcept", "nullptr", "operator", "private",
-            "protected", "public", "register", "reinterpret_cast", "return",
-            "short", "signed", "sizeof", "static", "static_cast", "struct",
+            "protected", "public", "register", "reinterpret_cast", "require", "requires", "return",
+            "short", "signed", "sizeof", "static", "static_assert", "static_cast", "struct",
             "switch", "template", "this", "throw", "true", "try", "typedef",
             "typeid", "typename", "union", "unsigned", "using", "virtual", "void",
             "volatile", "while",
