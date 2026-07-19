@@ -161,6 +161,16 @@ struct EditorCommandContext {
     }
 }
 
+/// An untrusted command's execution request, held until the user answers the
+/// confirmation gate (`CommandTrustSheet`) — Cancel, Run Once, or Trust and Run.
+/// `Identifiable` for `.sheet(item:)`; presentation follows `filterContext`'s pattern
+/// (matched by the requesting window's `hostID`, see `ProjectWindow`/`NoteWindow`).
+struct CommandTrustRequest: Identifiable {
+    let id = UUID()
+    let command: SavedCommand
+    let context: EditorCommandContext
+}
+
 /// Runs saved commands and one-off filters, applying output per the command's mode.
 /// One app-wide instance on `AppModel`; one command runs at a time.
 @MainActor
@@ -170,11 +180,43 @@ final class CommandExecutor: ObservableObject {
     /// Set by the Commands menu to request the Filter Through Command… sheet in the
     /// window owning this context; the matching window's `.sheet` consumes it.
     @Published var filterContext: EditorCommandContext?
+    /// Set by `run` when `cmd.trusted == false`, in place of executing anything — the
+    /// matching window's `.sheet` presents `CommandTrustSheet` to decide Cancel/Run
+    /// Once/Trust and Run. `FilterCommandSheet`'s throwaway commands never land here:
+    /// they're built with `SavedCommand`'s default `trusted: true` (user-typed inline,
+    /// trusted by authorship — same as any hand-authored saved command).
+    @Published var trustRequest: CommandTrustRequest?
 
     private var currentTask: Task<Void, Never>?
 
+    /// Entry point for every saved-command invocation (menu items, keyboard shortcuts).
+    /// Untrusted commands (freshly imported, never confirmed) stop here — nothing is
+    /// spawned until the trust sheet's Run Once or Trust and Run is chosen.
     func run(_ cmd: SavedCommand, context ctx: EditorCommandContext) {
         guard !isRunning else { return }
+        guard cmd.trusted else {
+            trustRequest = CommandTrustRequest(command: cmd, context: ctx)
+            return
+        }
+        execute(cmd, context: ctx)
+    }
+
+    /// Runs `cmd` once without persisting trust — the trust sheet's "Run Once".
+    func runOnce(_ cmd: SavedCommand, context ctx: EditorCommandContext) {
+        execute(cmd, context: ctx)
+    }
+
+    /// Persists `trusted = true` on the command (so future runs skip the gate), then
+    /// runs it — the trust sheet's "Trust and Run". Persistence failure (command
+    /// deleted from the store mid-prompt) doesn't block the run.
+    func trustAndRun(_ cmd: SavedCommand, context ctx: EditorCommandContext) {
+        var trusted = cmd
+        trusted.trusted = true
+        try? AppModel.shared.commandStore.update(trusted)
+        execute(trusted, context: ctx)
+    }
+
+    private func execute(_ cmd: SavedCommand, context ctx: EditorCommandContext) {
         isRunning = true
 
         let stdin: String?
@@ -184,7 +226,7 @@ final class CommandExecutor: ObservableObject {
         case .selection: stdin = ctx.selectedText() ?? ctx.documentText()
         case .document: stdin = ctx.documentText()
         }
-        let environment = TMEnvironment.build(from: ctx.commandContext())
+        let environment = TMEnvironment.build(from: ctx.commandContext(), restricted: cmd.restrictedEnvironment)
 
         if cmd.output == .outputPanel, ctx.panelCapable {
             panelOutput = PanelOutput(hostID: ctx.hostID, commandName: cmd.name, stdout: "", stderr: "", exitCode: nil, isRunning: true)
@@ -192,7 +234,7 @@ final class CommandExecutor: ObservableObject {
 
         currentTask = Task {
             do {
-                let result = try await CommandRunner().run(script: cmd.script, stdin: stdin, environment: environment, timeout: 30)
+                let result = try await CommandRunner().run(script: cmd.script, stdin: stdin, environment: environment, timeout: cmd.timeoutSeconds ?? 30)
                 finish(cmd, context: ctx, result: result)
             } catch {
                 // Cancellation or spawn failure: tear down quietly; cancel() already

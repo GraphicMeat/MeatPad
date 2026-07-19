@@ -24,6 +24,15 @@ struct NoteWindow: View {
         )
     }
 
+    /// The executor's untrusted-command prompt, filtered to this window the same way
+    /// `filterSheetShown` is — keyed on `snippetController`, not the shared note view model.
+    private var trustRequestForWindow: Binding<CommandTrustRequest?> {
+        Binding(
+            get: { executor.trustRequest?.context.hostID == AnyHashable(ObjectIdentifier(snippetController)) ? executor.trustRequest : nil },
+            set: { if $0 == nil { executor.trustRequest = nil } }
+        )
+    }
+
     var body: some View {
         Group {
             if viewModel.exists {
@@ -64,6 +73,20 @@ struct NoteWindow: View {
             if let context = executor.filterContext {
                 FilterCommandSheet(context: context, onDismiss: { executor.filterContext = nil })
             }
+        }
+        .sheet(item: trustRequestForWindow) { request in
+            CommandTrustSheet(
+                request: request,
+                onCancel: { executor.trustRequest = nil },
+                onRunOnce: {
+                    executor.trustRequest = nil
+                    executor.runOnce(request.command, context: request.context)
+                },
+                onTrustAndRun: {
+                    executor.trustRequest = nil
+                    executor.trustAndRun(request.command, context: request.context)
+                }
+            )
         }
         .frame(minWidth: 640, minHeight: 420)
         .navigationTitle(viewModel.title)

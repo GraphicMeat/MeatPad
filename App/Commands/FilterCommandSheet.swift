@@ -48,6 +48,8 @@ struct FilterCommandSheet: View {
     }
 
     private func run() {
+        // No trust gate: user-typed inline right here, trusted by authorship — same as
+        // any hand-authored saved command (`SavedCommand`'s default `trusted: true`).
         let command = SavedCommand(
             name: script,
             script: script,

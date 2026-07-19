@@ -49,9 +49,15 @@ struct CommandsSettingsView: View {
 
     private func row(_ command: SavedCommand) -> some View {
         HStack {
+            trustIcon(command)
             VStack(alignment: .leading, spacing: 2) {
                 Text(command.name)
-                Text(command.script).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                if command.trusted {
+                    Text(command.script).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                } else {
+                    Text("Imported — not yet trusted. Runs will ask for confirmation.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
             }
             Spacer()
             if let key = command.keyEquivalent, !key.isEmpty {
@@ -68,6 +74,25 @@ struct CommandsSettingsView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { editingCommand = command }
+        .contextMenu {
+            if command.trusted {
+                Button("Revoke Trust") { setTrusted(command, trusted: false) }
+            } else {
+                Button("Trust") { setTrusted(command, trusted: true) }
+            }
+        }
+    }
+
+    private func trustIcon(_ command: SavedCommand) -> some View {
+        Image(systemName: command.trusted ? "checkmark.shield" : "exclamationmark.shield.fill")
+            .foregroundStyle(command.trusted ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
+            .help(command.trusted ? "Trusted — runs without confirmation" : "Not yet trusted — will ask before first run")
+    }
+
+    private func setTrusted(_ command: SavedCommand, trusted: Bool) {
+        var updated = command
+        updated.trusted = trusted
+        do { try store.update(updated) } catch { storeError = "\(error)" }
     }
 
     private var toolbar: some View {
@@ -142,6 +167,13 @@ private struct CommandEditorSheet: View {
                     .foregroundStyle(.orange).font(.caption)
             }
 
+            HStack {
+                TextField("Timeout (seconds, default 30)", text: timeoutBinding)
+                    .frame(width: 200)
+                Toggle("Restricted environment", isOn: $command.restrictedEnvironment)
+                    .help("Only TM_* variables plus PATH/HOME/SHELL/LANG/TMPDIR — not the app's full environment.")
+            }
+
             DisclosureGroup("Languages: \(command.languageIDs.isEmpty ? String(localized: "All") : command.languageIDs.joined(separator: ", "))") {
                 ScrollView {
                     VStack(alignment: .leading) {
@@ -171,6 +203,18 @@ private struct CommandEditorSheet: View {
         Binding(
             get: { command.keyEquivalent ?? "" },
             set: { command.keyEquivalent = $0.isEmpty ? nil : $0 }
+        )
+    }
+
+    /// Empty text = nil = `CommandRunner`'s own 30s default; a non-numeric entry is
+    /// ignored (leaves `timeoutSeconds` at its last valid value) rather than crashing.
+    private var timeoutBinding: Binding<String> {
+        Binding(
+            get: { command.timeoutSeconds.map { String(Int($0)) } ?? "" },
+            set: { text in
+                if text.isEmpty { command.timeoutSeconds = nil }
+                else if let value = Double(text) { command.timeoutSeconds = value }
+            }
         )
     }
 
@@ -231,6 +275,11 @@ enum BundleImportRunner {
             return String(localized: "Import stopped after \(addedSnippets) of \(result.snippets.count) snippets and \(addedCommands) of \(result.commands.count) commands: \(error.localizedDescription)")
         }
         let skipped = result.skippedSnippets + result.skippedCommands
-        return String(localized: "Imported \(addedSnippets) snippets, \(addedCommands) commands (\(skipped) skipped)")
+        // Every imported command lands with `trusted: false` (BundleImporter.importCommand,
+        // Task 2) — say so here so "0 commands ran" doesn't look like a silent failure.
+        let trustNote = addedCommands > 0
+            ? String(localized: " — imported as untrusted; each will ask for confirmation before its first run")
+            : ""
+        return String(localized: "Imported \(addedSnippets) snippets, \(addedCommands) commands (\(skipped) skipped)\(trustNote)")
     }
 }

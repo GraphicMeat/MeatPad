@@ -23,6 +23,16 @@ struct ProjectWindow: View {
         )
     }
 
+    /// The executor's untrusted-command prompt, but only when it targets this window's
+    /// editor — same host-id filtering as `filterSheetShown`, shaped as an item binding
+    /// for `.sheet(item:)` since `CommandTrustSheet` needs the request's payload.
+    private var trustRequestForWindow: Binding<CommandTrustRequest?> {
+        Binding(
+            get: { executor.trustRequest?.context.hostID == AnyHashable(ObjectIdentifier(viewModel)) ? executor.trustRequest : nil },
+            set: { if $0 == nil { executor.trustRequest = nil } }
+        )
+    }
+
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
@@ -78,6 +88,20 @@ struct ProjectWindow: View {
         }
         .sheet(item: $viewModel.renameRequest) { request in
             RenameSymbolSheet(request: request, project: viewModel)
+        }
+        .sheet(item: trustRequestForWindow) { request in
+            CommandTrustSheet(
+                request: request,
+                onCancel: { executor.trustRequest = nil },
+                onRunOnce: {
+                    executor.trustRequest = nil
+                    executor.runOnce(request.command, context: request.context)
+                },
+                onTrustAndRun: {
+                    executor.trustRequest = nil
+                    executor.trustAndRun(request.command, context: request.context)
+                }
+            )
         }
         .frame(minWidth: 720, minHeight: 480)
         .navigationTitle(viewModel.root.lastPathComponent)
