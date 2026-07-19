@@ -2,8 +2,39 @@ import SwiftUI
 import AppKit
 import MeatPadKit
 
-/// Content of the `Window("All Notes", id: "all-notes")` scene: a searchable sidebar
-/// of every note plus a detail editor for the selection, reusing the same
+/// Which folder the browser is showing. Raw-string encoded for @SceneStorage.
+enum FolderSelection: Hashable, RawRepresentable {
+    case all
+    case defaultFolder          // the implicit "Notes" folder (Note.folder == nil)
+    case folder(String)
+
+    var rawValue: String {
+        switch self {
+        case .all: return "all"
+        case .defaultFolder: return "default"
+        case .folder(let name): return "f:\(name)"
+        }
+    }
+
+    init?(rawValue: String) {
+        switch rawValue {
+        case "all": self = .all
+        case "default": self = .defaultFolder
+        default:
+            guard rawValue.hasPrefix("f:") else { return nil }
+            self = .folder(String(rawValue.dropFirst(2)))
+        }
+    }
+
+    /// The value new/moved notes get in this context: "All Notes" creates into the default folder.
+    var noteFolder: String? {
+        if case .folder(let name) = self { return name }
+        return nil
+    }
+}
+
+/// Content of the `Window("All Notes", id: "all-notes")` scene: folders sidebar,
+/// searchable note list for the selected folder, and a detail editor, reusing the same
 /// `NoteEditorViewModel` autosave pipeline as a standalone note window.
 struct NotesBrowserWindow: View {
     // Observed directly: nested ObservableObject changes don't propagate through
@@ -12,55 +43,175 @@ struct NotesBrowserWindow: View {
     @Environment(\.openWindow) private var openWindow
     @State private var query = ""
     @State private var selection: UUID?
+    @SceneStorage("notesBrowser.folder") private var folderSelection: FolderSelection = .all
+
+    // New Folder / Rename alerts.
+    @State private var folderNameDraft = ""
+    @State private var newFolderShown = false
+    @State private var renameTarget: String?
+    @State private var deleteTarget: String?
+    @State private var folderError: String?
 
     private var filtered: [Note] {
-        let notes = noteStore.notes
+        var notes = noteStore.notes
+        switch folderSelection {
+        case .all: break
+        case .defaultFolder:
+            // Unknown-folder notes (folder name absent from folders.json) fall back here.
+            notes = notes.filter { $0.folder == nil || !noteStore.folders.contains($0.folder!) }
+        case .folder(let name):
+            notes = notes.filter { $0.folder == name }
+        }
         guard !query.isEmpty else { return notes }
         return notes.filter { $0.title.localizedCaseInsensitiveContains(query) }
     }
 
     var body: some View {
         NavigationSplitView {
-            sidebar
+            folderSidebar
+        } content: {
+            noteList
         } detail: {
             detail
         }
         .background { AmbientGlassBackground() }
-        .frame(minWidth: 720, minHeight: 480)
+        .frame(minWidth: 860, minHeight: 480)
         .onAppear { AppModel.shared.browserWindowDidAppear() }
         .onDisappear { AppModel.shared.browserWindowDidDisappear() }
+        .onChange(of: folderSelection) { _, _ in selection = nil }
+        .alert("New Folder", isPresented: $newFolderShown) {
+            TextField("Name", text: $folderNameDraft)
+            Button("Create") { runFolderOp { try noteStore.createFolder(folderNameDraft) } }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Rename Folder", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
+            TextField("Name", text: $folderNameDraft)
+            Button("Rename") {
+                if let old = renameTarget {
+                    let new = folderNameDraft
+                    runFolderOp { try noteStore.renameFolder(old, to: new) }
+                    if case .folder(old) = folderSelection { folderSelection = .folder(new) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Delete “\(deleteTarget ?? "")”? Its notes move to the trash.",
+            isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Folder", role: .destructive) {
+                if let name = deleteTarget {
+                    runFolderOp { try noteStore.deleteFolder(name) }
+                    if case .folder(name) = folderSelection { folderSelection = .all }
+                }
+            }
+        }
+        .alert("Folder Error", isPresented: Binding(get: { folderError != nil }, set: { if !$0 { folderError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(folderError ?? "")
+        }
+    }
+
+    // MARK: - Columns
+
+    @ViewBuilder
+    private var folderSidebar: some View {
+        List(selection: $folderSelection) {
+            folderRow(.all, name: "All Notes", icon: "tray.full", count: noteStore.notes.count)
+            folderRow(.defaultFolder, name: "Notes", icon: "folder", count: noteStore.notes.filter { $0.folder == nil || !noteStore.folders.contains($0.folder!) }.count)
+            ForEach(noteStore.folders, id: \.self) { name in
+                folderRow(.folder(name), name: name, icon: "folder", count: noteStore.notes.filter { $0.folder == name }.count)
+                    .contextMenu {
+                        Button("Rename…") { folderNameDraft = name; renameTarget = name }
+                        Button("Delete…", role: .destructive) { deleteTarget = name }
+                    }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .navigationSplitViewColumnWidth(min: 150, ideal: 180)
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Button {
+                    folderNameDraft = ""
+                    newFolderShown = true
+                } label: {
+                    Label("New Folder", systemImage: "folder.badge.plus")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(10)
+        }
+    }
+
+    private func folderRow(_ value: FolderSelection, name: String, icon: String, count: Int) -> some View {
+        HStack {
+            Label {
+                Text(name).lineLimit(1)
+            } icon: {
+                Image(systemName: icon).foregroundStyle(MeatPadGlass.tint.gradient)
+            }
+            Spacer()
+            Text("\(count)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+        .tag(value)
     }
 
     @ViewBuilder
-    private var sidebar: some View {
-        if noteStore.notes.isEmpty {
-            Text("No notes yet")
-                .foregroundStyle(.secondary)
-        } else {
-            List(filtered, selection: $selection) { note in
-                HStack(spacing: 9) {
-                    Image(systemName: "note.text")
-                        .foregroundStyle(MeatPadGlass.tint.gradient)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(note.title).lineLimit(1)
-                        Text(note.modified, style: .relative)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .contextMenu {
-                    Button("Open in New Window") { openInNewWindow(note.id) }
-                    Button("Move to Trash", role: .destructive) { trash(note.id) }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .overlay {
-                if filtered.isEmpty {
-                    Text("No matches")
+    private var noteList: some View {
+        List(filtered, selection: $selection) { note in
+            HStack(spacing: 9) {
+                Image(systemName: "note.text")
+                    .foregroundStyle(MeatPadGlass.tint.gradient)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(note.title).lineLimit(1)
+                    Text(note.modified, style: .relative)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
-            .searchable(text: $query)
+            .contextMenu {
+                Button("Open in New Window") { openInNewWindow(note.id) }
+                moveMenu(for: note)
+                Button("Move to Trash", role: .destructive) { trash(note.id) }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .navigationSplitViewColumnWidth(min: 200, ideal: 240)
+        .overlay {
+            if filtered.isEmpty {
+                Text(query.isEmpty ? "No notes here" : "No matches")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .searchable(text: $query)
+        .toolbar {
+            ToolbarItem {
+                Button {
+                    newNote()
+                } label: {
+                    Label("New Note", systemImage: "square.and.pencil")
+                }
+                .keyboardShortcut("n", modifiers: [.command, .option])
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func moveMenu(for note: Note) -> some View {
+        Menu("Move to") {
+            Button("Notes") { runFolderOp { try noteStore.move(id: note.id, to: nil) } }
+                .disabled(note.folder == nil)
+            ForEach(noteStore.folders, id: \.self) { name in
+                Button(name) { runFolderOp { try noteStore.move(id: note.id, to: name) } }
+                    .disabled(note.folder == name)
+            }
         }
     }
 
@@ -89,6 +240,15 @@ struct NotesBrowserWindow: View {
         }
     }
 
+    // MARK: - Actions
+
+    /// New Note inside the browser: lands in the selected folder ("All Notes" → default),
+    /// gets selected, and the detail editor takes over — no separate window (Apple Notes behavior).
+    private func newNote() {
+        guard let note = try? noteStore.createNote(in: folderSelection.noteFolder) else { return }
+        selection = note.id
+    }
+
     /// Opens a standalone note window for `id`. Safe to do while the same note is still
     /// selected in the browser: both surfaces resolve their view model through
     /// `EditorRegistry`, so this opens a second window onto the *same* `NoteEditorViewModel`
@@ -100,6 +260,21 @@ struct NotesBrowserWindow: View {
     private func trash(_ id: UUID) {
         try? noteStore.trash(id: id)
         if selection == id { selection = nil }
+    }
+
+    private func runFolderOp(_ op: () throws -> Void) {
+        do { try op() } catch {
+            folderError = message(for: error)
+        }
+    }
+
+    private func message(for error: Error) -> String {
+        switch error as? NoteStoreError {
+        case .folderExists(let name): return "A folder named “\(name)” already exists."
+        case .invalidFolderName: return "Folder names can’t be empty or “Notes”."
+        case .folderNotFound(let name): return "Folder “\(name)” no longer exists."
+        default: return "Something went wrong: \(error.localizedDescription)"
+        }
     }
 }
 
