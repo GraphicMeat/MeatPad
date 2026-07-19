@@ -36,8 +36,23 @@ public struct CommandContext: Sendable {
 /// Builds the TextMate-style `TM_*` environment variables a saved command's script
 /// can read, merged over the process's own environment.
 public enum TMEnvironment {
-    public static func build(from ctx: CommandContext) -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
+    /// Parent-environment variables passed through even when `restricted`: the
+    /// minimum a shell script needs to actually function (find binaries, resolve
+    /// `~`, know which shell/locale it's in, use a scratch dir) without handing an
+    /// untrusted imported command the rest of the user's environment (API keys,
+    /// tokens, unrelated app/session state, etc.).
+    static let restrictedAllowlist = ["PATH", "HOME", "SHELL", "LANG", "TMPDIR"]
+
+    public static func build(from ctx: CommandContext, restricted: Bool = false) -> [String: String] {
+        var env: [String: String]
+        if restricted {
+            let parent = ProcessInfo.processInfo.environment
+            env = restrictedAllowlist.reduce(into: [:]) { result, key in
+                result[key] = parent[key]
+            }
+        } else {
+            env = ProcessInfo.processInfo.environment
+        }
 
         if let selectedText = ctx.selectedText { env["TM_SELECTED_TEXT"] = selectedText }
         if let filePath = ctx.filePath {

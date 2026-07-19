@@ -174,4 +174,105 @@ final class CommandStoreTests: XCTestCase {
         XCTAssertTrue(result.allSatisfy { $0.languageIDs.isEmpty })
         XCTAssertTrue(result.contains(universal))
     }
+
+    // MARK: - trust/timeout/env migration (0.8)
+
+    /// Verbatim shape of a command JSON written before the trust model existed —
+    /// no `origin`/`trusted`/`timeoutSeconds`/`restrictedEnvironment` keys at all.
+    /// Must decode without throwing and land on the grandfathered defaults.
+    func testDecodingOldFormatJSONWithoutTrustFieldsAppliesDefaults() throws {
+        let legacyID = UUID()
+        let json = """
+        {
+          "id": "\(legacyID.uuidString)",
+          "name": "Legacy Command",
+          "script": "echo legacy",
+          "input": "selection",
+          "output": "insertAtCaret",
+          "keyEquivalent": "cmd+shift+l",
+          "languageIDs": ["swift", "python"]
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(SavedCommand.self, from: Data(json.utf8))
+
+        XCTAssertEqual(decoded.id, legacyID)
+        XCTAssertEqual(decoded.name, "Legacy Command")
+        XCTAssertEqual(decoded.script, "echo legacy")
+        XCTAssertEqual(decoded.input, .selection)
+        XCTAssertEqual(decoded.output, .insertAtCaret)
+        XCTAssertEqual(decoded.keyEquivalent, "cmd+shift+l")
+        XCTAssertEqual(decoded.languageIDs, ["swift", "python"])
+        XCTAssertEqual(decoded.origin, .user)
+        XCTAssertTrue(decoded.trusted)
+        XCTAssertNil(decoded.timeoutSeconds)
+        XCTAssertFalse(decoded.restrictedEnvironment)
+    }
+
+    func testCommandStoreLoadsOldFormatFileFromDiskWithDefaults() throws {
+        let legacyID = UUID()
+        let json = """
+        {
+          "id": "\(legacyID.uuidString)",
+          "name": "Legacy On Disk",
+          "script": "echo hi",
+          "input": "none",
+          "output": "outputPanel",
+          "languageIDs": []
+        }
+        """
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        try Data(json.utf8).write(to: tempDir.appendingPathComponent("\(legacyID.uuidString).json"))
+
+        let store = makeStore()
+
+        XCTAssertEqual(store.commands.count, 1)
+        XCTAssertEqual(store.commands.first?.trusted, true)
+        XCTAssertEqual(store.commands.first?.origin, .user)
+    }
+
+    func testNewTrustFieldsRoundTripThroughEncodeDecode() throws {
+        let command = SavedCommand(
+            name: "Imported Cmd",
+            script: "echo hi",
+            input: .none,
+            output: .outputPanel,
+            origin: .imported(bundleName: "My.tmbundle", date: Date(timeIntervalSince1970: 1_700_000_000)),
+            trusted: false,
+            timeoutSeconds: 5,
+            restrictedEnvironment: true
+        )
+
+        let data = try JSONEncoder().encode(command)
+        let decoded = try JSONDecoder().decode(SavedCommand.self, from: data)
+
+        XCTAssertEqual(decoded, command)
+    }
+
+    func testDefaultInitAppliesUserTrustedFields() {
+        let command = makeCommand()
+
+        XCTAssertEqual(command.origin, .user)
+        XCTAssertTrue(command.trusted)
+        XCTAssertNil(command.timeoutSeconds)
+        XCTAssertFalse(command.restrictedEnvironment)
+    }
+
+    /// Documents the on-disk shape of `CommandOrigin`: a flat tagged object, not the
+    /// nested payload shape default enum-with-associated-values synthesis would produce.
+    func testCommandOriginEncodesAsReadableTaggedObject() throws {
+        let userData = try JSONEncoder().encode(CommandOrigin.user)
+        XCTAssertEqual(String(decoding: userData, as: UTF8.self), #"{"type":"user"}"#)
+
+        let importedData = try JSONEncoder().encode(CommandOrigin.imported(bundleName: "X.tmbundle", date: Date(timeIntervalSince1970: 0)))
+        let obj = try XCTUnwrap(try JSONSerialization.jsonObject(with: importedData) as? [String: Any])
+        XCTAssertEqual(obj["type"] as? String, "imported")
+        XCTAssertEqual(obj["bundleName"] as? String, "X.tmbundle")
+        XCTAssertNotNil(obj["date"])
+    }
+
+    func testCommandOriginRejectsUnknownTypeTag() {
+        let json = #"{"type":"mystery"}"#
+        XCTAssertThrowsError(try JSONDecoder().decode(CommandOrigin.self, from: Data(json.utf8)))
+    }
 }

@@ -168,4 +168,47 @@ final class CommandRunnerTests: XCTestCase {
         let env = TMEnvironment.build(from: CommandContext())
         XCTAssertEqual(env["PATH"], ProcessInfo.processInfo.environment["PATH"])
     }
+
+    // MARK: - TMEnvironment restricted mode
+
+    func testTMEnvironmentRestrictedExcludesArbitraryParentVars() {
+        setenv("MEATPAD_TEST_CANARY", "leak-me-not", 1)
+        defer { unsetenv("MEATPAD_TEST_CANARY") }
+
+        let unrestricted = TMEnvironment.build(from: CommandContext(), restricted: false)
+        XCTAssertEqual(unrestricted["MEATPAD_TEST_CANARY"], "leak-me-not")
+
+        let restricted = TMEnvironment.build(from: CommandContext(), restricted: true)
+        XCTAssertNil(restricted["MEATPAD_TEST_CANARY"])
+    }
+
+    func testTMEnvironmentRestrictedIncludesTMVarsAndAllowlistFromParentEnv() {
+        let ctx = CommandContext(selectedText: "hi", languageID: "swift")
+        let restricted = TMEnvironment.build(from: ctx, restricted: true)
+        let parent = ProcessInfo.processInfo.environment
+
+        XCTAssertEqual(restricted["TM_SELECTED_TEXT"], "hi")
+        XCTAssertEqual(restricted["TM_MODE"], "swift")
+        for key in ["PATH", "HOME", "SHELL", "LANG", "TMPDIR"] {
+            XCTAssertEqual(restricted[key], parent[key], "allowlisted key \(key) should pass through from parent env when present")
+        }
+    }
+
+    func testTMEnvironmentRestrictedOmitsAllowlistKeyAbsentFromParentEnv() {
+        // If a normally-set allowlist var isn't present in the parent env, restricted
+        // mode must not fabricate it (no empty-string entries).
+        if ProcessInfo.processInfo.environment["TMPDIR"] == nil {
+            let restricted = TMEnvironment.build(from: CommandContext(), restricted: true)
+            XCTAssertNil(restricted["TMPDIR"])
+        }
+    }
+
+    func testTMEnvironmentDefaultIsUnrestricted() {
+        // Omitting `restricted` must preserve prior (pre-0.8) behavior: full parent env.
+        setenv("MEATPAD_TEST_CANARY_DEFAULT", "present", 1)
+        defer { unsetenv("MEATPAD_TEST_CANARY_DEFAULT") }
+
+        let env = TMEnvironment.build(from: CommandContext())
+        XCTAssertEqual(env["MEATPAD_TEST_CANARY_DEFAULT"], "present")
+    }
 }
