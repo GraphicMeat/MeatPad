@@ -21,6 +21,11 @@ public final class NoteStore: ObservableObject {
     /// and never appears here.
     @Published public private(set) var folders: [String] = []
 
+    /// In-memory full-text index, kept in sync with every content-mutating disk write
+    /// (never persisted — rebuilt from disk on each launch). Folder ops don't touch
+    /// contents, so they don't touch the index either.
+    public let searchIndex = NoteSearchIndex()
+
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -41,6 +46,11 @@ public final class NoteStore: ObservableObject {
         try fm.createDirectory(at: trashURL, withIntermediateDirectories: true)
         notes = try Self.loadNotes(from: rootURL)
         folders = Self.loadFolders(from: foldersURL)
+        // Eager: notes are small, and search must work before the user touches anything.
+        for note in notes {
+            let contents = (try? String(contentsOf: textURL(for: note.id), encoding: .utf8)) ?? ""
+            searchIndex.update(id: note.id, contents: contents)
+        }
     }
 
     public func createNote(in folder: String? = nil) throws -> Note {
@@ -49,6 +59,7 @@ public final class NoteStore: ObservableObject {
         try write(contents: "", note: note)
         notes.append(note)
         resort()
+        searchIndex.update(id: note.id, contents: "")
         return note
     }
 
@@ -64,6 +75,7 @@ public final class NoteStore: ObservableObject {
         note.title = Note.title(fromContents: contents)
         try write(contents: contents, note: note)
         updateInMemory(note)
+        searchIndex.update(id: id, contents: contents)
     }
 
     public func setLanguage(id: UUID, languageID: String?) throws {
@@ -91,6 +103,7 @@ public final class NoteStore: ObservableObject {
             try fm.moveItem(at: url, to: trashURL.appendingPathComponent(url.lastPathComponent))
         }
         notes.removeAll { $0.id == id }
+        searchIndex.remove(id: id)
     }
 
     // MARK: - Folders

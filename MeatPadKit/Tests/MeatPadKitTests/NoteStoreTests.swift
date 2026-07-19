@@ -129,6 +129,39 @@ final class NoteStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: originalTxt.path))
     }
 
+    // MARK: - search index
+
+    func testSaveIndexesContentsForSearch() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+
+        try store.save(id: note.id, contents: "alpha beta", cursor: 0)
+
+        XCTAssertEqual(store.searchIndex.search("beta", notes: store.notes).map(\.noteID), [note.id])
+    }
+
+    func testTrashRemovesNoteFromSearchIndex() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+        try store.save(id: note.id, contents: "alpha beta", cursor: 0)
+
+        try store.trash(id: note.id)
+
+        // Note is gone from `notes` too, but search against the full pre-trash note list
+        // proves the index itself no longer holds the contents.
+        XCTAssertEqual(store.searchIndex.search("beta", notes: [note]).count, 0)
+    }
+
+    func testLoadIndexesExistingNotesFromDiskWithoutAnyInSessionSave() throws {
+        let store1 = try makeStore()
+        let note = try store1.createNote()
+        try store1.save(id: note.id, contents: "alpha beta", cursor: 0)
+
+        let store2 = try makeStore()
+
+        XCTAssertEqual(store2.searchIndex.search("beta", notes: store2.notes).map(\.noteID), [note.id])
+    }
+
     // MARK: - sorting
 
     func testNotesAreSortedByModifiedDescending() throws {
