@@ -1,7 +1,7 @@
 import SwiftUI
 import MeatPadKit
 
-/// `Settings` scene: General (font, wrap) + Themes + Snippets + Commands.
+/// `Settings` scene: General (font, wrap) + Themes + Snippets + Commands + Privacy.
 struct SettingsView: View {
     @EnvironmentObject private var appModel: AppModel
 
@@ -15,6 +15,8 @@ struct SettingsView: View {
                 .tabItem { Label("Snippets", systemImage: "text.badge.plus") }
             CommandsSettingsView(store: appModel.commandStore)
                 .tabItem { Label("Commands", systemImage: "terminal") }
+            PrivacySettingsView()
+                .tabItem { Label("Privacy", systemImage: "hand.raised") }
         }
         .frame(width: 640, height: 560)
         .background { AmbientGlassBackground() }
