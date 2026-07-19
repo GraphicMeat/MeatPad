@@ -53,8 +53,12 @@ final class HighlighterTests: XCTestCase {
         // injection-aware), but the registry entries must exist so that task
         // can build on them.
         let markdown = try XCTUnwrap(GrammarRegistry.configuration(for: "markdown"))
+        XCTAssertNotNil(markdown.queries[.highlights], "markdown grammar must ship a highlights query")
         XCTAssertNotNil(markdown.queries[.injections], "markdown grammar must ship an injections query")
-        XCTAssertNotNil(GrammarRegistry.configuration(for: "markdown_inline"))
+
+        let markdownInline = try XCTUnwrap(GrammarRegistry.configuration(for: "markdown_inline"))
+        XCTAssertNotNil(markdownInline.queries[.highlights], "markdown_inline grammar must ship a highlights query")
+        XCTAssertNotNil(markdownInline.queries[.injections], "markdown_inline grammar must ship an injections query")
     }
 
     func testAllWiredLanguagesLoadGrammarAndQuery() {
