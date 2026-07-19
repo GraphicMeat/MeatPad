@@ -45,6 +45,15 @@ final class ProjectViewModel: ObservableObject {
     /// call so a burst of FS events can't pile up redundant scans.
     private var scanTask: Task<Void, Never>?
 
+    /// Project-wide identifier index for completion (Task 4 wires it into
+    /// `CompletionController`). Rebuilt off the full tree after every `rescan()` —
+    /// never off the shallow initial tree, which has placeholder children.
+    let symbolIndex = ProjectSymbolIndex()
+    /// The in-flight index build kicked off after a rescan. Cancelled/replaced the same
+    /// way as `scanTask`; `ProjectSymbolIndex.build` is itself supersede-safe (generation
+    /// check), so this is belt-and-suspenders against piling up redundant builds.
+    private var indexTask: Task<Void, Never>?
+
     init(root: URL) {
         self.root = root
         // Shows the window instantly with just the top level, then `rescan()` below
@@ -79,7 +88,9 @@ final class ProjectViewModel: ObservableObject {
 
     /// Runs a full recursive scan off the main actor and swaps it in when done. Cancels
     /// any scan already in flight first, so the watcher firing repeatedly during a big
-    /// FS change (e.g. a git checkout) doesn't queue up redundant work.
+    /// FS change (e.g. a git checkout) doesn't queue up redundant work. Once the new tree
+    /// lands, kicks off a symbol-index rebuild from it (never from the shallow initial
+    /// tree, which has placeholder children).
     func rescan() {
         scanTask?.cancel()
         let root = root
@@ -89,7 +100,30 @@ final class ProjectViewModel: ObservableObject {
             await MainActor.run { [weak self] in
                 guard let self, !Task.isCancelled else { return }
                 self.tree = scanned
+                self.rebuildSymbolIndex()
             }
+        }
+    }
+
+    /// Rebuilds the project symbol index from the current (full) tree. Called after every
+    /// `rescan()` completes — including the one the FSEvents watcher triggers on any disk
+    /// change under `root`.
+    //
+    // ponytail: DirectoryWatcher's callback here is a bare debounced "something changed"
+    // signal (no per-path payload), so a disk change anywhere forces a full re-tokenize of
+    // every file rather than an incremental `updateFile`/`removeFile` on just the paths
+    // that moved. `ProjectSymbolIndex.build` is generation-guarded (a superseding call
+    // always wins), so a burst of watcher events during e.g. a git checkout just cancels
+    // stale builds in favor of the latest tree, not a build-up of duplicate work. Upgrade
+    // path if this shows up as jank on huge trees: thread FSEvents' per-path info
+    // (`kFSEventStreamCreateFlagFileEvents` is already set) out of `DirectoryWatcher`'s
+    // callback and route the changed URLs straight to `updateFile`/`removeFile` instead.
+    private func rebuildSymbolIndex() {
+        indexTask?.cancel()
+        let files = ProjectScanner.flatFileList(tree)
+        let symbolIndex = symbolIndex
+        indexTask = Task.detached(priority: .utility) {
+            await symbolIndex.build(files: files)
         }
     }
 
