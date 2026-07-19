@@ -146,8 +146,10 @@ struct CodeEditor: NSViewRepresentable {
         private var pendingEditRange: NSRange?
         /// Same capture as `pendingEditRange` but unconditional (not gated on a live snippet
         /// session) — `FoldController.refresh()` needs every edit's span to auto-unfold a
-        /// region whose folded body was just touched.
-        private var pendingFoldEditLocation: Int?
+        /// region whose folded body was just touched. Holds the pre-edit NSRange (location +
+        /// length of the text being replaced/deleted); `didChangeTextIn` combines its length
+        /// with the replacement's length so a pure deletion still yields a non-empty span.
+        private var pendingFoldEditRange: NSRange?
         /// Owns Ctrl+Space word completion for this editor. Unlike `SnippetController` it has
         /// no external consumer (no menu item reaches into it), so it's just owned here rather
         /// than threaded through `CodeEditor` as a parameter.
@@ -348,7 +350,7 @@ struct CodeEditor: NSViewRepresentable {
         nonisolated func textView(_ textView: STTextView, willChangeTextIn affectedCharRange: NSTextRange, replacementString: String) {
             MainActor.assumeIsolated {
                 let range = SnippetController.nsRange(affectedCharRange, in: textView.textContentManager)
-                pendingFoldEditLocation = range.location
+                pendingFoldEditRange = range
                 if parent.snippetController?.isSessionActive == true {
                     pendingEditRange = range
                 }
@@ -357,9 +359,10 @@ struct CodeEditor: NSViewRepresentable {
 
         nonisolated func textView(_ textView: STTextView, didChangeTextIn affectedCharRange: NSTextRange, replacementString: String) {
             MainActor.assumeIsolated {
-                if let location = pendingFoldEditLocation {
-                    pendingFoldEditLocation = nil
-                    foldController.noteEdit(location..<(location + replacementString.utf16.count))
+                if let range = pendingFoldEditRange {
+                    pendingFoldEditRange = nil
+                    let span = max(range.length, replacementString.utf16.count)
+                    foldController.noteEdit(range.location..<(range.location + span))
                 }
                 guard let controller = parent.snippetController, let range = pendingEditRange else { return }
                 pendingEditRange = nil

@@ -9,13 +9,21 @@ import STTextView
 /// paragraph visible and hides a body paragraph once it's fully inside a folded range) plus
 /// `isRangeFolded(_:)`. `FoldScanner` still does the indentation-based region scan
 /// language-agnostically; this controller's job is turning "which heads are folded" into the
-/// `NSTextRange`s the fork wants, and keeping that translation correct across edits.
+/// `NSTextRange`s the fork wants, and re-deriving that mapping fresh after every edit. Folds
+/// don't track their content — a region an edit shifts or removes is conservatively
+/// auto-unfolded (dropped from `foldedHeads`) rather than re-mapped, so an edit can never end up
+/// silently hidden behind a stale fold.
 ///
 /// `NSTextRange` is a dumb pair of locations — it doesn't track the buffer, so a range handed
 /// to the fork before an edit points at the wrong text after one. The fork does not (and
 /// shouldn't) know how to re-derive folds from a language-agnostic indent scan, so this
 /// controller re-derives every folded range from the just-rescanned `FoldRegion`s on every
 /// `refresh()` rather than ever reusing a previously-converted `NSTextRange`. See `refresh()`.
+///
+/// `refresh()` rides the same ≤150ms debounce as syntax highlighting (see
+/// `Coordinator.applyHighlight` in CodeEditor.swift), so a folded range whose text an edit just
+/// invalidated can stay applied to `textView.foldedRanges` for up to that window before the
+/// auto-unfold above runs — a transient, self-correcting staleness, not a persistent one.
 @MainActor
 final class FoldController {
     private weak var textView: STTextView?
