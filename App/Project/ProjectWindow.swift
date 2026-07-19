@@ -29,6 +29,7 @@ struct ProjectWindow: View {
                 HStack(spacing: 2) {
                     sidebarButton(String(localized: "Files"), icon: "folder", mode: .files)
                     sidebarButton(String(localized: "Search"), icon: "magnifyingglass", mode: .search)
+                    sidebarButton(String(localized: "References"), icon: "arrow.triangle.branch", mode: .references)
                 }
                 .padding(3)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -42,6 +43,7 @@ struct ProjectWindow: View {
                 switch viewModel.sidebarMode {
                 case .files: FileTreeView(viewModel: viewModel)
                 case .search: ProjectSearchView(project: viewModel, viewModel: searchViewModel)
+                case .references: ReferencesView(project: viewModel)
                 }
             }
             .frame(maxHeight: .infinity, alignment: .top)

@@ -74,6 +74,7 @@ struct MeatPadApp: App {
             }
             CommandMenu("Navigate") {
                 GoToDefinitionCommand()
+                FindReferencesCommand()
             }
         }
 
@@ -250,6 +251,19 @@ private struct GoToDefinitionCommand: View {
         Button("Go to Definition") { context?.goToDefinition() }
             .keyboardShortcut("j", modifiers: [.command, .control])
             .disabled(context?.goToDefinitionAvailable != true)
+    }
+}
+
+/// ⌃⌘R: Find References (0.7 LSP plan Task 5). Grepped every `.keyboardShortcut` in this
+/// file first (see `GoToDefinitionCommand`'s own note) — no existing binding uses "r" with
+/// Control, so this is conflict-free. Disabled the same way as `GoToDefinitionCommand`.
+private struct FindReferencesCommand: View {
+    @FocusedValue(\.editorCommandContext) private var context
+
+    var body: some View {
+        Button("Find References") { context?.findReferences() }
+            .keyboardShortcut("r", modifiers: [.command, .control])
+            .disabled(context?.findReferencesAvailable != true)
     }
 }
 

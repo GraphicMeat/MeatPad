@@ -53,6 +53,12 @@ struct EditorCommandContext {
     /// "unavailable, no-op" so note windows (no LSP) need no changes at their call sites.
     let goToDefinitionAvailable: Bool
     let goToDefinition: () -> Void
+    /// Find References (Task 5) — same shape/rationale as `goToDefinition` above: caret-based,
+    /// menu/keyboard only (no Cmd+click analogue), disabled via `findReferencesAvailable`
+    /// whenever no server is alive for the language. Defaults to "unavailable, no-op" so note
+    /// windows need no changes at their call sites.
+    let findReferencesAvailable: Bool
+    let findReferences: () -> Void
 
     /// Standard context over an editor's STTextView. `fileURL`/`projectRoot` are nil for notes.
     @MainActor
@@ -65,7 +71,9 @@ struct EditorCommandContext {
         fileURL: URL? = nil,
         projectRoot: URL? = nil,
         goToDefinitionAvailable: Bool = false,
-        goToDefinition: @escaping () -> Void = {}
+        goToDefinition: @escaping () -> Void = {},
+        findReferencesAvailable: Bool = false,
+        findReferences: @escaping () -> Void = {}
     ) -> EditorCommandContext {
         EditorCommandContext(
             hostID: hostID,
@@ -99,7 +107,9 @@ struct EditorCommandContext {
             foldAll: { (textView() as? SnippetTextView)?.onFoldAll?() },
             unfoldAll: { (textView() as? SnippetTextView)?.onUnfoldAll?() },
             goToDefinitionAvailable: goToDefinitionAvailable,
-            goToDefinition: goToDefinition
+            goToDefinition: goToDefinition,
+            findReferencesAvailable: findReferencesAvailable,
+            findReferences: findReferences
         )
     }
 

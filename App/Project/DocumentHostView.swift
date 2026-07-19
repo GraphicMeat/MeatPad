@@ -110,6 +110,11 @@ private struct EditorPane: View {
                 let offset = tv.textSelection.location
                 let rect = tv.firstRect(forCharacterRange: NSRange(location: offset, length: 0), actualRange: nil)
                 project.goToDefinition(from: url, languageID: editor.language?.id, offset: offset, screenAnchor: NSPoint(x: rect.minX, y: rect.minY))
+            },
+            findReferencesAvailable: project.lspStatusByLanguage[editor.language?.id ?? ""] == .running,
+            findReferences: {
+                guard let tv = snippetController.textView else { return }
+                project.findReferences(from: url, languageID: editor.language?.id, offset: tv.textSelection.location)
             }
         ))
     }

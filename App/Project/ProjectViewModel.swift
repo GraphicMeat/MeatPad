@@ -22,8 +22,9 @@ final class ProjectViewModel: ObservableObject {
         let installHint: String
     }
 
-    /// Which content the sidebar shows: the live file tree, or Cmd+Shift+F project search.
-    enum SidebarMode: Hashable { case files, search }
+    /// Which content the sidebar shows: the live file tree, Cmd+Shift+F project search, or
+    /// Find References results (Task 5).
+    enum SidebarMode: Hashable { case files, search, references }
 
     /// Language IDs `LSPServerDetector` knows about — the only ones that ever touch
     /// `lspManager`. Derived from the kit's own catalog instead of a second hardcoded
@@ -61,6 +62,10 @@ final class ProjectViewModel: ObservableObject {
     /// Cmd+T quick-open overlay, toggled by the app-level command.
     @Published var quickOpenVisible = false
     @Published var sidebarMode: SidebarMode = .files
+    /// Find References results (Task 5) — sidebar's `.references` mode content. Overwritten
+    /// wholesale by each new request, same one-slot-no-history shape as `referencesResults`'
+    /// nearest analogue, `ProjectSearchViewModel.results`.
+    @Published private(set) var referencesResults: [FileMatchGroup] = []
     /// One-shot scroll+select for the currently selected tab's `CodeEditor` (search-result
     /// jumps). Cleared right after being read so switching away and back to the same tab
     /// later never replays a stale selection.
@@ -282,6 +287,34 @@ final class ProjectViewModel: ObservableObject {
         AppModel.shared.pendingFileOpen = url
         AppModel.shared.pendingFileOpenReveal = LSPPositionBridge.nsRange(of: range, in: vm.text)
         AppModel.shared.openWindowAction?(value: url.deletingLastPathComponent())
+    }
+
+    // MARK: - Find References (0.7 LSP plan Task 5)
+
+    /// Requests `textDocument/references` (`includeDeclaration: true`, per the plan) at
+    /// `offset` and shows the sidebar's References panel — same silent-no-server-degrade
+    /// contract as `goToDefinition`. Empty results beep rather than switch the sidebar to an
+    /// empty panel (plan: "subtle feedback... no modal") — whatever the sidebar was already
+    /// showing stays put.
+    func findReferences(from url: URL, languageID: String?, offset: Int) {
+        guard let languageID, lspStatusByLanguage[languageID] == .running,
+              let handle = lspManager.server(for: languageID) else { return }
+        Task { [weak self] in
+            guard let text = EditorRegistry.shared.fileViewModel(for: url)?.text,
+                  let position = LSPPositionBridge.position(of: offset, in: text) else { return }
+            let params = ReferenceParams(textDocument: TextDocumentIdentifier(uri: url.absoluteString), position: position, includeDeclaration: true)
+            // Double-optional flatten (mirrors goToDefinition/requestHover): `references`
+            // throws on transport failure, and its own successful result is itself optional.
+            let locations = (try? await handle.references(params: params)) ?? nil ?? []
+            guard let self else { return }
+            let groups = FindReferences.groupedMatches(from: locations)
+            guard !groups.isEmpty else {
+                NSSound.beep()
+                return
+            }
+            self.referencesResults = groups
+            self.sidebarMode = .references
+        }
     }
 
     /// Called by the editor after it actually scrolled/selected the target. Token-guarded
