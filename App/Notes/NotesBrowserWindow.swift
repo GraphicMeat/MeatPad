@@ -89,8 +89,10 @@ struct NotesBrowserWindow: View {
             Button("Rename") {
                 if let old = renameTarget {
                     let new = folderNameDraft
-                    runFolderOp { try noteStore.renameFolder(old, to: new) }
-                    if case .folder(old) = folderSelection { folderSelection = .folder(new) }
+                    runFolderOp {
+                        try noteStore.renameFolder(old, to: new)
+                        if case .folder(old) = folderSelection { folderSelection = .folder(new) }
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {}
@@ -102,8 +104,10 @@ struct NotesBrowserWindow: View {
         ) {
             Button("Delete Folder", role: .destructive) {
                 if let name = deleteTarget {
-                    runFolderOp { try noteStore.deleteFolder(name) }
-                    if case .folder(name) = folderSelection { folderSelection = .all }
+                    runFolderOp {
+                        try noteStore.deleteFolder(name)
+                        if case .folder(name) = folderSelection { folderSelection = .all }
+                    }
                 }
             }
         }
