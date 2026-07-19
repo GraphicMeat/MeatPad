@@ -1,5 +1,33 @@
 import Foundation
 
+/// Shared identifier-run scanner (`[A-Za-z_][A-Za-z0-9_]*`) over UTF-16 code
+/// units, single linear pass, no per-call regex allocation. Used by
+/// `WordCompleter` (distance-to-caret ranking) and `ProjectSymbolIndex`
+/// (frequency ranking) so the tokenization rule lives in exactly one place.
+enum IdentifierScan {
+    /// Invokes `body` for each identifier run in `text`, with its UTF-16 start/end offsets.
+    static func words(in text: String, _ body: (_ word: String, _ start: Int, _ end: Int) -> Void) {
+        let units = Array(text.utf16)
+        var i = 0
+        while i < units.count {
+            guard isWordStart(units[i]) else { i += 1; continue }
+            let start = i
+            i += 1
+            while i < units.count, isWordContinue(units[i]) { i += 1 }
+            let end = i
+            body(String(decoding: units[start..<end], as: UTF16.self), start, end)
+        }
+    }
+
+    private static func isWordStart(_ unit: UInt16) -> Bool {
+        (unit >= 65 && unit <= 90) || (unit >= 97 && unit <= 122) || unit == 95 // A-Z a-z _
+    }
+
+    private static func isWordContinue(_ unit: UInt16) -> Bool {
+        isWordStart(unit) || (unit >= 48 && unit <= 57) // + 0-9
+    }
+}
+
 /// Completes a partially-typed word using other word-like runs already
 /// present in the document text, ranked by proximity to the caret. This runs
 /// on every keystroke while a completion popup is open, so it does a single
@@ -20,25 +48,15 @@ public enum WordCompleter {
     public static func complete(prefix: String, in text: String, caretOffset: Int, limit: Int = 20) -> [String] {
         guard !prefix.isEmpty else { return [] }
 
-        let units = Array(text.utf16)
         let lowerPrefix = prefix.lowercased()
 
         var bestDistance: [String: Int] = [:]
         var order: [String] = []
 
-        var i = 0
-        while i < units.count {
-            guard isWordStart(units[i]) else { i += 1; continue }
-            let start = i
-            i += 1
-            while i < units.count, isWordContinue(units[i]) { i += 1 }
-            let end = i
-
-            if caretOffset >= start && caretOffset <= end { continue } // word being typed
-
-            let word = String(decoding: units[start..<end], as: UTF16.self)
-            if word == prefix { continue }
-            guard word.lowercased().hasPrefix(lowerPrefix) else { continue }
+        IdentifierScan.words(in: text) { word, start, end in
+            if caretOffset >= start && caretOffset <= end { return } // word being typed
+            if word == prefix { return }
+            guard word.lowercased().hasPrefix(lowerPrefix) else { return }
 
             // Distance to the word's nearest edge, not its start — a long word
             // fully before the caret is only as far as its end, not its start.
@@ -64,13 +82,5 @@ public enum WordCompleter {
         }
 
         return Array(ranked.prefix(limit))
-    }
-
-    private static func isWordStart(_ unit: UInt16) -> Bool {
-        (unit >= 65 && unit <= 90) || (unit >= 97 && unit <= 122) || unit == 95 // A-Z a-z _
-    }
-
-    private static func isWordContinue(_ unit: UInt16) -> Bool {
-        isWordStart(unit) || (unit >= 48 && unit <= 57) // + 0-9
     }
 }
