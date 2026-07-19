@@ -233,11 +233,17 @@ struct PrivacySettingsView: View {
         confirm.window.initialFirstResponder = field
         guard confirm.runModal() == .alertFirstButtonReturn, field.stringValue == "DELETE" else { return }
 
+        // Set before recycling (not just before terminate) so no debounced session save
+        // queued between here and the completion handler can slip out either — see
+        // `AppModel.isDeletingAllData`.
+        appModel.isDeletingAllData = true
+
         // The completion handler's queue isn't documented as guaranteed-main, so hop
         // explicitly before touching @State or calling into AppKit.
         NSWorkspace.shared.recycle(artifacts) { _, error in
             DispatchQueue.main.async {
                 if let error {
+                    appModel.isDeletingAllData = false
                     deleteError = error.localizedDescription
                     return
                 }

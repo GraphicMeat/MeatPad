@@ -67,6 +67,13 @@ final class AppModel: ObservableObject {
     /// removes) its own entry, same one-shot pattern as `pendingFileOpen`.
     var pendingProjectSessions: [URL: ProjectSession] = [:]
 
+    /// Set by `PrivacySettingsView.confirmDeleteAll()` immediately before recycling the
+    /// storage root, so the `NSApp.terminate` in its completion handler doesn't race
+    /// `applicationWillTerminate` → `saveSessionNow()` into rewriting session.json (with
+    /// open note ids and project paths) back into the just-emptied storage — which would
+    /// both defeat the fresh-slate promise and leak paths post-erase.
+    var isDeletingAllData = false
+
     private var openNoteIDs: [UUID] = []
     private var browserOpen = false
     /// Open project windows, keyed by instance identity (not root — the same folder can
@@ -263,6 +270,7 @@ final class AppModel: ObservableObject {
     /// Immediate, non-debounced write — used on `applicationWillTerminate` so the last
     /// window open/close right before quit isn't lost to the pending debounce.
     func saveSessionNow() {
+        guard !isDeletingAllData else { return }
         sessionDebouncer.cancel()
         let openProjects = projectViewModels.values.map { vm in
             ProjectSession(root: vm.root.path, openTabs: vm.tabs.map(\.path), selectedTab: vm.selectedTab?.path)
