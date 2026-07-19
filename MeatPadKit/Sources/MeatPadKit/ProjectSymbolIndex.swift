@@ -46,6 +46,14 @@ public final class ProjectSymbolIndex: @unchecked Sendable {
             }
         }
 
+        install(collected, generation: generation)
+    }
+
+    /// Synchronous install of a completed build's snapshot, guarded by `lock`.
+    /// Kept as an ordinary (non-async) function so the lock is never held
+    /// across a suspension point — calling `NSLock.lock()/unlock()` directly
+    /// inside an `async` function is unavailable in Swift 6 language mode.
+    private func install(_ collected: [URL: [String: Int]], generation: Int) {
         lock.lock()
         defer { lock.unlock() }
         // A newer build superseded this one while we were reading files; drop our result.
@@ -101,7 +109,14 @@ public final class ProjectSymbolIndex: @unchecked Sendable {
                 }
 
                 if let current = bestSpelling[lower] {
-                    if count > current.count { bestSpelling[lower] = (word, count) }
+                    // Deterministic tiebreak: higher count wins; on an equal
+                    // count, the lexicographically smaller spelling wins
+                    // (dictionary iteration order over `snapshot` is
+                    // otherwise unspecified, which made this non-deterministic
+                    // across builds when two files tie on count).
+                    if count > current.count || (count == current.count && word < current.word) {
+                        bestSpelling[lower] = (word, count)
+                    }
                 } else {
                     bestSpelling[lower] = (word, count)
                 }

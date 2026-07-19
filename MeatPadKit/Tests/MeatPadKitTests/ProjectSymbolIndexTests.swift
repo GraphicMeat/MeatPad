@@ -162,6 +162,22 @@ final class ProjectSymbolIndexTests: XCTestCase {
         XCTAssertEqual(result, ["Note"], "exact-case variant with the highest count should be output")
     }
 
+    func testTiedCaseVariantsAcrossFilesPreferLexicographicallySmallerSpellingStably() async {
+        // Two files, same word in two casings, equal counts: dictionary
+        // iteration order over the per-file snapshot is otherwise
+        // unspecified, so without a deterministic tiebreak this could flip
+        // between "Note" and "note" across builds.
+        let a = write("a.swift", "Note")
+        let b = write("b.swift", "note")
+
+        for _ in 0..<5 {
+            let index = ProjectSymbolIndex()
+            await index.build(files: [a, b])
+            let result = index.complete(prefix: "no", excludingFile: nil, limit: 20)
+            XCTAssertEqual(result, ["Note"], "equal counts should always resolve to the lexicographically smaller spelling")
+        }
+    }
+
     // MARK: - Short words excluded (ponytail ceiling: length >= 3)
 
     func testWordsShorterThanThreeCharsAreNotIndexed() async {
