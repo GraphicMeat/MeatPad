@@ -59,6 +59,10 @@ struct EditorCommandContext {
     /// windows need no changes at their call sites.
     let findReferencesAvailable: Bool
     let findReferences: () -> Void
+    /// Document Symbols (Task 5) — whole-document, not caret-based, but otherwise the same
+    /// availability contract as `goToDefinition`/`findReferences`.
+    let documentSymbolsAvailable: Bool
+    let documentSymbols: () -> Void
 
     /// Standard context over an editor's STTextView. `fileURL`/`projectRoot` are nil for notes.
     @MainActor
@@ -73,7 +77,9 @@ struct EditorCommandContext {
         goToDefinitionAvailable: Bool = false,
         goToDefinition: @escaping () -> Void = {},
         findReferencesAvailable: Bool = false,
-        findReferences: @escaping () -> Void = {}
+        findReferences: @escaping () -> Void = {},
+        documentSymbolsAvailable: Bool = false,
+        documentSymbols: @escaping () -> Void = {}
     ) -> EditorCommandContext {
         EditorCommandContext(
             hostID: hostID,
@@ -109,7 +115,9 @@ struct EditorCommandContext {
             goToDefinitionAvailable: goToDefinitionAvailable,
             goToDefinition: goToDefinition,
             findReferencesAvailable: findReferencesAvailable,
-            findReferences: findReferences
+            findReferences: findReferences,
+            documentSymbolsAvailable: documentSymbolsAvailable,
+            documentSymbols: documentSymbols
         )
     }
 

@@ -115,6 +115,10 @@ private struct EditorPane: View {
             findReferences: {
                 guard let tv = snippetController.textView else { return }
                 project.findReferences(from: url, languageID: editor.language?.id, offset: tv.textSelection.location)
+            },
+            documentSymbolsAvailable: project.lspStatusByLanguage[editor.language?.id ?? ""] == .running,
+            documentSymbols: {
+                project.showDocumentSymbols(for: url, languageID: editor.language?.id)
             }
         ))
     }

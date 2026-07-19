@@ -66,6 +66,9 @@ final class ProjectViewModel: ObservableObject {
     /// wholesale by each new request, same one-slot-no-history shape as `referencesResults`'
     /// nearest analogue, `ProjectSearchViewModel.results`.
     @Published private(set) var referencesResults: [FileMatchGroup] = []
+    /// Document Symbols (Task 5) quick-open-style overlay, parallel to `quickOpenVisible`.
+    @Published var documentSymbolsVisible = false
+    @Published private(set) var documentSymbolResults: [DocumentSymbols.Item] = []
     /// One-shot scroll+select for the currently selected tab's `CodeEditor` (search-result
     /// jumps). Cleared right after being read so switching away and back to the same tab
     /// later never replays a stale selection.
@@ -314,6 +317,25 @@ final class ProjectViewModel: ObservableObject {
             }
             self.referencesResults = groups
             self.sidebarMode = .references
+        }
+    }
+
+    // MARK: - Document Symbols (0.7 LSP plan Task 5)
+
+    /// Requests `textDocument/documentSymbol` for `url` and shows the quick-open-style
+    /// symbols panel — same silent-no-server-degrade contract as `goToDefinition`. Unlike
+    /// `findReferences`, an empty result still opens the panel (a plain "No symbols" state —
+    /// `QuickOpenView`'s own "No files" precedent) rather than beeping: showing the (empty)
+    /// panel already is the feedback that the request ran.
+    func showDocumentSymbols(for url: URL, languageID: String?) {
+        guard let languageID, lspStatusByLanguage[languageID] == .running,
+              let handle = lspManager.server(for: languageID) else { return }
+        Task { [weak self] in
+            let params = DocumentSymbolParams(textDocument: TextDocumentIdentifier(uri: url.absoluteString))
+            let response = (try? await handle.documentSymbol(params: params)) ?? nil
+            guard let self else { return }
+            self.documentSymbolResults = DocumentSymbols.flatten(response)
+            self.documentSymbolsVisible = true
         }
     }
 

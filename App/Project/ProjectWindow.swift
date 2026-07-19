@@ -66,6 +66,8 @@ struct ProjectWindow: View {
                 .overlay {
                     if viewModel.quickOpenVisible {
                         QuickOpenView(viewModel: viewModel)
+                    } else if viewModel.documentSymbolsVisible {
+                        DocumentSymbolsView(viewModel: viewModel)
                     }
                 }
         }

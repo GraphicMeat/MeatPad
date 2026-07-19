@@ -75,6 +75,7 @@ struct MeatPadApp: App {
             CommandMenu("Navigate") {
                 GoToDefinitionCommand()
                 FindReferencesCommand()
+                DocumentSymbolsCommand()
             }
         }
 
@@ -264,6 +265,18 @@ private struct FindReferencesCommand: View {
         Button("Find References") { context?.findReferences() }
             .keyboardShortcut("r", modifiers: [.command, .control])
             .disabled(context?.findReferencesAvailable != true)
+    }
+}
+
+/// ⌘⇧O: Document Symbols (0.7 LSP plan Task 5) — Xcode's own shortcut for the same feature.
+/// Grepped every `.keyboardShortcut` in this file first — no existing binding uses Cmd+Shift+O.
+private struct DocumentSymbolsCommand: View {
+    @FocusedValue(\.editorCommandContext) private var context
+
+    var body: some View {
+        Button("Document Symbols") { context?.documentSymbols() }
+            .keyboardShortcut("o", modifiers: [.command, .shift])
+            .disabled(context?.documentSymbolsAvailable != true)
     }
 }
 
