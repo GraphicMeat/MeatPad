@@ -23,7 +23,7 @@ struct FirstRunView: View {
 
             claim("Notes and settings live on this Mac at \(appModel.storageRootPath) — nothing is uploaded.")
             claim("Commands are real shell scripts. They run only when you invoke them; imported commands ask for confirmation first.")
-            claim("Network use is limited to update checks (Sparkle). See Settings for details.")
+            claim("Network use is limited to update checks (Sparkle). See Settings → Privacy for details.")
             claim("Code intelligence uses language-server programs already installed on your Mac, running as local processes.")
 
             HStack {

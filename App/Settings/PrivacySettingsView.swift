@@ -22,6 +22,7 @@ struct PrivacySettingsView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     header
                     claimsPanel
+                    networkPanel
                     storagePanel
                     exportPanel
                     deletePanel
@@ -76,6 +77,27 @@ struct PrivacySettingsView: View {
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // MARK: - Network
+
+    /// The one network access MeatPad has: Sparkle's update feed. `automaticallyChecksForUpdates`
+    /// just persists to the host bundle's UserDefaults (`SPUUpdater.m`'s setter writes straight
+    /// through, no dependency on the updater having been started) — safe to bind even under a
+    /// DEBUG build, where `AppModel` starts the updater suspended.
+    private var networkPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Network").font(.headline)
+            Toggle("Automatically check for updates", isOn: Binding(
+                get: { appModel.updaterController.updater.automaticallyChecksForUpdates },
+                set: { appModel.updaterController.updater.automaticallyChecksForUpdates = $0 }
+            ))
+            Text("MeatPad's only network access. Off means no automatic background checks — Check for Updates… in the menu still works.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .glassPanel(cornerRadius: 14, shadow: false)
     }
 
     // MARK: - Storage
@@ -134,6 +156,11 @@ struct PrivacySettingsView: View {
         .glassPanel(cornerRadius: 14, shadow: false)
     }
 
+    // ponytail: a `verificationFailed` here can be a transient false alarm — a note
+    // autosaving mid-copy can change its file's size between the source and destination
+    // fileCount() scans. Today that surfaces as a plain error alert the user can retry by
+    // hand. Upgrade path if this proves noisy in practice: either retry the copy once, or
+    // quiesce writes (flush pending autosaves / pause the debouncer) before copying.
     private func exportAll() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
