@@ -99,6 +99,48 @@ final class PrivacyDataManagerTests: XCTestCase {
         }
     }
 
+    // MARK: - destinationInsideSource guard (data-loss regression)
+
+    func testCopyManagedArtifactsThrowsWhenDestinationEqualsSourceWithoutMutatingSource() throws {
+        try write("note", to: "Notes/a.txt", under: sourceBase)
+
+        XCTAssertThrowsError(
+            try PrivacyDataManager.copyManagedArtifacts(from: sourceBase, to: sourceBase)
+        ) { error in
+            guard case PrivacyDataError.destinationInsideSource = error else {
+                return XCTFail("Expected destinationInsideSource, got \(error)")
+            }
+        }
+
+        // The whole point of the guard: source must be untouched, not partially deleted.
+        XCTAssertEqual(try String(contentsOf: sourceBase.appendingPathComponent("Notes/a.txt"), encoding: .utf8), "note")
+    }
+
+    func testCopyManagedArtifactsThrowsWhenDestinationIsChildOfSource() throws {
+        try write("note", to: "Notes/a.txt", under: sourceBase)
+        let nestedDestination = sourceBase.appendingPathComponent("Backup", isDirectory: true)
+
+        XCTAssertThrowsError(
+            try PrivacyDataManager.copyManagedArtifacts(from: sourceBase, to: nestedDestination)
+        ) { error in
+            guard case PrivacyDataError.destinationInsideSource = error else {
+                return XCTFail("Expected destinationInsideSource, got \(error)")
+            }
+        }
+        XCTAssertEqual(try String(contentsOf: sourceBase.appendingPathComponent("Notes/a.txt"), encoding: .utf8), "note")
+    }
+
+    func testCopyManagedArtifactsAllowsSiblingWithCommonPrefix() throws {
+        try write("note", to: "Notes/a.txt", under: sourceBase)
+        // sourceBase is ".../source"; this sibling shares "source" as a path prefix but is
+        // NOT a descendant of it — must not be rejected by the guard.
+        let siblingDestination = tempDir.appendingPathComponent("sourceBackup", isDirectory: true)
+
+        let counts = try PrivacyDataManager.copyManagedArtifacts(from: sourceBase, to: siblingDestination)
+
+        XCTAssertEqual(counts, ["Notes": 1])
+    }
+
     func testCopyManagedArtifactsOverwritesExistingDestination() throws {
         try write("v1", to: "Notes/a.txt", under: sourceBase)
         _ = try PrivacyDataManager.copyManagedArtifacts(from: sourceBase, to: destBase)

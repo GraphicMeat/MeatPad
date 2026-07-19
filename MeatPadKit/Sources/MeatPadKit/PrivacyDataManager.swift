@@ -48,6 +48,18 @@ public enum PrivacyDataManager {
         from sourceBase: URL, to destinationBase: URL,
         artifactNames: [String] = managedArtifactNames, fileManager: FileManager = .default
     ) throws -> [String: Int] {
+        // Guard BEFORE any mutation: if destination is the source root itself, the
+        // per-artifact overwrite branch below would `removeItem(at: destination)` on a
+        // path that IS the source (hard delete, no Trash), then `copyItem` throws because
+        // there's nothing left to copy. Same hazard, gentler trigger, if destination is
+        // merely nested inside the source tree. Standardized path-prefix check (with the
+        // trailing separator) so "/x/MeatPadBackup" isn't mistaken for a descendant of
+        // "/x/MeatPad".
+        let sourcePath = sourceBase.standardizedFileURL.path
+        let destinationPath = destinationBase.standardizedFileURL.path
+        if destinationPath == sourcePath || destinationPath.hasPrefix(sourcePath.hasSuffix("/") ? sourcePath : sourcePath + "/") {
+            throw PrivacyDataError.destinationInsideSource(source: sourcePath, destination: destinationPath)
+        }
         try fileManager.createDirectory(at: destinationBase, withIntermediateDirectories: true)
         var counts: [String: Int] = [:]
         for name in artifactNames {
@@ -71,11 +83,16 @@ public enum PrivacyDataManager {
 
 public enum PrivacyDataError: Error, LocalizedError, Equatable {
     case verificationFailed(artifact: String, sourceCount: Int, destinationCount: Int)
+    /// Destination equals, or is nested inside, the source storage root — copying there
+    /// would delete or corrupt the very data being copied. See `copyManagedArtifacts`.
+    case destinationInsideSource(source: String, destination: String)
 
     public var errorDescription: String? {
         switch self {
         case .verificationFailed(let artifact, let sourceCount, let destinationCount):
             return "Copy verification failed for \(artifact): \(sourceCount) file(s) at source, \(destinationCount) at destination."
+        case .destinationInsideSource:
+            return "Choose a folder outside the current storage location."
         }
     }
 }
