@@ -144,6 +144,10 @@ struct CodeEditor: NSViewRepresentable {
         /// buffer offsets are unambiguous) and consumed in `didChangeTextIn` — only while a
         /// snippet session is live.
         private var pendingEditRange: NSRange?
+        /// Same capture as `pendingEditRange` but unconditional (not gated on a live snippet
+        /// session) — `FoldController.refresh()` needs every edit's span to auto-unfold a
+        /// region whose folded body was just touched.
+        private var pendingFoldEditLocation: Int?
         /// Owns Ctrl+Space word completion for this editor. Unlike `SnippetController` it has
         /// no external consumer (no menu item reaches into it), so it's just owned here rather
         /// than threaded through `CodeEditor` as a parameter.
@@ -343,13 +347,20 @@ struct CodeEditor: NSViewRepresentable {
         // coordinates). Skipped entirely when no session is live.
         nonisolated func textView(_ textView: STTextView, willChangeTextIn affectedCharRange: NSTextRange, replacementString: String) {
             MainActor.assumeIsolated {
-                guard parent.snippetController?.isSessionActive == true else { return }
-                pendingEditRange = SnippetController.nsRange(affectedCharRange, in: textView.textContentManager)
+                let range = SnippetController.nsRange(affectedCharRange, in: textView.textContentManager)
+                pendingFoldEditLocation = range.location
+                if parent.snippetController?.isSessionActive == true {
+                    pendingEditRange = range
+                }
             }
         }
 
         nonisolated func textView(_ textView: STTextView, didChangeTextIn affectedCharRange: NSTextRange, replacementString: String) {
             MainActor.assumeIsolated {
+                if let location = pendingFoldEditLocation {
+                    pendingFoldEditLocation = nil
+                    foldController.noteEdit(location..<(location + replacementString.utf16.count))
+                }
                 guard let controller = parent.snippetController, let range = pendingEditRange else { return }
                 pendingEditRange = nil
                 controller.textDidChange(range: range, replacement: replacementString, textView: textView)

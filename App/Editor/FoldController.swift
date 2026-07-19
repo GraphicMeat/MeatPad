@@ -4,27 +4,18 @@ import STTextView
 
 /// Owns code-folding state for a single editor instance.
 ///
-/// SPIKE OUTCOME (full write-up: `.superpowers/sdd/p4-task-4-report.md`).
-/// TextKit 2 on macOS 14/15 ships no public API to collapse or hide a text range, and
-/// STTextView 2.3.10 is its *own* `NSTextLayoutManagerDelegate` — the one hook that could
-/// return a zero-height layout fragment (`textLayoutManager(_:textLayoutFragmentFor:in:)`)
-/// lives in a package extension, which Swift forbids a `SnippetTextView` subclass from
-/// overriding. Reassigning the delegate to a proxy is fragile (STTextView re-asserts
-/// `delegate = self` on every layout-manager reconfigure) and, worse, a hand-sized fragment
-/// desyncs the layout manager's own geometry accounting (content size, hit-testing, selection
-/// rects all read the real typeset height), so it does not reliably collapse. The only paths
-/// to a *real* collapse are (a) mutating the buffer — which breaks find/replace + project
-/// search, a binding acceptance criterion — or (b) forking the vendored STTextView. Both are
-/// out of scope.
+/// The vendored STTextView (fork: `GraphicMeat/STTextView`, branch `meatpad`) exposes real
+/// collapse as `foldedRanges: [NSTextRange]` (body ranges; the fork keeps a region's head
+/// paragraph visible and hides a body paragraph once it's fully inside a folded range) plus
+/// `isRangeFolded(_:)`. `FoldScanner` still does the indentation-based region scan
+/// language-agnostically; this controller's job is turning "which heads are folded" into the
+/// `NSTextRange`s the fork wants, and keeping that translation correct across edits.
 ///
-/// So this controller ships the honest fallback the brief authorizes: `FoldScanner`-driven
-/// fold-head chevrons in the gutter + a per-instance fold set toggled by keyboard/click. The
-/// buffer is never touched, so search/replace always see full text and there is nothing to
-/// persist or restore. The collapse itself is a documented no-op.
-///
-/// ponytail: real collapse needs STTextView to expose the layout-fragment delegate as an
-/// overridable seam (or TextKit 2 to ship a public fold API). When that lands, do the collapse
-/// in `applyCollapse(head:folded:)` — everything else here already tracks the right state.
+/// `NSTextRange` is a dumb pair of locations — it doesn't track the buffer, so a range handed
+/// to the fork before an edit points at the wrong text after one. The fork does not (and
+/// shouldn't) know how to re-derive folds from a language-agnostic indent scan, so this
+/// controller re-derives every folded range from the just-rescanned `FoldRegion`s on every
+/// `refresh()` rather than ever reusing a previously-converted `NSTextRange`. See `refresh()`.
 @MainActor
 final class FoldController {
     private weak var textView: STTextView?
@@ -32,22 +23,61 @@ final class FoldController {
     /// Folded heads keyed by head-line start UTF-16 offset. Per editor instance, never
     /// persisted, so a reopened note starts fully unfolded and layout is trivially "restored".
     private var foldedHeads: Set<Int> = []
+    /// The `NSTextRange` currently applied to `textView.foldedRanges` for each folded head,
+    /// keyed the same way. Rebuilt wholesale on every `refresh()`; `applyCollapse` patches it
+    /// incrementally between refreshes since folding never edits the buffer.
+    private var collapsedRanges: [Int: NSTextRange] = [:]
     /// Head lines we've placed a gutter chevron on, so we can clear them before a rebuild
     /// (STGutterView only removes markers by line number).
     private var chevronLines: Set<Int> = []
+    /// UTF-16 span touched by the buffer edit(s) since the last `refresh()` (see
+    /// `Coordinator.textView(_:didChangeTextIn:replacementString:)`). Multiple edits racing
+    /// ahead of the 150ms debounce widen this to their bounding span.
+    private var pendingEditRange: Range<Int>?
 
     func attach(to textView: STTextView) {
         self.textView = textView
     }
 
-    /// Recompute regions from the current buffer and rebuild the gutter chevrons. Called on the
-    /// editor's existing 150ms highlight debounce cadence (see `Coordinator.applyHighlight`).
+    /// Called from the editor's edit-change delegate taps for every buffer mutation, so
+    /// `refresh()` can tell whether an edit landed inside a currently-folded (and therefore
+    /// hidden) region and needs to auto-unfold it.
+    func noteEdit(_ range: Range<Int>) {
+        guard let existing = pendingEditRange else { pendingEditRange = range; return }
+        pendingEditRange = min(existing.lowerBound, range.lowerBound)..<max(existing.upperBound, range.upperBound)
+    }
+
+    /// Recompute regions from the current buffer, auto-unfold anything an edit invalidated, and
+    /// rebuild the gutter chevrons. Called on the editor's existing 150ms highlight debounce
+    /// cadence (see `Coordinator.applyHighlight`).
     func refresh() {
         guard let textView else { return }
         let text = textView.text ?? ""
+        let editedRange = pendingEditRange
+        pendingEditRange = nil
+
         regions = FoldScanner.regions(in: text)
-        // Drop folded heads whose region an edit removed; keep the rest keyed by head offset.
+        // Drop folded heads whose region an edit removed entirely, then drop any survivor
+        // whose (still-existing) body was itself touched by the edit — its hidden content just
+        // changed, so silently leaving it collapsed would hide the edit from the user.
         foldedHeads.formIntersection(regions.map(\.headLineRange.lowerBound))
+        if let editedRange {
+            for region in regions
+            where foldedHeads.contains(region.headLineRange.lowerBound) && region.bodyRange.overlaps(editedRange) {
+                foldedHeads.remove(region.headLineRange.lowerBound)
+            }
+        }
+
+        // Re-derive every collapsed NSTextRange from the fresh regions rather than trusting
+        // whatever we handed the fork before this edit — offsets always go stale across edits.
+        let contentManager = textView.textContentManager
+        collapsedRanges = Dictionary(uniqueKeysWithValues: regions.compactMap { region -> (Int, NSTextRange)? in
+            let head = region.headLineRange.lowerBound
+            guard foldedHeads.contains(head), let range = Self.textRange(region.bodyRange, in: contentManager) else { return nil }
+            return (head, range)
+        })
+        textView.foldedRanges = Array(collapsedRanges.values)
+
         rebuildChevrons(text: text)
     }
 
@@ -79,10 +109,28 @@ final class FoldController {
             .headLineRange.lowerBound
     }
 
-    /// ponytail: no-op until STTextView exposes a fragment-collapse seam (see type doc). The
-    /// fold set and chevron glyph already reflect the intended state; only the visual collapse
-    /// is missing.
-    private func applyCollapse(head: Int, folded: Bool) {}
+    /// Fast path for keyboard/click toggles, which never touch the buffer so `regions` is
+    /// still accurate: patch `collapsedRanges`/`textView.foldedRanges` for just this one head
+    /// instead of waiting for the next debounced `refresh()`.
+    private func applyCollapse(head: Int, folded: Bool) {
+        guard let textView else { return }
+        if folded {
+            guard let region = regions.first(where: { $0.headLineRange.lowerBound == head }),
+                  let range = Self.textRange(region.bodyRange, in: textView.textContentManager) else { return }
+            collapsedRanges[head] = range
+        } else {
+            collapsedRanges.removeValue(forKey: head)
+        }
+        textView.foldedRanges = Array(collapsedRanges.values)
+    }
+
+    /// UTF-16 offset range → `NSTextRange`, same walk `SnippetController`/`MultiCaretController`
+    /// use for their own offset conversions.
+    private static func textRange(_ range: Range<Int>, in contentManager: NSTextContentManager) -> NSTextRange? {
+        guard let start = contentManager.location(contentManager.documentRange.location, offsetBy: range.lowerBound),
+              let end = contentManager.location(start, offsetBy: range.count) else { return nil }
+        return NSTextRange(location: start, end: end)
+    }
 
     // MARK: Gutter chevrons
 

@@ -7,8 +7,8 @@ packages:
   MeatPadKit:
     path: MeatPadKit
   STTextView:
-    url: https://github.com/krzyzanowskim/STTextView
-    exactVersion: 2.3.10
+    url: https://github.com/GraphicMeat/STTextView
+    revision: ca0dbb235f9e92649147ac592b9c027130b46c54
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: 2.6.0
