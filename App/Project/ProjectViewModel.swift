@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import MeatPadKit
 import ProcessEnv
+import LanguageServerProtocol
 
 /// Owns one project window's state: the live file tree (rescanned on any change under
 /// `root`), the open tabs, and the save/close/external-change flows over them. The file
@@ -42,6 +43,11 @@ final class ProjectViewModel: ObservableObject {
     /// Mirrors `lspManager.statusByLanguage`, republished so SwiftUI observes it (the
     /// manager's own property isn't `@Published`).
     @Published private(set) var lspStatusByLanguage: [String: LSPServerStatus] = [:]
+    /// Latest diagnostics per open document, keyed by URI string (`url.absoluteString`,
+    /// matching `LSPProjectManager`'s own URI keying). This VM is the single subscriber to
+    /// `lspManager.onPublishDiagnostics` — see that property's doc comment — and republishes
+    /// per-URI so `DocumentHostView` can hand each `CodeEditor` only its own file's slice.
+    @Published private(set) var diagnosticsByURI: [String: [Diagnostic]] = [:]
     /// Single project-level missing-server notice — see `LSPBannerState`.
     @Published var lspBanner: LSPBannerState?
     /// Languages a missing-server banner has already been shown for this session — shown
@@ -106,6 +112,9 @@ final class ProjectViewModel: ObservableObject {
         rescan()
         lspManager.onStatusChange = { [weak self] statuses in
             self?.lspStatusByLanguage = statuses
+        }
+        lspManager.onPublishDiagnostics = { [weak self] uri, diagnostics in
+            self?.diagnosticsByURI[uri] = diagnostics
         }
         // Session restore: AppModel stashed this root's saved tabs/selection keyed by
         // standardized URL just before calling openWindow. Consume once; drop tabs for
@@ -218,6 +227,7 @@ final class ProjectViewModel: ObservableObject {
         if selectedTab == url { selectedTab = tabs.last }
         banners[url] = nil
         dismissedChanges.remove(url)
+        diagnosticsByURI[url.absoluteString] = nil
     }
 
     var hasTabs: Bool { !tabs.isEmpty }

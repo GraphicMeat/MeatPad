@@ -12,6 +12,14 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: 2.6.0
+  # LSP wire-protocol vocabulary only (Diagnostic, Position/LSPRange, CompletionItem,
+  # Location, WorkspaceEdit, …) — the app needs to speak these types across every 0.7 LSP
+  # feature (diagnostics now; completion/hover/goto-def/references/rename next). The actual
+  # client/session machinery (LanguageClient, JSONRPC, ProcessEnv) stays inside MeatPadKit
+  # only, reached through LSPProjectManager — never a direct app dependency.
+  LanguageServerProtocol:
+    url: https://github.com/ChimeHQ/LanguageServerProtocol
+    from: 0.14.0
 targets:
   MeatPad:
     type: application
@@ -23,6 +31,8 @@ targets:
         product: STTextView
       - package: Sparkle
         product: Sparkle
+      - package: LanguageServerProtocol
+        product: LanguageServerProtocol
     preBuildScripts:
       - name: Ensure Info.plist (xcodegen output)
         basedOnDependencyAnalysis: false

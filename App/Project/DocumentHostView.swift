@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import MeatPadKit
+import LanguageServerProtocol
 
 /// Detail pane: the editor for the selected tab, or a placeholder when nothing is open.
 struct DocumentHostView: View {
@@ -71,7 +72,8 @@ private struct EditorPane: View {
             symbolIndex: project.symbolIndex,
             currentFileURL: url,
             onCursorChange: { cursor = $0 },
-            onDocumentChanged: { project.notifyLSPDocumentChanged(url) }
+            onDocumentChanged: { project.notifyLSPDocumentChanged(url) },
+            diagnostics: project.diagnosticsByURI[url.absoluteString] ?? []
         )
         .safeAreaInset(edge: .bottom, spacing: 0) {
             EditorStatusBar(
@@ -135,15 +137,26 @@ private struct EditorPane: View {
 
     /// `nil` hides the status item entirely — only files whose language the LSP
     /// manager actually tracks (a `documentOpened` was sent for it) get an entry in
-    /// `statusByLanguage`.
+    /// `statusByLanguage`. Appends warning/error counts (e.g. "LSP ✓ 2⚠ 1✕") when this
+    /// file has open diagnostics — `EditorStatusBar` itself stays a plain `String` param,
+    /// this host composes the full text.
     private var lspStatusText: String? {
         guard let languageID = editor.language?.id,
               let status = project.lspStatusByLanguage[languageID] else { return nil }
+        let base: String
         switch status {
-        case .running: return "LSP ✓"
-        case .starting: return "LSP…"
-        case .notInstalled, .failed: return "LSP ✕"
+        case .running: base = "LSP ✓"
+        case .starting: base = "LSP…"
+        case .notInstalled, .failed: base = "LSP ✕"
         }
+
+        let diagnostics = project.diagnosticsByURI[url.absoluteString] ?? []
+        let warnings = diagnostics.filter { $0.severity == .warning }.count
+        let errors = diagnostics.filter { ($0.severity ?? .error) == .error }.count
+        var counts: [String] = []
+        if warnings > 0 { counts.append("\(warnings)⚠") }
+        if errors > 0 { counts.append("\(errors)✕") }
+        return counts.isEmpty ? base : "\(base) \(counts.joined(separator: " "))"
     }
 }
 

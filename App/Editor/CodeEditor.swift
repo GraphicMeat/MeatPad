@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import MeatPadKit
 import STTextView
+import LanguageServerProtocol
 
 /// One-shot "scroll to + select this range" command. A fresh `token` (new UUID) marks a
 /// new request; the same token is applied at most once so a live selection is never
@@ -46,6 +47,10 @@ struct CodeEditor: NSViewRepresentable {
     /// (see `scheduleHighlight`) — the LSP `textDocument/didChange` hook. `nil` for
     /// notes and any other project-less surface.
     var onDocumentChanged: (() -> Void)? = nil
+    /// This editor's file's current diagnostics (squiggles + gutter icons), pre-filtered by
+    /// URI upstream (`ProjectViewModel.diagnosticsByURI`). Empty for notes and any other
+    /// project-less surface — the default, so existing call sites are unaffected.
+    var diagnostics: [Diagnostic] = []
 
     /// SF Mono at the given point size.
     static func font(size: CGFloat) -> NSFont {
@@ -69,6 +74,7 @@ struct CodeEditor: NSViewRepresentable {
         textView.onFoldAll = { [weak coord] in MainActor.assumeIsolated { coord?.foldController.foldAll() } }
         textView.onUnfoldAll = { [weak coord] in MainActor.assumeIsolated { coord?.foldController.unfoldAll() } }
         coord.foldController.attach(to: textView)
+        coord.lspController.attach(to: textView)
 
         textView.textDelegate = coord
         textView.showsLineNumbers = true
@@ -86,6 +92,7 @@ struct CodeEditor: NSViewRepresentable {
         coord.applyFontSize(fontSize)
         coord.applySoftWrap(softWrap)
         coord.applyTheme(theme) // sets colors + immediate first highlight paint
+        coord.lspController.setDiagnostics(diagnostics)
         coord.applyReveal(reveal) // first render of a just-opened file consumes here
         coord.observeScroll(of: scrollView)
 
@@ -136,6 +143,7 @@ struct CodeEditor: NSViewRepresentable {
         coord.applyFontSize(fontSize)
         coord.applySoftWrap(softWrap)
         coord.applyTheme(theme)
+        coord.lspController.setDiagnostics(diagnostics)
 
         coord.applyReveal(reveal)
     }
@@ -172,6 +180,10 @@ struct CodeEditor: NSViewRepresentable {
         /// it lives and dies with the view — never persisted. Recomputed on the highlight
         /// debounce (see `applyHighlight`).
         let foldController = FoldController()
+        /// Per-editor-instance diagnostics rendering (squiggles + gutter icons). Same
+        /// lifetime as `foldController`; driven from the same 150ms highlight debounce (see
+        /// `applyHighlight`) plus a direct call from `updateNSView` for a prompt first paint.
+        let lspController = LSPController()
         /// The completion popup is a child window pinned at screen coordinates — it does not
         /// track content scrolling, so a manual scroll must dismiss it. Typing near the
         /// viewport edge autoscrolls the caret and fires the same bounds notification; the
@@ -318,10 +330,19 @@ struct CodeEditor: NSViewRepresentable {
         /// Full-document reparse + reapply. ponytail: whole-doc every time; fine at P1
         /// scale, swap for a visible-range pass if large files get janky.
         func applyHighlight() {
+            // Diagnostics gutter markers cleared BEFORE fold's own rebuild — see
+            // LSPController.clearGutterMarkersForFoldPass's doc comment (a marker left over
+            // from the previous pass would otherwise block a fold chevron from landing on
+            // that same line, even after the diagnostic itself has cleared).
+            lspController.clearGutterMarkersForFoldPass()
             // Fold regions ride the same debounce cadence as highlighting — recompute here so
             // the gutter chevrons track edits. Runs even for an empty/unhighlighted buffer so a
             // doc that was just cleared drops its stale chevrons.
             foldController.refresh()
+            // Diagnostics re-applied AFTER every highlight pass below: `setAttributes`'s
+            // full-range reset wipes underline attributes along with everything else, so this
+            // must run last regardless of which path through this method is taken.
+            defer { lspController.render() }
             guard let textView, let highlighter else { return }
             let source = textView.text ?? ""
             let full = NSRange(location: 0, length: (source as NSString).length)

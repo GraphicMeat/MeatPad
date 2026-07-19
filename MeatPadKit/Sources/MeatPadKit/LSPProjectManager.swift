@@ -138,6 +138,14 @@ public final class LSPProjectManager {
 
     public private(set) var statusByLanguage: [String: LSPServerStatus] = [:]
     public var onStatusChange: (([String: LSPServerStatus]) -> Void)?
+    /// Fires for every `textDocument/publishDiagnostics` notification from any language's
+    /// server, across every relaunch. Callers filter by `uri` themselves (this manager has
+    /// no notion of which UI is showing which file). Single-slot, same shape as
+    /// `onStatusChange` — one app-side owner (`ProjectViewModel`) fans it out further.
+    public var onPublishDiagnostics: ((_ uri: DocumentUri, _ diagnostics: [Diagnostic]) -> Void)?
+    /// Per-language diagnostics-tap `Task`, keyed and cancelled alongside `pendingWork` in
+    /// `snapshotAndClearForShutdown` — see `startDiagnosticsTap`.
+    private var diagnosticsTaps: [String: Task<Void, Never>] = [:]
 
     public convenience init(projectRoot: URL, detected: [DetectedServer], userEnvironment: [String: String]) {
         self.init(
@@ -271,12 +279,16 @@ public final class LSPProjectManager {
         for task in pendingWork.values {
             task.cancel()
         }
+        for task in diagnosticsTaps.values {
+            task.cancel()
+        }
         let handles = servers
         let terminators = forceTerminators
         servers.removeAll()
         openDocuments.removeAll()
         pendingWork.removeAll()
         forceTerminators.removeAll()
+        diagnosticsTaps.removeAll()
         return (handles, terminators)
     }
 
@@ -412,7 +424,34 @@ public final class LSPProjectManager {
         let handle = LSPServerHandle(configuration: configuration)
         servers[languageID] = handle
         setStatus(.starting, for: languageID)
+        startDiagnosticsTap(handle: handle, languageID: languageID)
         return handle
+    }
+
+    /// The single reader of `handle.eventSequence` for this language's whole lifetime
+    /// (including crash restarts — `RestartingServer` re-taps its own internal stream into
+    /// the same outer `eventSequence` on relaunch, so one subscription here covers every
+    /// relaunch, not just the first). `AsyncStream` delivers each element to exactly one
+    /// consumer, not a broadcast — if every open editor of this language read
+    /// `handle.eventSequence` directly, two files of the same language would race for each
+    /// `publishDiagnostics` notification instead of both seeing it. Reading it once here and
+    /// fanning out through `onPublishDiagnostics` keeps that correct regardless of how many
+    /// app-side listeners exist.
+    ///
+    /// ponytail: this Task keeps `handle` (and so the `RestartingServer` actor) referenced
+    /// until either it's cancelled below (in `snapshotAndClearForShutdown`) or the
+    /// underlying stream itself finishes — cancellation alone doesn't unblock an in-flight
+    /// `for await` suspension, only the next event (or the process's pipe closing, which
+    /// `shutdown()`'s `forceTerminate` triggers) does. Bounded to a shutdown-adjacent
+    /// transient, not a persistent leak.
+    private func startDiagnosticsTap(handle: LSPServerHandle, languageID: String) {
+        diagnosticsTaps[languageID] = Task { @MainActor [weak self] in
+            for await event in handle.eventSequence {
+                guard !Task.isCancelled else { return }
+                guard case .notification(.textDocumentPublishDiagnostics(let params)) = event else { continue }
+                self?.onPublishDiagnostics?(params.uri, params.diagnostics)
+            }
+        }
     }
 
     private func setStatus(_ status: LSPServerStatus, for languageID: String) {
