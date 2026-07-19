@@ -32,8 +32,10 @@ public enum LSPServerDetector {
         let installHint: String
         let binaryName: String
         let launchArguments: [String]
-        /// Extra directories to probe before falling back to PATH.
-        let extraDirs: (_ home: String) -> [String]
+        /// Extra directories to probe before falling back to PATH. `home` is nil when
+        /// `userEnvironment["HOME"]` was absent — implementations must omit any
+        /// home-derived dir in that case rather than guessing a real home directory.
+        let extraDirs: (_ home: String?) -> [String]
     }
 
     // ponytail: typescript-language-server/pyright's real global-bin location is
@@ -49,7 +51,7 @@ public enum LSPServerDetector {
             installHint: "rustup component add rust-analyzer",
             binaryName: "rust-analyzer",
             launchArguments: [],
-            extraDirs: { home in ["\(home)/.cargo/bin", "/opt/homebrew/bin", "/usr/local/bin"] }
+            extraDirs: { home in (home.map { ["\($0)/.cargo/bin"] } ?? []) + ["/opt/homebrew/bin", "/usr/local/bin"] }
         ),
         CatalogEntry(
             languageIDs: ["typescript", "javascript", "tsx"],
@@ -87,7 +89,7 @@ public enum LSPServerDetector {
         fileManager: FileManager = .default,
         xcrunFinder: (() -> URL?)? = nil
     ) -> [DetectedServer] {
-        let home = userEnvironment["HOME"] ?? NSHomeDirectory()
+        let home = userEnvironment["HOME"]
         let pathDirs = (userEnvironment["PATH"] ?? "").split(separator: ":").map(String.init)
 
         var results = catalog.compactMap { entry -> DetectedServer? in
@@ -121,7 +123,9 @@ public enum LSPServerDetector {
     private static func firstExecutable(named name: String, in dirs: [String], fileManager: FileManager) -> URL? {
         for dir in dirs {
             let path = (dir as NSString).appendingPathComponent(name)
-            if fileManager.isExecutableFile(atPath: path) {
+            var isDirectory: ObjCBool = false
+            if fileManager.isExecutableFile(atPath: path),
+                fileManager.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue {
                 return URL(fileURLWithPath: path)
             }
         }

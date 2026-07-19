@@ -43,6 +43,17 @@ final class LSPServerDetectorTests: XCTestCase {
         XCTAssertFalse(detected.contains { $0.languageIDs.contains("rust") })
     }
 
+    func testHomeDerivedDirsAreSkippedWhenHOMEIsAbsent() throws {
+        // Binary sits where a fake ~/.cargo/bin would resolve to, but HOME is never
+        // provided — detect() must not guess the real home directory to find it.
+        try makeExecutable(".cargo/bin/rust-analyzer")
+        let env = ["PATH": ""]
+
+        let detected = LSPServerDetector.detect(userEnvironment: env, xcrunFinder: { nil })
+
+        XCTAssertFalse(detected.contains { $0.languageIDs.contains("rust") })
+    }
+
     // MARK: - PATH-split probing
 
     func testFindsServerViaPATHEntry() throws {
@@ -95,6 +106,15 @@ final class LSPServerDetectorTests: XCTestCase {
         try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("not executable".utf8).write(to: path)
         // deliberately not chmod +x
+
+        let env = ["HOME": tempDir.path, "PATH": tempDir.appendingPathComponent("bin").path]
+        let detected = LSPServerDetector.detect(userEnvironment: env, xcrunFinder: { nil })
+        XCTAssertFalse(detected.contains { $0.languageIDs.contains("rust") })
+    }
+
+    func testDirectoryNamedLikeBinaryIsNotDetected() throws {
+        let path = tempDir.appendingPathComponent("bin/rust-analyzer")
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
 
         let env = ["HOME": tempDir.path, "PATH": tempDir.appendingPathComponent("bin").path]
         let detected = LSPServerDetector.detect(userEnvironment: env, xcrunFinder: { nil })
