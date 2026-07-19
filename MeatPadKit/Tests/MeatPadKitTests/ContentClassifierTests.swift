@@ -29,6 +29,15 @@ final class ContentClassifierTests: XCTestCase {
         """))
     }
 
+    func testProseWithOneDashLineReturnsNil() {
+        // A single stray "- " line shouldn't be enough to read as a markdown list.
+        XCTAssertNil(classify("""
+        The plan for today is simple.
+        - just kidding, no real structure here.
+        We will regroup tomorrow and figure out next steps together.
+        """))
+    }
+
     // MARK: - One positive per language
 
     func testSwift() {
@@ -227,6 +236,21 @@ final class ContentClassifierTests: XCTestCase {
             return 0;
         }
         """), "cpp")
+    }
+
+    func testMarkdown() {
+        XCTAssertEqual(classify("""
+        # Project Notes
+
+        Some intro text with a [link](https://example.com) to docs.
+
+        - first item
+        - second item
+
+        ```
+        code block here
+        ```
+        """), "markdown")
     }
 
     // MARK: - Discriminators

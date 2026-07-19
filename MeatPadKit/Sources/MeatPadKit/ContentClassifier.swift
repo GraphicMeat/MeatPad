@@ -49,7 +49,7 @@ public enum ContentClassifier {
     }
 
     /// languageID -> weighted signals. Weights 1-3: 3 = near-unique to the language,
-    /// 1 = weak/shared hint. Markdown is absent on purpose (no grammar wired).
+    /// 1 = weak/shared hint.
     private static let tables: [String: [Pattern]] = [
         "swift": [
             p(#"\bfunc\s+\w+\s*\("#, 3),
@@ -154,6 +154,16 @@ public enum ContentClassifier {
             p(#"\bcout\b"#, 2),
             p(#"\bnullptr\b"#, 2),
             p(#"\bnamespace\s+\w+"#, 2),
+        ],
+        // List item alone is deliberately weak (1): a single stray "- " prose line must
+        // not clear minimumScore, and YAML sequences share this exact shape (see YAML's
+        // own "- app" test) — markdown only wins a YAML tie via heading/fence/link too.
+        "markdown": [
+            p(#"^#{1,6}\s"#, 3),
+            p(#"^```"#, 3),
+            p(#"\[.+\]\(.+\)"#, 2),
+            p(#"^>\s"#, 2),
+            p(#"^[-*+]\s"#, 1),
         ],
     ]
 }
