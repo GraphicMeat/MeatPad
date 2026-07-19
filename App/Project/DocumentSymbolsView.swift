@@ -131,11 +131,12 @@ struct DocumentSymbolsView: View {
         select(items[candidateIndex])
     }
 
-    /// Document symbols are scoped to the current document — `viewModel.selectedTab` is the
-    /// only file this panel's results could apply to (it's what `showDocumentSymbols` was
-    /// requested for).
+    /// Uses `viewModel.documentSymbolsFile` — the file `showDocumentSymbols` was actually
+    /// requested for — rather than `selectedTab`, which can change while the popup is open
+    /// (no scrim blocks tab switching/closing) and would otherwise jump in the wrong file
+    /// using ranges computed for a different one.
     private func select(_ item: DocumentSymbols.Item) {
-        guard let url = viewModel.selectedTab else { return }
+        guard let url = viewModel.documentSymbolsFile else { return }
         let text = EditorRegistry.shared.fileViewModel(for: url)?.text ?? ""
         let range = LSPPositionBridge.nsRange(of: item.range, in: text) ?? NSRange(location: 0, length: 0)
         viewModel.open(file: url, reveal: range)

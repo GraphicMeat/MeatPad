@@ -69,6 +69,10 @@ final class ProjectViewModel: ObservableObject {
     /// Document Symbols (Task 5) quick-open-style overlay, parallel to `quickOpenVisible`.
     @Published var documentSymbolsVisible = false
     @Published private(set) var documentSymbolResults: [DocumentSymbols.Item] = []
+    /// The file `documentSymbolResults` was queried for — the response carries no per-item
+    /// URI (unlike `findReferences`'s `Location`s), so `select()` must jump using this rather
+    /// than `selectedTab`, which can drift to a different tab while the popup is still open.
+    @Published private(set) var documentSymbolsFile: URL?
     /// One-shot scroll+select for the currently selected tab's `CodeEditor` (search-result
     /// jumps). Cleared right after being read so switching away and back to the same tab
     /// later never replays a stale selection.
@@ -335,6 +339,7 @@ final class ProjectViewModel: ObservableObject {
             let response = (try? await handle.documentSymbol(params: params)) ?? nil
             guard let self else { return }
             self.documentSymbolResults = DocumentSymbols.flatten(response)
+            self.documentSymbolsFile = url
             self.documentSymbolsVisible = true
         }
     }
