@@ -47,7 +47,7 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "14.0"
         NSHumanReadableCopyright: "© 2026 Rokas"
-        SUFeedURL: https://github.com/rokas-ambrazevicius/MeatPad/releases/latest/download/appcast.xml
+        SUFeedURL: https://github.com/GraphicMeat/MeatPad/releases/latest/download/appcast.xml
         SUEnableAutomaticChecks: true
         SUPublicEDKey: "9OobPkT0p5WGp0wf2aSbADivVllEKZaz0gKhElMocU0="
     settings:
