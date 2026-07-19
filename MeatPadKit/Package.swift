@@ -33,6 +33,7 @@ let package = Package(
         .package(url: "https://github.com/alex-pinkus/tree-sitter-swift", revision: "31d17fe7e818a2048c808b5c6fdc2dc792f4f5b5"),
         .package(url: "https://github.com/ChimeHQ/LanguageClient", from: "0.8.0"),
         .package(url: "https://github.com/ChimeHQ/LanguageServerProtocol", from: "0.14.0"),
+        .package(url: "https://github.com/ChimeHQ/ProcessEnv", from: "1.0.0"),
     ],
     targets: [
         .target(
@@ -59,6 +60,7 @@ let package = Package(
                 .product(name: "TreeSitterMarkdown", package: "tree-sitter-markdown"),
                 .product(name: "LanguageClient", package: "LanguageClient"),
                 .product(name: "LanguageServerProtocol", package: "LanguageServerProtocol"),
+                .product(name: "ProcessEnv", package: "ProcessEnv"),
             ]
         ),
         .testTarget(name: "MeatPadKitTests", dependencies: ["MeatPadKit"]),
