@@ -74,6 +74,12 @@ struct CodeEditor: NSViewRepresentable {
         coord.applyTheme(theme) // sets colors + immediate first highlight paint
         coord.applyReveal(reveal) // first render of a just-opened file consumes here
         coord.observeScroll(of: scrollView)
+
+        // STTextView's frame only spans its content, so a short document leaves dead
+        // clip-view space below it where clicks land on nothing. Catch those and treat
+        // them as "click at end of document" — focus the editor, caret to the end.
+        let click = NSClickGestureRecognizer(target: coord, action: #selector(Coordinator.clickBelowText(_:)))
+        scrollView.contentView.addGestureRecognizer(click)
         return scrollView
     }
 
@@ -157,6 +163,16 @@ struct CodeEditor: NSViewRepresentable {
 
         deinit {
             if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+        }
+
+        /// Click in the clip view below the text view's frame (short document, dead
+        /// space): focus the editor and put the caret at the end — for an empty note
+        /// that's the first line. Clicks inside the text view pass through untouched.
+        @objc func clickBelowText(_ gesture: NSClickGestureRecognizer) {
+            guard let textView, let clipView = gesture.view else { return }
+            guard !textView.frame.contains(gesture.location(in: clipView)) else { return }
+            textView.window?.makeFirstResponder(textView)
+            textView.textSelection = NSRange(location: (textView.text as NSString? ?? "").length, length: 0)
         }
 
         func observeScroll(of scrollView: NSScrollView) {
