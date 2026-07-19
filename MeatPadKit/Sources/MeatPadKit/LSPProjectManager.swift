@@ -109,7 +109,19 @@ public final class LSPProjectManager {
     /// here) — public methods on this class are synchronous/fire-and-forget, so without this,
     /// three back-to-back calls (e.g. open then immediately close) would race as independent
     /// unstructured Tasks with no ordering guarantee.
+    ///
+    /// ponytail: unbounded under a hung server — if a language server stops responding
+    /// mid-request, every subsequent open/change/close for that language keeps chaining onto
+    /// this Task, none of them ever draining. Add a queue-depth cap / timeout if a hung server
+    /// turns out to be a real-world occurrence worth guarding against.
     private var pendingWork: [String: Task<Void, Never>] = [:]
+    /// Languages `didChangeConfiguration` has already been sent for — sent once per language,
+    /// not resent on every `documentOpened`.
+    ///
+    /// ponytail: not cleared on restart, so a post-crash relaunch (see `handleTermination`)
+    /// won't resend it and `pyright` loses its configured `diagnosticMode`. Reset this entry in
+    /// `handleTermination` if that turns out to matter in practice.
+    private var configuredLanguages: Set<String> = []
 
     public private(set) var statusByLanguage: [String: LSPServerStatus] = [:]
     public var onStatusChange: (([String: LSPServerStatus]) -> Void)?
@@ -159,7 +171,8 @@ public final class LSPProjectManager {
                 _ = try await handle.initializeIfNeeded()
                 self?.setStatus(.running, for: languageID)
 
-                if languageID == "python" {
+                if languageID == "python", self?.configuredLanguages.contains(languageID) != true {
+                    self?.configuredLanguages.insert(languageID)
                     try await handle.didChangeConfiguration(Self.pyrightConfigurationParams)
                 }
 
@@ -206,6 +219,16 @@ public final class LSPProjectManager {
     }
 
     public func shutdown() {
+        // Cancel every queued-but-not-yet-run notification BEFORE clearing `servers` below —
+        // otherwise a Task already holding a strong `handle` reference (captured directly in
+        // documentOpened/documentChanged/documentClosed, not looked up via `servers`) would
+        // still run after shutdown, find the handle in its lazy `.notStarted`/`.stopped` state,
+        // and spawn a brand-new subprocess nobody tracks or ever reaps. `enqueue` checks
+        // `Task.isCancelled` before invoking `operation`, so cancelling here is what actually
+        // stops that from happening.
+        for task in pendingWork.values {
+            task.cancel()
+        }
         for handle in servers.values {
             Task {
                 try? await handle.shutdownAndExit()
@@ -220,11 +243,13 @@ public final class LSPProjectManager {
 
     /// Chains `operation` after whatever's already queued for `languageID`, so open/change/
     /// close notifications for one language's server always run in call order — never
-    /// concurrently, never out of order.
+    /// concurrently, never out of order. Skips `operation` entirely if this Task was cancelled
+    /// (by `shutdown()`) before its turn came up.
     private func enqueue(languageID: String, _ operation: @escaping @MainActor @Sendable () async -> Void) {
         let previous = pendingWork[languageID]
         pendingWork[languageID] = Task { @MainActor in
             _ = await previous?.value
+            guard !Task.isCancelled else { return }
             await operation()
         }
     }
@@ -262,7 +287,7 @@ public final class LSPProjectManager {
         let serverProvider: LSPServerHandle.ServerProvider = {
             let channel = try factory.makeChannel(detected: detected, environment: environment) {
                 Task { @MainActor [weak self] in
-                    self?.handleTermination(languageID: languageID, displayName: detected.displayName)
+                    await self?.handleTermination(languageID: languageID, displayName: detected.displayName)
                 }
             }
             return JSONRPCServerConnection(dataChannel: channel)
@@ -306,15 +331,20 @@ public final class LSPProjectManager {
     }
 
     /// The underlying process exited (crash, or a clean exit after `shutdown()`'s best-effort
-    /// exit notification raced with process teardown). RestartingServer will transparently
-    /// relaunch on the next document event — this just reflects that in status until then.
+    /// exit notification raced with process teardown). `RestartingServer` does NOT relaunch on
+    /// its own just because the process died — it only leaves `.running` for good via
+    /// `connectionInvalidated()` (which we call here) or `shutdownAndExit()`. Without the call
+    /// below, `RestartingServer` stays wedged believing it's still `.running` with a dead
+    /// connection underneath, so the next document event hits the dead handle and throws
+    /// forever instead of relaunching — the "will restart" status message would be false.
     ///
     /// ponytail: no distinct "crashed, will retry" vs "shut down on purpose" state — the guard
     /// below just makes a termination callback firing after `shutdown()` a no-op (nothing left
     /// in `servers` to look up). Add a distinct status case if the banner ever needs to tell
     /// those two apart.
-    private func handleTermination(languageID: String, displayName: String) {
-        guard servers[languageID] != nil else { return }
+    private func handleTermination(languageID: String, displayName: String) async {
+        guard let handle = servers[languageID] else { return }
         setStatus(.failed("\(displayName) exited — will restart on next document activity"), for: languageID)
+        await handle.connectionInvalidated()
     }
 }
