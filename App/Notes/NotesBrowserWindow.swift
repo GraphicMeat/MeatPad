@@ -52,7 +52,7 @@ struct NotesBrowserWindow: View {
     @State private var deleteTarget: String?
     @State private var folderError: String?
 
-    private var filtered: [Note] {
+    private var folderFilteredNotes: [Note] {
         var notes = noteStore.notes
         switch folderSelection {
         case .all: break
@@ -62,8 +62,28 @@ struct NotesBrowserWindow: View {
         case .folder(let name):
             notes = notes.filter { $0.folder == name }
         }
-        guard !query.isEmpty else { return notes }
-        return notes.filter { $0.title.localizedCaseInsensitiveContains(query) }
+        return notes
+    }
+
+    /// nil when not searching (empty query) — callers fall back to plain folder order.
+    /// Synchronous: the index is in-memory and note counts are small, so no debounce/async.
+    private var searchMatches: [NoteSearchMatch]? {
+        guard !query.isEmpty else { return nil }
+        return noteStore.searchIndex.search(query, notes: folderFilteredNotes)
+    }
+
+    /// List data source, kept `[Note]`-shaped so selection/@SceneStorage/etc. are untouched.
+    /// While searching, order follows `searchMatches` (title matches first).
+    private var filtered: [Note] {
+        guard let searchMatches else { return folderFilteredNotes }
+        let byID = Dictionary(uniqueKeysWithValues: noteStore.notes.map { ($0.id, $0) })
+        return searchMatches.compactMap { byID[$0.noteID] }
+    }
+
+    /// Row-decoration lookup for the excerpt line, keyed by note id.
+    private var matchByID: [UUID: NoteSearchMatch] {
+        guard let searchMatches else { return [:] }
+        return Dictionary(uniqueKeysWithValues: searchMatches.map { ($0.noteID, $0) })
     }
 
     var body: some View {
@@ -79,6 +99,7 @@ struct NotesBrowserWindow: View {
         .onAppear { AppModel.shared.browserWindowDidAppear() }
         .onDisappear { AppModel.shared.browserWindowDidDisappear() }
         .onChange(of: folderSelection) { _, _ in selection = nil }
+        .onChange(of: selection) { _, newValue in revealMatch(for: newValue) }
         .alert("New Folder", isPresented: $newFolderShown) {
             TextField("Name", text: $folderNameDraft)
             Button("Create") { runFolderOp { try noteStore.createFolder(folderNameDraft) } }
@@ -175,9 +196,16 @@ struct NotesBrowserWindow: View {
                     .foregroundStyle(MeatPadGlass.tint.gradient)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(note.title).lineLimit(1)
-                    RelativeTimeText(date: note.modified)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if let match = matchByID[note.id], !match.excerpt.isEmpty {
+                        Text(Self.highlighted(match))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    } else {
+                        RelativeTimeText(date: note.modified)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .contextMenu {
@@ -264,6 +292,40 @@ struct NotesBrowserWindow: View {
     private func trash(_ id: UUID) {
         try? noteStore.trash(id: id)
         if selection == id { selection = nil }
+    }
+
+    /// Jumps the newly-selected note's editor to its search hit, if any. The registry VM
+    /// loads its text synchronously (see `NoteEditorViewModel.init`), and `reveal` is a
+    /// one-shot target that survives until a not-yet-rendered `CodeEditor` consumes it —
+    /// so this can fire immediately, before `NoteDetailEditor` itself has appeared.
+    private func revealMatch(for noteID: UUID?) {
+        guard let noteID, let range = matchByID[noteID]?.rangeInContents else { return }
+        let vm = EditorRegistry.shared.noteViewModel(for: noteID)
+        vm.reveal(range: Self.clamp(range, to: (vm.text as NSString).length))
+    }
+
+    /// Clamps a stale hit range (text edited/reloaded since the index produced it) into
+    /// bounds. A range past the end collapses to a zero-length selection at the end —
+    /// harmless scroll, per the brief.
+    private static func clamp(_ range: NSRange, to length: Int) -> NSRange {
+        let location = min(max(range.location, 0), length)
+        let len = min(max(range.length, 0), length - location)
+        return NSRange(location: location, length: len)
+    }
+
+    /// Bolds `match.rangeInExcerpt` within `match.excerpt`. Same technique as
+    /// `ProjectSearchView.highlighted(_:)`: attribute the `NSMutableAttributedString` in
+    /// its native UTF-16 space (the range the index already computed) rather than
+    /// converting to `String.Index` first.
+    private static func highlighted(_ match: NoteSearchMatch) -> AttributedString {
+        let mutable = NSMutableAttributedString(string: match.excerpt)
+        if let range = match.rangeInExcerpt {
+            let full = NSRange(location: 0, length: mutable.length)
+            if range.location >= 0, range.location + range.length <= full.length {
+                mutable.addAttribute(.font, value: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .bold), range: range)
+            }
+        }
+        return AttributedString(mutable)
     }
 
     private func runFolderOp(_ op: () throws -> Void) {
