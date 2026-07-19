@@ -54,9 +54,11 @@ struct LSPCompletionItem: STCompletionItem {
     let id: String
     let item: CompletionItem
 
-    /// `index` disambiguates two server results that share a label (legitimate — overloads,
-    /// or a class and its initializer) — `STCompletionItem` needs a unique `id` and the label
-    /// alone isn't guaranteed to be.
+    /// `index` folds into `id` alongside the label. It isn't actually load-bearing for
+    /// uniqueness: the merge loop that constructs these (`completionItemsAsync`) already dedups
+    /// LSP results by label via `seen.insert(lspItem.label)` before appending, so two
+    /// `LSPCompletionItem`s in the same list never share a label in the first place — `index` is
+    /// just cheap insurance against a future caller that skips that dedup.
     init(_ item: CompletionItem, index: Int) {
         self.item = item
         self.id = "lsp:\(index):\(item.label)"
@@ -351,29 +353,52 @@ final class WordCompletionViewController: STCompletionViewController {
     /// odd" per the plan: a stale/out-of-bounds `textEdit` range (edited since the request was
     /// sent) silently degrades to a plain insert rather than corrupting the buffer.
     ///
-    /// ponytail: an `insertTextFormat == .snippet` payload (`$1`, `${1:foo}`, `$0` placeholders)
-    /// is inserted as literal text, not expanded into a tab-stop session — that's LSP's own
-    /// snippet syntax, unrelated to `SnippetController`'s. Wire it through
-    /// `SnippetController`'s tab-stop machinery if plain-text LSP snippets turn out to bother
-    /// users in practice.
+    /// Either payload is run through `plainText(from:format:)` first, so an
+    /// `insertTextFormat == .snippet` item (sourcekit-lsp sends these routinely for function/
+    /// method completions, e.g. `foo(${1:x: Int})$0`) never lands its raw TextMate syntax in
+    /// the buffer.
     private func insertLSPCompletion(_ item: CompletionItem, replacing range: NSRange, textView: STTextView) {
         if let textEdit = item.textEdit, let text = textView.text {
             let lspRange: LSPRange
-            let newText: String
+            let rawText: String
             switch textEdit {
             case .optionA(let edit):
                 lspRange = edit.range
-                newText = edit.newText
+                rawText = edit.newText
             case .optionB(let edit):
                 lspRange = edit.insert
-                newText = edit.newText
+                rawText = edit.newText
             }
             if let nsRange = LSPPositionBridge.nsRange(of: lspRange, in: text) {
-                textView.insertText(newText, replacementRange: nsRange)
+                textView.insertText(Self.plainText(from: rawText, format: item.insertTextFormat), replacementRange: nsRange)
                 return
             }
         }
-        textView.insertText(item.insertText ?? item.label, replacementRange: range)
+        textView.insertText(Self.plainText(from: item.insertText ?? item.label, format: item.insertTextFormat), replacementRange: range)
+    }
+
+    /// ponytail: a `.snippet`-format payload (`$1`, `${1:default}`, `$0` tab stops) is flattened
+    /// to plain text — literal spans plus each placeholder's default, bare stop markers dropped —
+    /// not expanded into a real tab-stop session, so the caret just lands at the end of the
+    /// insert rather than at the first placeholder. That's LSP's own snippet syntax, unrelated to
+    /// `SnippetController`'s, but `MeatPadKit.SnippetParser` already parses the same `$N`/
+    /// `${N:default}` grammar, so it does the parsing here too. Wire the flattened nodes through
+    /// `SnippetController`'s tab-stop machinery instead if losing tab stops on LSP completions
+    /// turns out to bother users in practice. An unparseable payload (regex transforms, a stray
+    /// unbalanced brace) falls back to the raw string untouched, same "fall back on anything odd"
+    /// policy as the textEdit-range fallback above.
+    private static func plainText(from raw: String, format: InsertTextFormat?) -> String {
+        guard format == .snippet, let parsed = try? SnippetParser.parse(raw) else { return raw }
+        return flatten(parsed.nodes)
+    }
+
+    private static func flatten(_ nodes: [SnippetNode]) -> String {
+        nodes.map { node in
+            switch node {
+            case .text(let text): return text
+            case .tabStop(_, let placeholder): return flatten(placeholder)
+            }
+        }.joined()
     }
 
     // MARK: Trigger-word scan (same word-run rule as SnippetController.triggerMatch)
