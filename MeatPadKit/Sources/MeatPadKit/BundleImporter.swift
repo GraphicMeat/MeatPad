@@ -22,7 +22,9 @@ public enum BundleImporter {
     /// snippet is skipped rather than given an unwieldy trigger.
     private static let maxDerivedTriggerLength = 20
 
-    public static func importBundle(at url: URL) throws -> BundleImportResult {
+    /// `now` is an injected seam for test determinism (kit code otherwise defaults to
+    /// live `Date()`) — every imported command's `origin` date comes from here.
+    public static func importBundle(at url: URL, now: Date = Date()) throws -> BundleImportResult {
         var isDirectory: ObjCBool = false
         let snippetsDir = url.appendingPathComponent("Snippets", isDirectory: true)
         let commandsDir = url.appendingPathComponent("Commands", isDirectory: true)
@@ -33,9 +35,12 @@ public enum BundleImporter {
         else {
             throw BundleImportError.notABundle
         }
+        let bundleName = url.lastPathComponent
 
         var snippets: [Snippet] = []
         var skippedSnippets = 0
+        // Snippets are inert text templates (no execution), so unlike commands they
+        // carry no origin/trust fields — nothing to gate on import.
         for fileURL in plistFiles(in: snippetsDir, extension: "tmSnippet") {
             if let snippet = importSnippet(at: fileURL) {
                 snippets.append(snippet)
@@ -47,7 +52,7 @@ public enum BundleImporter {
         var commands: [SavedCommand] = []
         var skippedCommands = 0
         for fileURL in plistFiles(in: commandsDir, extension: "tmCommand") {
-            if let command = importCommand(at: fileURL) {
+            if let command = importCommand(at: fileURL, bundleName: bundleName, importDate: now) {
                 commands.append(command)
             } else {
                 skippedCommands += 1
@@ -143,7 +148,10 @@ public enum BundleImporter {
     }
 
     /// `nil` return means "skip" (missing the `command` script, or a malformed plist).
-    private static func importCommand(at url: URL) -> SavedCommand? {
+    /// Imported commands run arbitrary shell scripts from a third-party source, so they
+    /// start `trusted: false` — the app gates execution until the user explicitly trusts
+    /// them (unlike snippets, which are just inert text).
+    private static func importCommand(at url: URL, bundleName: String, importDate: Date) -> SavedCommand? {
         guard let dict = readPlist(at: url), let script = dict["command"] as? String else {
             return nil
         }
@@ -154,7 +162,9 @@ public enum BundleImporter {
             script: script,
             input: commandInput(dict["input"] as? String),
             output: commandOutput(dict["output"] as? String),
-            languageIDs: scopeToLanguageIDs(dict["scope"] as? String)
+            languageIDs: scopeToLanguageIDs(dict["scope"] as? String),
+            origin: .imported(bundleName: bundleName, date: importDate),
+            trusted: false
         )
     }
 

@@ -198,9 +198,27 @@ public final class NoteStore: ObservableObject {
         try Self.encoder.encode(list).write(to: foldersURL, options: .atomic)
     }
 
-    public static func defaultRoot() -> URL {
+    /// UserDefaults key for an absolute-path override of the storage base (the `MeatPad`
+    /// directory that `Notes`/`Snippets`/`Commands`/`Macros`/`Themes`/`session.json` all
+    /// live under). Public so app code (Settings relocation flow) writes the same key
+    /// `defaultRoot` reads.
+    public static let storageRootOverrideKey = "meatpad.storageRootOverride"
+
+    /// `~/Library/Application Support/MeatPad/Notes`, unless `storageRootOverrideKey` is
+    /// set in `defaults` to an absolute path that exists as a directory — then
+    /// `<override>/Notes`. `defaults` is an injectable seam for tests; production always
+    /// uses `.standard`. A missing/stale override path falls back silently rather than
+    /// failing app launch.
+    public static func defaultRoot(defaults: UserDefaults = .standard) -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return appSupport.appendingPathComponent("MeatPad", isDirectory: true).appendingPathComponent("Notes", isDirectory: true)
+        var base = appSupport.appendingPathComponent("MeatPad", isDirectory: true)
+        if let override = defaults.string(forKey: storageRootOverrideKey) {
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: override, isDirectory: &isDirectory), isDirectory.boolValue {
+                base = URL(fileURLWithPath: override, isDirectory: true)
+            }
+        }
+        return base.appendingPathComponent("Notes", isDirectory: true)
     }
 
     // MARK: - Private

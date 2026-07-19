@@ -268,6 +268,28 @@ final class BundleImporterTests: XCTestCase {
         XCTAssertEqual(result.skippedCommands, 1)
     }
 
+    // MARK: - Command import: provenance
+
+    func testImportedCommandOriginIsImportedWithBundleNameAndInjectedDate() throws {
+        let bundle = makeBundleDir(named: "MyStuff.tmbundle")
+        try writeCommand(in: bundle, filename: "a.tmCommand", command: "echo hi", name: "A", input: nil, output: nil)
+        let fixedDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let result = try BundleImporter.importBundle(at: bundle, now: fixedDate)
+
+        let command = try XCTUnwrap(result.commands.first)
+        XCTAssertEqual(command.origin, .imported(bundleName: "MyStuff.tmbundle", date: fixedDate))
+    }
+
+    func testImportedCommandIsUntrusted() throws {
+        let bundle = makeBundleDir()
+        try writeCommand(in: bundle, filename: "a.tmCommand", command: "echo hi", name: "A", input: nil, output: nil)
+
+        let result = try BundleImporter.importBundle(at: bundle)
+
+        XCTAssertEqual(result.commands.first?.trusted, false)
+    }
+
     // MARK: - Bundle detection
 
     func testNonBundleDirectoryThrowsNotABundle() throws {

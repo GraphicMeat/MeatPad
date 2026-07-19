@@ -96,18 +96,23 @@ final class AppModel: ObservableObject {
             startingUpdater: startUpdater, updaterDelegate: nil, userDriverDelegate: nil
         )
 
+        // Resolved once so Notes + all five siblings agree even if defaultRoot() picks up
+        // a storage-root override mid-init (defaults reads are otherwise not atomic across
+        // the repeated calls this used to make).
+        let notesRoot = NoteStore.defaultRoot()
         do {
-            noteStore = try NoteStore(rootURL: NoteStore.defaultRoot())
+            noteStore = try NoteStore(rootURL: notesRoot)
         } catch {
-            fatalError("MeatPad couldn't set up its notes folder at \(NoteStore.defaultRoot().path): \(error)")
+            fatalError("MeatPad couldn't set up its notes folder at \(notesRoot.path): \(error)")
         }
-        let snippetsDir = NoteStore.defaultRoot().deletingLastPathComponent().appendingPathComponent("Snippets", isDirectory: true)
+        let base = notesRoot.deletingLastPathComponent()
+        let snippetsDir = base.appendingPathComponent("Snippets", isDirectory: true)
         snippetLibrary = SnippetLibrary(userDirectory: snippetsDir)
-        let commandsDir = NoteStore.defaultRoot().deletingLastPathComponent().appendingPathComponent("Commands", isDirectory: true)
+        let commandsDir = base.appendingPathComponent("Commands", isDirectory: true)
         commandStore = CommandStore(directory: commandsDir)
-        let macrosDir = NoteStore.defaultRoot().deletingLastPathComponent().appendingPathComponent("Macros", isDirectory: true)
+        let macrosDir = base.appendingPathComponent("Macros", isDirectory: true)
         macroStore = MacroStore(directory: macrosDir)
-        let themesDir = NoteStore.defaultRoot().deletingLastPathComponent().appendingPathComponent("Themes", isDirectory: true)
+        let themesDir = base.appendingPathComponent("Themes", isDirectory: true)
         let themeStore = ThemeStore(directory: themesDir)
         self.themeStore = themeStore
         let savedID = UserDefaults.standard.string(forKey: Self.themeDefaultsKey)

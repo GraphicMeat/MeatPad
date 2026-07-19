@@ -50,6 +50,37 @@ final class NoteStoreTests: XCTestCase {
         XCTAssertEqual(note.title, "New Note")
     }
 
+    // MARK: - defaultRoot / storage root override
+
+    /// Isolated suite, not `.standard` — never pollutes the real app's defaults.
+    private func makeDefaultsSuite() -> UserDefaults {
+        let suiteName = "NoteStoreTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        return defaults
+    }
+
+    func testDefaultRootIgnoresOverrideWhenKeyNotSet() {
+        let defaults = makeDefaultsSuite()
+        XCTAssertTrue(NoteStore.defaultRoot(defaults: defaults).path.hasSuffix("/MeatPad/Notes"))
+    }
+
+    func testDefaultRootIgnoresOverrideWhenDirectoryMissing() {
+        let defaults = makeDefaultsSuite()
+        defaults.set(tempDir.appendingPathComponent("does-not-exist").path, forKey: NoteStore.storageRootOverrideKey)
+        XCTAssertTrue(NoteStore.defaultRoot(defaults: defaults).path.hasSuffix("/MeatPad/Notes"))
+    }
+
+    func testDefaultRootHonorsOverrideWhenDirectoryExists() throws {
+        let defaults = makeDefaultsSuite()
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defaults.set(tempDir.path, forKey: NoteStore.storageRootOverrideKey)
+
+        let root = NoteStore.defaultRoot(defaults: defaults)
+
+        XCTAssertEqual(root, tempDir.appendingPathComponent("Notes", isDirectory: true))
+    }
+
     // MARK: - save
 
     func testSaveUpdatesContentsAndTitleFromFirstLine() throws {
