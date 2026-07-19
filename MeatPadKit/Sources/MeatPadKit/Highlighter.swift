@@ -1,5 +1,6 @@
 import Foundation
 import SwiftTreeSitter
+import SwiftTreeSitterLayer
 
 /// A single highlighted region: a UTF-16 `NSRange` plus its dotted tree-sitter
 /// capture name (e.g. "keyword.return", "string"), with any leading `@` stripped.
@@ -15,47 +16,59 @@ public struct HighlightSpan: Equatable, Sendable {
 
 /// Parses source text with a tree-sitter grammar and produces syntax-highlight spans.
 ///
-/// P1 is deliberately simple: `setText` does a full reparse and precomputes every
-/// span; `highlights(in:)` just filters the cached spans to the requested range.
-/// Incremental reparsing can come later behind the same API.
+/// Built on `LanguageLayer`, which resolves grammar injections (e.g. markdown's
+/// inline text, fenced code blocks) into nested sublayers automatically. A
+/// language with no injections behaves identically to a plain single-grammar
+/// parse — there is only this one code path.
 public final class Highlighter {
-    private let query: Query
-    private let parser = Parser()
+    /// Injection names arrive as grammar-native strings: markdown's injections.scm
+    /// requests "markdown_inline" directly, and fenced code blocks request whatever
+    /// the fence's info string says (often a short alias rather than our language id).
+    private static let injectionAliases: [String: String] = [
+        "js": "javascript",
+        "ts": "typescript",
+        "py": "python",
+        "c++": "cpp",
+        "sh": "bash",
+        "shell": "bash",
+    ]
 
-    private var spans: [HighlightSpan] = []
+    private static func resolveInjection(_ name: String) -> LanguageConfiguration? {
+        GrammarRegistry.configuration(for: injectionAliases[name] ?? name)
+    }
+
+    private let layer: LanguageLayer
+    private var text: String = ""
 
     /// Fails (returns nil) when no grammar is wired for `languageID`.
     public init?(languageID: String) {
         guard
             let config = GrammarRegistry.configuration(for: languageID),
-            let query = config.queries[.highlights]
+            config.queries[.highlights] != nil
         else { return nil }
 
-        self.query = query
-        try? parser.setLanguage(config.language)
+        let configuration = LanguageLayer.Configuration(
+            maximumLanguageDepth: 4,
+            languageProvider: Highlighter.resolveInjection
+        )
+        guard let layer = try? LanguageLayer(languageConfig: config, configuration: configuration) else {
+            return nil
+        }
+        self.layer = layer
     }
 
-    /// Full (re)parse. Precomputes all highlight spans for the new text.
+    /// Full (re)parse via a replace-all edit. Injections (e.g. markdown's inline
+    /// grammar, fenced code blocks) are resolved into sublayers as part of this call.
     public func setText(_ text: String) {
-        guard let tree = parser.parse(text) else {
-            spans = []
-            return
-        }
-
-        let cursor = query.execute(in: tree)
-        // Resolving applies query predicates (#eq?, #match?, …) so captures are
-        // classified the way the grammar intends. NamedRange.range is UTF-16.
-        let named = cursor.resolve(with: .init(string: text)).highlights()
-        spans = named.map {
-            HighlightSpan(range: $0.range, capture: stripAt($0.name))
-        }
+        self.text = text
+        layer.replaceContent(with: text)
     }
 
-    /// Spans intersecting `range`, in document order.
+    /// Spans intersecting `range`, in document order, across the layer and any
+    /// resolved sublayers.
     public func highlights(in range: NSRange) -> [HighlightSpan] {
-        // ponytail: linear scan over precomputed spans. Fine for P1's full-reparse
-        // model; swap for a sorted-range lookup if profiling says so.
-        spans.filter { NSIntersectionRange($0.range, range).length > 0 }
+        let named = (try? layer.highlights(in: range, provider: text.predicateTextProvider)) ?? []
+        return named.map { HighlightSpan(range: $0.range, capture: stripAt($0.name)) }
     }
 
     private func stripAt(_ name: String) -> String {

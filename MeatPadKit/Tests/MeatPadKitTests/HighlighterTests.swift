@@ -62,10 +62,10 @@ final class HighlighterTests: XCTestCase {
     }
 
     func testAllWiredLanguagesLoadGrammarAndQuery() {
-        // Every language in the registry except markdown (dropped for P1) must
-        // yield a working Highlighter — the bundle locator fails silently (nil),
-        // so this is the only signal for a broken registry entry.
-        for language in Languages.all where language.id != "markdown" {
+        // Every language in the registry must yield a working Highlighter — the
+        // bundle locator fails silently (nil), so this is the only signal for a
+        // broken registry entry.
+        for language in Languages.all {
             XCTAssertNotNil(Highlighter(languageID: language.id), "grammar failed to load for \(language.id)")
         }
     }
@@ -81,6 +81,36 @@ final class HighlighterTests: XCTestCase {
         XCTAssertFalse(keyword.isEmpty, "expected keyword span at UTF-16 offset 9 ('def'); got \(all)")
         XCTAssertTrue(keyword.contains { $0.range.location == 9 && $0.range.length == 3 },
                       "keyword span should be exactly {9,3} in UTF-16; got \(keyword)")
+    }
+
+    func testMarkdownHeadingHighlighted() throws {
+        let hl = try XCTUnwrap(Highlighter(languageID: "markdown"))
+        let text = "# Title"   // '#'=0 ' '=1 'T'=2
+        hl.setText(text)
+        let all = hl.highlights(in: NSRange(location: 0, length: (text as NSString).length))
+        let heading = spans(all, containing: "title", covering: 2)
+        XCTAssertFalse(heading.isEmpty, "expected a heading/title span covering \"Title\"; got \(all)")
+    }
+
+    func testMarkdownInlineEmphasisViaInjection() throws {
+        let hl = try XCTUnwrap(Highlighter(languageID: "markdown"))
+        let text = "*em* and `code`"   // '*'=0 'e'=1 'm'=2 ... '`'=10 'c'=11
+        hl.setText(text)
+        let all = hl.highlights(in: NSRange(location: 0, length: (text as NSString).length))
+        let emphasis = spans(all, containing: "emphasis", covering: 1)
+        XCTAssertFalse(emphasis.isEmpty, "expected an emphasis span covering \"em\" (proves markdown_inline was injected); got \(all)")
+        let code = spans(all, containing: "literal", covering: 11)
+        XCTAssertFalse(code.isEmpty, "expected a literal/code span covering \"code\"; got \(all)")
+    }
+
+    func testMarkdownFencedSwiftInjection() throws {
+        let hl = try XCTUnwrap(Highlighter(languageID: "markdown"))
+        let text = "```swift\nfunc f() {}\n```"
+        hl.setText(text)
+        let all = hl.highlights(in: NSRange(location: 0, length: (text as NSString).length))
+        let funcLocation = (text as NSString).range(of: "func").location
+        let keyword = spans(all, containing: "keyword", covering: funcLocation)
+        XCTAssertFalse(keyword.isEmpty, "expected a keyword span over 'func' inside the fenced swift block (proves fenced-code injection); got \(all)")
     }
 
     func testCaptureNamesHaveNoLeadingAt() throws {
