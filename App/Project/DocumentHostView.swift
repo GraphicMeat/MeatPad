@@ -67,6 +67,8 @@ private struct EditorPane: View {
             reveal: project.revealTarget,
             onRevealApplied: { project.revealConsumed($0) },
             snippetController: snippetController,
+            symbolIndex: project.symbolIndex,
+            currentFileURL: url,
             onCursorChange: { cursor = $0 }
         )
         .safeAreaInset(edge: .bottom, spacing: 0) {

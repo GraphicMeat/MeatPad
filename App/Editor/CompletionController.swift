@@ -12,6 +12,35 @@ struct WordCompletionItem: STCompletionItem {
     init(_ word: String) { self.id = word }
 }
 
+/// A snippet-trigger row (merge source 4): visually distinct from a plain word — trigger
+/// plus the snippet's name as a secondary hint, Xcode-completion style — so the user can
+/// tell accepting it will expand a template rather than insert a bare identifier.
+/// Accepting one runs `SnippetController.acceptCompletion`, the same expansion core
+/// `handleTab`/`insert` use.
+struct SnippetCompletionItem: STCompletionItem {
+    let id: String
+    let snippet: Snippet
+
+    init(_ snippet: Snippet) {
+        self.snippet = snippet
+        self.id = "snippet:\(snippet.id)"
+    }
+
+    var view: NSView {
+        let field = NSTextField(labelWithString: "")
+        let text = NSMutableAttributedString(
+            string: snippet.trigger,
+            attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]
+        )
+        text.append(NSAttributedString(
+            string: "  \(snippet.name)",
+            attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor]
+        ))
+        field.attributedStringValue = text
+        return field
+    }
+}
+
 /// STCompletionViewController (the popup's built-in list) leaves the table with nothing
 /// selected until the user presses an arrow key — so an immediate Return/Tab/click would do
 /// nothing — and only accepts on double-click. This subclass selects row 0 whenever the
@@ -78,17 +107,85 @@ final class WordCompletionViewController: STCompletionViewController {
 
     // MARK: STTextViewDelegate forwarding (called by CodeEditor.Coordinator)
 
-    func completionItems(textView: STTextView) -> [any STCompletionItem]? {
+    /// Total popup cap after merging all sources (unchanged from the pre-merge single-source
+    /// limit — sections share it in priority order below).
+    private static let cap = 20
+
+    /// Merges candidates in priority order — current document, project-wide identifiers,
+    /// language keywords, snippet triggers — sharing one 20-row cap. Dedup is first-source-wins
+    /// (a word already added by a higher-priority source is skipped by a later one); a candidate
+    /// equal to the typed prefix is always excluded, matching the pre-merge single-source rule.
+    /// `symbolIndex`/`currentFileURL` are `nil` for notes and other project-less surfaces, which
+    /// silently drops source 2 and leaves 1/3/4 exactly as they'd behave standalone.
+    func completionItems(
+        textView: STTextView,
+        languageID: String?,
+        symbolIndex: ProjectSymbolIndex?,
+        currentFileURL: URL?,
+        snippetController: SnippetController?
+    ) -> [any STCompletionItem]? {
         guard let (range, prefix) = wordRange(textView: textView) else { return nil }
         prefixRange = range
-        let words = WordCompleter.complete(prefix: prefix, in: textView.text ?? "", caretOffset: range.upperBound, limit: 20)
-        return words.map(WordCompletionItem.init)
+
+        var items: [any STCompletionItem] = []
+        var seen = Set<String>()
+
+        // Appends `word` as a plain completion row unless it's the typed prefix itself or a
+        // dup of an earlier source's candidate. Returns false once the cap is hit, so each
+        // source loop below can stop scanning as soon as there's no room left.
+        func addWord(_ word: String) -> Bool {
+            guard items.count < Self.cap else { return false }
+            if word != prefix, seen.insert(word).inserted {
+                items.append(WordCompletionItem(word))
+            }
+            return items.count < Self.cap
+        }
+
+        // 1. Current document — existing WordCompleter, caret-distance ranked.
+        for word in WordCompleter.complete(prefix: prefix, in: textView.text ?? "", caretOffset: range.upperBound, limit: Self.cap) {
+            if !addWord(word) { break }
+        }
+
+        // 2. Project-wide identifiers — frequency ranked, this file's solo contribution excluded
+        // (its own words are already covered by source 1).
+        if items.count < Self.cap, let symbolIndex {
+            for word in symbolIndex.complete(prefix: prefix, excludingFile: currentFileURL, limit: Self.cap - items.count) {
+                if !addWord(word) { break }
+            }
+        }
+
+        // 3. Language keywords — prefix-filtered case-insensitively (LanguageKeywords returns
+        // pre-sorted, deduped tables; empty for markup/data languages and unknown ids).
+        if items.count < Self.cap, let languageID {
+            let lowerPrefix = prefix.lowercased()
+            for word in LanguageKeywords.keywords(for: languageID) where word.lowercased().hasPrefix(lowerPrefix) {
+                if !addWord(word) { break }
+            }
+        }
+
+        // 4. Snippet triggers — language-scoped, rendered as a distinct row (see
+        // SnippetCompletionItem). Dedup shares the same `seen` set as the word sources so a
+        // trigger that collides with an already-listed word isn't shown twice.
+        if items.count < Self.cap, let snippetController {
+            for snippet in snippetController.completionCandidates(prefix: prefix, languageID: languageID) {
+                guard items.count < Self.cap else { break }
+                guard seen.insert(snippet.trigger).inserted else { continue }
+                items.append(SnippetCompletionItem(snippet))
+            }
+        }
+
+        return items.isEmpty ? nil : items
     }
 
-    func insertCompletionItem(_ item: any STCompletionItem, textView: STTextView) {
-        guard let word = (item as? WordCompletionItem)?.id, let range = prefixRange else { return }
-        textView.insertText(word, replacementRange: range)
+    func insertCompletionItem(_ item: any STCompletionItem, textView: STTextView, snippetController: SnippetController?) {
+        guard let range = prefixRange else { return }
         prefixRange = nil
+        if let snippetItem = item as? SnippetCompletionItem {
+            snippetController?.acceptCompletion(snippetItem.snippet, replacing: range, textView: textView)
+            return
+        }
+        guard let word = (item as? WordCompletionItem)?.id else { return }
+        textView.insertText(word, replacementRange: range)
     }
 
     // MARK: Trigger-word scan (same word-run rule as SnippetController.triggerMatch)

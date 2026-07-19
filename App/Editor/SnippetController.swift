@@ -172,6 +172,26 @@ final class SnippetController: ObservableObject {
         expand(snippet, replacing: textView.textSelection, textView: textView)
     }
 
+    // MARK: - Completion popup seam (CompletionController merge source 4)
+
+    /// Language-scoped snippet triggers usable as completion candidates: trigger
+    /// case-insensitively starts with `prefix`, excluding an exact match (that candidate
+    /// would just repeat what's already typed — same rule word sources use).
+    func completionCandidates(prefix: String, languageID: String?) -> [Snippet] {
+        guard !prefix.isEmpty else { return [] }
+        let lowerPrefix = prefix.lowercased()
+        return library.snippets(forLanguageID: languageID).filter {
+            $0.trigger.lowercased().hasPrefix(lowerPrefix) && $0.trigger != prefix
+        }
+    }
+
+    /// Accepts a snippet completion row: expands `snippet` in place of `range` (the
+    /// completion popup's prefix range) via the same expansion core `handleTab`/`insert`
+    /// use — one place turns a `Snippet` into buffer text and stop navigation.
+    func acceptCompletion(_ snippet: Snippet, replacing range: NSRange, textView: STTextView) {
+        expand(snippet, replacing: range, textView: textView)
+    }
+
     // MARK: - Expansion core
 
     private func expand(_ snippet: Snippet, replacing range: NSRange, textView: STTextView) {

@@ -33,6 +33,14 @@ struct CodeEditor: NSViewRepresentable {
     /// Snippet menu can reach it too); the Coordinator wires its text view and routes Tab /
     /// Shift+Tab / Esc and buffer edits into it. `nil` disables snippet handling entirely.
     var snippetController: SnippetController? = nil
+    /// Project-wide identifier index for Ctrl+Space completion (merge source 2). `nil` for
+    /// notes and other project-less surfaces — completion then falls back to document words +
+    /// keywords + snippets, unchanged from before the merge.
+    var symbolIndex: ProjectSymbolIndex? = nil
+    /// This editor's own file, so `symbolIndex.complete(excludingFile:)` can drop its solo
+    /// contribution (already covered by the current-document word source). `nil` alongside
+    /// `symbolIndex` for project-less surfaces.
+    var currentFileURL: URL? = nil
     var onCursorChange: (Int) -> Void
 
     /// SF Mono at the given point size.
@@ -377,11 +385,21 @@ struct CodeEditor: NSViewRepresentable {
         // MARK: STTextViewDelegate — Ctrl+Space completion (forwarded to CompletionController)
 
         nonisolated func textView(_ textView: STTextView, completionItemsAtLocation location: any NSTextLocation) -> [any STCompletionItem]? {
-            MainActor.assumeIsolated { completionController.completionItems(textView: textView) }
+            MainActor.assumeIsolated {
+                completionController.completionItems(
+                    textView: textView,
+                    languageID: parent.language?.id,
+                    symbolIndex: parent.symbolIndex,
+                    currentFileURL: parent.currentFileURL,
+                    snippetController: parent.snippetController
+                )
+            }
         }
 
         nonisolated func textView(_ textView: STTextView, insertCompletionItem item: any STCompletionItem) {
-            MainActor.assumeIsolated { completionController.insertCompletionItem(item, textView: textView) }
+            MainActor.assumeIsolated {
+                completionController.insertCompletionItem(item, textView: textView, snippetController: parent.snippetController)
+            }
         }
 
         nonisolated func textViewCompletionViewController(_ textView: STTextView) -> any STCompletionViewControllerProtocol {
