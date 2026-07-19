@@ -326,6 +326,18 @@ final class SnippetLibraryTests: XCTestCase {
         }
     }
 
+    func testMarkdownTableSkeletonAndTaskListItemResolveScopedToMarkdownOnly() {
+        let library = makeLibrary()
+
+        let table = library.snippet(trigger: "table", languageID: "markdown")
+        XCTAssertEqual(table?.languageIDs, ["markdown"])
+        XCTAssertNil(library.snippet(trigger: "table", languageID: "swift"))
+
+        let task = library.snippet(trigger: "task", languageID: "markdown")
+        XCTAssertEqual(task?.languageIDs, ["markdown"])
+        XCTAssertNil(library.snippet(trigger: "task", languageID: "swift"))
+    }
+
     func testBuiltinSnippetsHaveUniqueDeterministicIDs() {
         let ids = BuiltinSnippets.all.map(\.id)
         XCTAssertEqual(Set(ids).count, ids.count, "builtin IDs must be unique")

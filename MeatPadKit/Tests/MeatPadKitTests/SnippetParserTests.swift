@@ -116,4 +116,29 @@ final class SnippetParserTests: XCTestCase {
             XCTAssertEqual(error as? SnippetParseError, .invalidStop)
         }
     }
+
+    // MARK: - Markdown builtin bodies (table skeleton, task list item)
+
+    func testMarkdownTableSkeletonBodyParsesFourDistinctTabStopsPlusFinal() throws {
+        let body = BuiltinSnippets.all.first { $0.trigger == "table" && $0.languageIDs.contains("markdown") }!.body
+        let parsed = try SnippetParser.parse(body)
+        XCTAssertEqual(flattenedTabStopIndices(parsed.nodes), [1, 2, 3, 4, 0])
+    }
+
+    func testMarkdownTaskListItemBodyParsesSingleTabStopPlusFinal() throws {
+        let body = BuiltinSnippets.all.first { $0.trigger == "task" && $0.languageIDs.contains("markdown") }!.body
+        let parsed = try SnippetParser.parse(body)
+        XCTAssertEqual(flattenedTabStopIndices(parsed.nodes), [1, 0])
+    }
+
+    private func flattenedTabStopIndices(_ nodes: [SnippetNode]) -> [Int] {
+        nodes.flatMap { node -> [Int] in
+            switch node {
+            case .text:
+                return []
+            case .tabStop(let index, let placeholder):
+                return [index] + flattenedTabStopIndices(placeholder)
+            }
+        }
+    }
 }

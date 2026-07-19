@@ -129,5 +129,15 @@ public enum BuiltinSnippets {
             name: "Code block", trigger: "code", languageIDs: ["markdown"],
             body: "```$1\n$0\n```"
         ),
+        Snippet(
+            id: UUID(uuidString: "00000000-0000-4000-5555-000000000004")!,
+            name: "Table skeleton", trigger: "table", languageIDs: ["markdown"],
+            body: "| ${1:Header} | ${2:Header} |\n| --- | --- |\n| $3 | $4 |\n$0"
+        ),
+        Snippet(
+            id: UUID(uuidString: "00000000-0000-4000-5555-000000000005")!,
+            name: "Task list item", trigger: "task", languageIDs: ["markdown"],
+            body: "- [ ] ${1:task}$0"
+        ),
     ]
 }
