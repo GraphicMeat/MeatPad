@@ -79,6 +79,7 @@ final class SpyChannelFactory: LSPChannelFactory, @unchecked Sendable {
         let detected: DetectedServer
         let environment: [String: String]
         let onTerminate: @Sendable () -> Void
+        let forceTerminateCallCount: () -> Int
     }
 
     private let lock = NSLock()
@@ -92,12 +93,31 @@ final class SpyChannelFactory: LSPChannelFactory, @unchecked Sendable {
         detected: DetectedServer,
         environment: [String: String],
         onTerminate: @escaping @Sendable () -> Void
-    ) throws -> DataChannel {
+    ) throws -> (channel: DataChannel, forceTerminate: @Sendable () -> Void) {
+        // No real process behind this fake, so `forceTerminate` has nothing to kill — it just
+        // records that it was invoked, so tests can prove the timeout-fallback path runs.
+        let count = LockedCount()
+        let forceTerminate: @Sendable () -> Void = { count.increment() }
+
         lock.lock()
-        _calls.append(Call(detected: detected, environment: environment, onTerminate: onTerminate))
+        _calls.append(Call(detected: detected, environment: environment, onTerminate: onTerminate, forceTerminateCallCount: { count.value }))
         lock.unlock()
 
-        return DataChannel(writeHandler: { _ in }, dataSequence: AsyncStream { _ in })
+        return (DataChannel(writeHandler: { _ in }, dataSequence: AsyncStream { _ in }), forceTerminate)
+    }
+}
+
+/// Plain thread-safe counter — `NSLock`-backed, same pattern `SpyChannelFactory` already uses,
+/// just factored out so `forceTerminate` (which must be `@Sendable`) can mutate it.
+final class LockedCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value = 0
+    var value: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _value
+    }
+    func increment() {
+        lock.lock(); _value += 1; lock.unlock()
     }
 }
 
@@ -424,6 +444,23 @@ final class LSPProjectManagerTests: XCTestCase {
         XCTAssertNil(manager.server(for: "swift"))
     }
 
+    /// LSP-t3 process-leak fix: proves `shutdownAndWait`'s deadline is real, not vacuous.
+    /// `SpyChannelFactory`'s fake channel never yields any data, so the graceful shutdown's
+    /// `shutdown` request can never receive a reply and would hang forever if awaited directly
+    /// (see `shutdownThenForceTerminate`'s doc comment). If the deadline weren't wired
+    /// correctly, this test would hang and time out instead of completing quickly.
+    func testShutdownAndWaitForceTerminatesWhenGracefulShutdownNeverReplies() async {
+        let factory = SpyChannelFactory()
+        let manager = makeManager(detected: [makeDetected(["swift"], binaryName: "sourcekit-lsp")], factory: factory)
+        manager.documentOpened(url: tempDir.appendingPathComponent("a.swift"), languageID: "swift", text: "")
+        await waitUntil { !factory.calls.isEmpty }
+
+        await manager.shutdownAndWait(timeout: 0.2)
+
+        XCTAssertEqual(factory.calls.first?.forceTerminateCallCount(), 1, "must force-terminate once the deadline passes with no graceful reply")
+        XCTAssertNil(manager.server(for: "swift"))
+    }
+
     // MARK: - Live integration (real sourcekit-lsp, skips cleanly if unavailable)
 
     /// The one live test the plan calls for: a real `LSPProjectManager` (production
@@ -461,8 +498,12 @@ final class LSPProjectManagerTests: XCTestCase {
         let fileURL = sourceFile!
         let text = try String(contentsOf: fileURL, encoding: .utf8)
 
+        // Snapshot which sourcekit-lsp PIDs already exist (e.g. Xcode's own, or a leftover
+        // from a prior run) so we can isolate the one THIS test spawns, rather than asserting
+        // on the process count globally.
+        let pidsBeforeLaunch = Self.sourcekitLSPPIDs()
+
         let manager = LSPProjectManager(projectRoot: packageDir, detected: detected, userEnvironment: environment)
-        defer { manager.shutdown() }
 
         manager.documentOpened(url: fileURL, languageID: "swift", text: text)
 
@@ -472,5 +513,48 @@ final class LSPProjectManagerTests: XCTestCase {
         }
 
         XCTAssertEqual(manager.statusByLanguage["swift"], .running)
+
+        let spawnedPIDs = Self.sourcekitLSPPIDs().subtracting(pidsBeforeLaunch)
+        XCTAssertFalse(spawnedPIDs.isEmpty, "expected to identify the sourcekit-lsp process this test launched")
+
+        // `shutdownAndWait`, unlike `shutdown()`, is awaited fully before we check for a leak —
+        // `shutdown()`'s fire-and-forget Task could still be mid-flight (or never have gotten a
+        // chance to run at all) by the time the test process itself exits, which is exactly how
+        // this leak went unnoticed: the assertion below would have raced ahead of real shutdown.
+        await manager.shutdownAndWait()
+
+        // Poll briefly rather than asserting immediately: even after `shutdownAndWait` returns,
+        // the OS needs a moment to actually reap the killed/exited process.
+        var stillAlive = spawnedPIDs
+        let deadline = Date().addingTimeInterval(5)
+        while !stillAlive.isEmpty, Date() < deadline {
+            stillAlive = Self.sourcekitLSPPIDs().intersection(spawnedPIDs)
+            if !stillAlive.isEmpty {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+        XCTAssertTrue(stillAlive.isEmpty, "sourcekit-lsp process(es) \(stillAlive) leaked past shutdownAndWait")
+    }
+
+    /// PIDs of every currently-running `sourcekit-lsp` process, via `pgrep -f`. Used only by
+    /// the live integration test above to detect a leaked child process.
+    private static func sourcekitLSPPIDs() -> Set<Int32> {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        process.arguments = ["-f", "sourcekit-lsp"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            return []
+        }
+        process.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        return Set(output.split(separator: "\n").compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) })
     }
 }

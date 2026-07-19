@@ -68,11 +68,14 @@ enum LSPRootResolver {
 /// (that's what the live sourcekit-lsp integration test covers) — this seam only proves the
 /// manager's own state machine (lazy start, notInstalled, termination handling).
 protocol LSPChannelFactory: Sendable {
+    /// `forceTerminate`: a fallback the caller invokes if the graceful LSP shutdown+exit
+    /// round trip doesn't finish in time. No-op if the process already exited (or, for the
+    /// fake factory tests use, if there never was a real process).
     func makeChannel(
         detected: DetectedServer,
         environment: [String: String],
         onTerminate: @escaping @Sendable () -> Void
-    ) throws -> DataChannel
+    ) throws -> (channel: DataChannel, forceTerminate: @Sendable () -> Void)
 }
 
 struct LocalProcessChannelFactory: LSPChannelFactory {
@@ -80,13 +83,19 @@ struct LocalProcessChannelFactory: LSPChannelFactory {
         detected: DetectedServer,
         environment: [String: String],
         onTerminate: @escaping @Sendable () -> Void
-    ) throws -> DataChannel {
+    ) throws -> (channel: DataChannel, forceTerminate: @Sendable () -> Void) {
         let parameters = Process.ExecutionParameters(
             path: detected.binaryURL.path,
             arguments: detected.launchArguments,
             environment: environment
         )
-        return try DataChannel.localProcessChannel(parameters: parameters, terminationHandler: onTerminate)
+        // The (channel, process) overload — not the DataChannel-only one — is the only way to
+        // keep a handle on the spawned Process. Without it, the only way a server ever exits is
+        // if it *chooses* to on receiving the LSP `exit` notification; a server that ignores it
+        // (or a shutdown Task that never gets to run before this process exits) leaks forever
+        // with no way for us to reap it. LSP-t3.
+        let (channel, process) = try DataChannel.localProcessChannel(parameters: parameters, terminationHandler: onTerminate)
+        return (channel, { if process.isRunning { process.terminate() } })
     }
 }
 
@@ -115,6 +124,10 @@ public final class LSPProjectManager {
     /// this Task, none of them ever draining. Add a queue-depth cap / timeout if a hung server
     /// turns out to be a real-world occurrence worth guarding against.
     private var pendingWork: [String: Task<Void, Never>] = [:]
+    /// Per-language force-terminate fallback (SIGTERM via `Process.terminate()`), registered
+    /// once the channel factory actually spawns the process. Keyed alongside `servers` so
+    /// `shutdown`/`shutdownAndWait` can look up the right one per handle. See LSP-t3.
+    private var forceTerminators: [String: @Sendable () -> Void] = [:]
     /// Languages `didChangeConfiguration` has already been sent for — sent once per language,
     /// not resent on every `documentOpened`.
     ///
@@ -219,27 +232,98 @@ public final class LSPProjectManager {
     }
 
     public func shutdown() {
-        // Cancel every queued-but-not-yet-run notification BEFORE clearing `servers` below —
-        // otherwise a Task already holding a strong `handle` reference (captured directly in
-        // documentOpened/documentChanged/documentClosed, not looked up via `servers`) would
-        // still run after shutdown, find the handle in its lazy `.notStarted`/`.stopped` state,
-        // and spawn a brand-new subprocess nobody tracks or ever reaps. `enqueue` checks
-        // `Task.isCancelled` before invoking `operation`, so cancelling here is what actually
-        // stops that from happening.
-        for task in pendingWork.values {
-            task.cancel()
-        }
-        for handle in servers.values {
+        let (handles, terminators) = snapshotAndClearForShutdown()
+        for (languageID, handle) in handles {
+            let forceTerminate = terminators[languageID] ?? {}
             Task {
-                try? await handle.shutdownAndExit()
+                await Self.shutdownThenForceTerminate(handle: handle, forceTerminate: forceTerminate)
             }
         }
-        servers.removeAll()
-        openDocuments.removeAll()
-        pendingWork.removeAll()
+    }
+
+    /// Same effect as `shutdown()`, but awaits every server's graceful-shutdown-then-force-
+    /// terminate sequence before returning. `shutdown()` fires those the same way but doesn't
+    /// wait — fine for a synchronous app-quit callback, but useless for a test (or any caller)
+    /// that needs to know the underlying process is actually gone before it proceeds. LSP-t3.
+    public func shutdownAndWait(timeout: TimeInterval = 5) async {
+        let (handles, terminators) = snapshotAndClearForShutdown()
+        await withTaskGroup(of: Void.self) { group in
+            for (languageID, handle) in handles {
+                let forceTerminate = terminators[languageID] ?? {}
+                group.addTask {
+                    await Self.shutdownThenForceTerminate(handle: handle, forceTerminate: forceTerminate, timeout: timeout)
+                }
+            }
+        }
     }
 
     // MARK: - Private
+
+    /// Cancels every queued-but-not-yet-run notification and clears all bookkeeping, returning
+    /// what was live so the caller can drive the actual shutdown. Cancelling `pendingWork`
+    /// BEFORE clearing `servers` matters — otherwise a Task already holding a strong `handle`
+    /// reference (captured directly in documentOpened/documentChanged/documentClosed, not
+    /// looked up via `servers`) would still run after shutdown, find the handle in its lazy
+    /// `.notStarted`/`.stopped` state, and spawn a brand-new subprocess nobody tracks or ever
+    /// reaps. `enqueue` checks `Task.isCancelled` before invoking `operation`, so cancelling
+    /// here is what actually stops that from happening.
+    private func snapshotAndClearForShutdown() -> (handles: [String: LSPServerHandle], terminators: [String: @Sendable () -> Void]) {
+        for task in pendingWork.values {
+            task.cancel()
+        }
+        let handles = servers
+        let terminators = forceTerminators
+        servers.removeAll()
+        openDocuments.removeAll()
+        pendingWork.removeAll()
+        forceTerminators.removeAll()
+        return (handles, terminators)
+    }
+
+    private func registerForceTerminate(_ forceTerminate: @escaping @Sendable () -> Void, for languageID: String) {
+        forceTerminators[languageID] = forceTerminate
+    }
+
+    /// Sends the graceful LSP shutdown request + exit notification, racing it against
+    /// `timeout` so a server that never responds can't hang shutdown forever. Either way,
+    /// always finishes by calling `forceTerminate` — a no-op if the process already exited on
+    /// its own, a SIGTERM safety net if it's still alive. This is what actually reaps the
+    /// process; the graceful path alone depends on the server choosing to honor `exit`.
+    ///
+    /// The graceful attempt runs as its own detached `Task`, signaled back through an
+    /// `AsyncStream` rather than awaited directly — awaiting `handle.shutdownAndExit()`
+    /// in-line here would deadlock the deadline itself: its reply is awaited via a checked
+    /// continuation (`JSONRPCSession.sendDataRequest`) that outer cancellation does NOT
+    /// resolve, so if the server never responds, the direct await would hang forever no
+    /// matter what timeout wraps it. `AsyncStream.next()`, unlike `Task.value`, DOES return
+    /// promptly on cancellation, so racing it against `Task.sleep` below actually bounds by
+    /// `timeout`. If the server really is hung, `forceTerminate()` below kills the process,
+    /// which closes its pipe and fails the still-in-flight detached attempt on its own.
+    private static func shutdownThenForceTerminate(
+        handle: LSPServerHandle,
+        forceTerminate: @escaping @Sendable () -> Void,
+        timeout: TimeInterval = 5
+    ) async {
+        let (signal, continuation) = AsyncStream<Void>.makeStream()
+        Task {
+            try? await handle.shutdownAndExit()
+            continuation.yield(())
+            continuation.finish()
+        }
+
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                var iterator = signal.makeAsyncIterator()
+                _ = await iterator.next()
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            }
+            await group.next()
+            group.cancelAll()
+        }
+        forceTerminate()
+    }
 
     /// Chains `operation` after whatever's already queued for `languageID`, so open/change/
     /// close notifications for one language's server always run in call order — never
@@ -284,12 +368,18 @@ public final class LSPProjectManager {
         let environment = userEnvironment
         let factory = channelFactory
 
-        let serverProvider: LSPServerHandle.ServerProvider = {
-            let channel = try factory.makeChannel(detected: detected, environment: environment) {
+        let serverProvider: LSPServerHandle.ServerProvider = { [weak self] in
+            // Unwrap once up front (rather than `self?.` below) so the nested `Task`'s own
+            // `[weak self]` captures a non-optional `let`, not the optional `weak var` this
+            // closure's own capture produces — capturing that var from concurrently-executing
+            // code is a Swift 6 error, not just a style nit.
+            guard let self else { throw RestartingServerError.serverStopped }
+            let (channel, forceTerminate) = try factory.makeChannel(detected: detected, environment: environment) {
                 Task { @MainActor [weak self] in
                     await self?.handleTermination(languageID: languageID, displayName: detected.displayName)
                 }
             }
+            await self.registerForceTerminate(forceTerminate, for: languageID)
             return JSONRPCServerConnection(dataChannel: channel)
         }
 
