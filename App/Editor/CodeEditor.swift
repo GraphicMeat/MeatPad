@@ -95,6 +95,11 @@ struct CodeEditor: NSViewRepresentable {
         guard let textView = scrollView.documentView as? STTextView else { return }
         let coord = context.coordinator
         coord.parent = self
+        // Programmatic mutations below (setting text resets the caret) fire delegate
+        // callbacks synchronously; publishing those back into the view model here would
+        // be "Publishing changes from within view updates". Suppress the echo.
+        coord.isUpdatingView = true
+        defer { coord.isUpdatingView = false }
 
         if coord.languageID != language?.id {
             coord.rebuildHighlighter(languageID: language?.id)
@@ -118,6 +123,9 @@ struct CodeEditor: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, STTextViewDelegate {
         var parent: CodeEditor
+        /// True while `updateNSView` applies binding state to the view — delegate
+        /// callbacks fired by those programmatic mutations must not publish back.
+        var isUpdatingView = false
         weak var textView: STTextView?
         var lastRevealToken: UUID?
         private(set) var languageID: String?
@@ -306,7 +314,7 @@ struct CodeEditor: NSViewRepresentable {
 
         nonisolated func textViewDidChangeSelection(_ notification: Notification) {
             MainActor.assumeIsolated {
-                guard let textView else { return }
+                guard let textView, !isUpdatingView else { return }
                 parent.onCursorChange(textView.textSelection.location)
                 parent.snippetController?.caretDidMove(to: textView.textSelection.location)
                 completionController.syncPopup(textView: textView)
