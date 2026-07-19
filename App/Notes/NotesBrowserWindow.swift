@@ -175,7 +175,7 @@ struct NotesBrowserWindow: View {
                     .foregroundStyle(MeatPadGlass.tint.gradient)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(note.title).lineLimit(1)
-                    Text(note.modified, style: .relative)
+                    RelativeTimeText(date: note.modified)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

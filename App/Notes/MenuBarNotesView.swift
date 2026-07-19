@@ -57,7 +57,7 @@ struct MenuBarNotesView: View {
                                     .foregroundStyle(MeatPadGlass.tint.gradient)
                                 Text(note.title).lineLimit(1)
                                 Spacer()
-                                Text(note.modified, style: .relative)
+                                RelativeTimeText(date: note.modified)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
