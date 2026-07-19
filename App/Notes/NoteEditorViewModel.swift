@@ -22,7 +22,7 @@ final class NoteEditorViewModel: ObservableObject {
     private let store: NoteStore
     private let debouncer = Debouncer(delay: 1)
     private let frameDebouncer = Debouncer(delay: 0.5)
-    private var cursor: Int = 0
+    @Published private(set) var cursor: Int = 0
     private var loaded = false
     private var windowObservers: [NSObjectProtocol] = []
 

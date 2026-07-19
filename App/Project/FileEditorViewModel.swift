@@ -12,9 +12,16 @@ final class FileEditorViewModel: ObservableObject {
     let document: FileDocumentModel
     /// Detected once from filename + initial contents. Files have a real name/extension,
     /// so unlike notes there's no need to re-sniff on every keystroke.
-    let language: Language?
+    private let detectedLanguage: Language?
+    /// Session-only manual override from the status bar; not persisted.
+    @Published var languageOverride: String?
 
     private var cancellable: AnyCancellable?
+
+    var language: Language? {
+        if let languageOverride { return Languages.byID(languageOverride) }
+        return detectedLanguage
+    }
 
     /// Two-way mirror of `document.editedContents`. Reading/writing goes straight through
     /// so there's a single source of truth; the `objectWillChange` re-broadcast below
@@ -29,7 +36,7 @@ final class FileEditorViewModel: ObservableObject {
 
     init(document: FileDocumentModel) {
         self.document = document
-        self.language = LanguageDetector.detect(
+        self.detectedLanguage = LanguageDetector.detect(
             filename: document.url.lastPathComponent, contents: document.contents
         )
         // FileDocumentModel is its own ObservableObject; re-emit its changes as ours so

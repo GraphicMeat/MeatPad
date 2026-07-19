@@ -37,6 +37,15 @@ struct NoteWindow: View {
                     snippetController: snippetController,
                     onCursorChange: viewModel.cursorDidChange
                 )
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    EditorStatusBar(
+                        text: viewModel.text,
+                        cursor: viewModel.cursor,
+                        languageOverride: viewModel.languageOverride,
+                        language: viewModel.language,
+                        onSelectLanguage: viewModel.setLanguage
+                    )
+                }
             } else {
                 Text("This note was deleted.")
                     .foregroundStyle(.secondary)

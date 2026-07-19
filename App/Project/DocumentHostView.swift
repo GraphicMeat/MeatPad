@@ -55,6 +55,7 @@ private struct EditorPane: View {
     @ObservedObject var project: ProjectViewModel
     @ObservedObject private var appModel = AppModel.shared
     @StateObject private var snippetController = SnippetController(library: AppModel.shared.snippetLibrary)
+    @State private var cursor = 0
 
     var body: some View {
         CodeEditor(
@@ -66,8 +67,17 @@ private struct EditorPane: View {
             reveal: project.revealTarget,
             onRevealApplied: { project.revealConsumed($0) },
             snippetController: snippetController,
-            onCursorChange: { _ in }
+            onCursorChange: { cursor = $0 }
         )
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            EditorStatusBar(
+                text: editor.text,
+                cursor: cursor,
+                languageOverride: editor.languageOverride,
+                language: editor.language,
+                onSelectLanguage: { editor.languageOverride = $0 }
+            )
+        }
         .overlay(alignment: .top) { banner }
         .focusedSceneValue(\.snippetInsertion, SnippetInsertion(languageID: editor.language?.id, insert: { snippetController.insert($0) }))
         .focusedSceneValue(\.editorCommandContext, EditorCommandContext.make(
