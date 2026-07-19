@@ -116,4 +116,32 @@ final class NoteSearchTests: XCTestCase {
         XCTAssertEqual(results.map(\.noteID), [a.id, b.id])
         XCTAssertTrue(results.allSatisfy { $0.excerpt.isEmpty && $0.rangeInExcerpt == nil && $0.rangeInContents == nil })
     }
+
+    func testTitleAndContentMatchCarriesContentAnchoredExcerpt() {
+        let index = NoteSearchIndex()
+        let n = note("Grocery items")
+        let contents = "Some random filler text\nbuying GROCERY supplies at the store"
+        index.update(id: n.id, contents: contents)
+
+        let results = index.search("grocery", notes: [n])
+
+        XCTAssertEqual(results.count, 1)
+        let match = results[0]
+        XCTAssertTrue(match.isTitleMatch, "title contains 'Grocery'")
+
+        // rangeInContents must point to the hit in the full content (case-insensitive match)
+        let ns = contents as NSString
+        let expectedContentsRange = ns.range(of: "grocery", options: .caseInsensitive, range: NSRange(location: 0, length: ns.length), locale: Locale.current)
+        XCTAssertNotEqual(expectedContentsRange.location, NSNotFound, "sanity check: query exists in content")
+        XCTAssertEqual(match.rangeInContents, expectedContentsRange, "rangeInContents must locate the first content hit")
+
+        // excerpt must be non-empty and contain the hit
+        XCTAssertFalse(match.excerpt.isEmpty, "excerpt must not be empty when content hit exists")
+
+        // rangeInExcerpt must extract the needle correctly from excerpt
+        let rangeInExcerpt = try! XCTUnwrap(match.rangeInExcerpt, "rangeInExcerpt must be non-nil when content hit exists")
+        let excerptNS = match.excerpt as NSString
+        let hitInExcerpt = excerptNS.substring(with: rangeInExcerpt)
+        XCTAssertEqual(hitInExcerpt.lowercased(), "grocery", "rangeInExcerpt must extract the actual needle from excerpt")
+    }
 }
