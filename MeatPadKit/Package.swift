@@ -31,6 +31,7 @@ let package = Package(
         // Pinned to an immutable commit of that branch so `swift package update`
         // can't re-resolve it and a force-push/branch-delete can't break us.
         .package(url: "https://github.com/alex-pinkus/tree-sitter-swift", revision: "31d17fe7e818a2048c808b5c6fdc2dc792f4f5b5"),
+        .package(url: "https://github.com/ChimeHQ/LanguageClient", from: "0.8.0"),
     ],
     targets: [
         .target(
@@ -55,6 +56,7 @@ let package = Package(
                 .product(name: "TreeSitterSwift", package: "tree-sitter-swift"),
                 // TreeSitterMarkdown product bundles both the block and inline modules.
                 .product(name: "TreeSitterMarkdown", package: "tree-sitter-markdown"),
+                .product(name: "LanguageClient", package: "LanguageClient"),
             ]
         ),
         .testTarget(name: "MeatPadKitTests", dependencies: ["MeatPadKit"]),
