@@ -41,14 +41,20 @@ final class ProjectViewModel: ObservableObject {
     // tears down the FSEventStream directly when this VM (and its last strong
     // reference to the watcher) goes away.
     private var watcher: DirectoryWatcher?
+    /// The in-flight full scan kicked off by `rescan()`. Cancelled and replaced on every
+    /// call so a burst of FS events can't pile up redundant scans.
+    private var scanTask: Task<Void, Never>?
 
     init(root: URL) {
         self.root = root
-        self.tree = ProjectScanner.scan(root: root)
+        // Shows the window instantly with just the top level, then `rescan()` below
+        // fills in the full tree off the main thread — opening a big repo no longer
+        // blocks the window from appearing.
+        self.tree = ProjectScanner.scanShallow(root: root)
         self.watcher = DirectoryWatcher(root: root) { [weak self] in
-            guard let self else { return }
-            self.tree = ProjectScanner.scan(root: self.root)
+            self?.rescan()
         }
+        rescan()
         // Session restore: AppModel stashed this root's saved tabs/selection keyed by
         // standardized URL just before calling openWindow. Consume once; drop tabs for
         // files that vanished since the session was saved, falling back to the first
@@ -68,6 +74,22 @@ final class ProjectViewModel: ObservableObject {
             tabs = [pending]
             selectedTab = pending
             AppModel.shared.pendingFileOpen = nil
+        }
+    }
+
+    /// Runs a full recursive scan off the main actor and swaps it in when done. Cancels
+    /// any scan already in flight first, so the watcher firing repeatedly during a big
+    /// FS change (e.g. a git checkout) doesn't queue up redundant work.
+    func rescan() {
+        scanTask?.cancel()
+        let root = root
+        scanTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let scanned = ProjectScanner.scan(root: root)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { [weak self] in
+                guard let self, !Task.isCancelled else { return }
+                self.tree = scanned
+            }
         }
     }
 

@@ -146,6 +146,22 @@ final class ProjectTreeTests: XCTestCase {
         XCTAssertEqual(files, [])
     }
 
+    // MARK: - scanShallow
+
+    func testScanShallowListsTopLevelWithoutRecursingAndMatchesScanOrdering() throws {
+        let sub = try makeDir("sub")
+        try makeFile("inner.txt", in: sub)
+        try makeFile("outer.txt")
+
+        let shallow = ProjectScanner.scanShallow(root: tempDir)
+        let full = ProjectScanner.scan(root: tempDir)
+
+        XCTAssertEqual(shallow.children?.map(\.name), ["sub", "outer.txt"])
+        XCTAssertEqual(shallow.children?.first(where: { $0.name == "sub" })?.children, [])
+        XCTAssertEqual(full.children?.map(\.name), shallow.children?.map(\.name))
+        XCTAssertEqual(full.children?.first(where: { $0.name == "sub" })?.children?.map(\.name), ["inner.txt"])
+    }
+
     // MARK: - TreeNode identity
 
     func testTreeNodeIDIsURL() throws {

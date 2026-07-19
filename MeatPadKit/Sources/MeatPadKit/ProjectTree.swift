@@ -1,8 +1,9 @@
 import Foundation
 
 /// One entry in a scanned project tree. `children == nil` means "not a directory";
-/// directories always have a (possibly empty) array — the scan is eager (P2 scale is
-/// fine — ponytail: lazy-load subtrees if huge repos ever make the eager scan jank).
+/// directories always have a (possibly empty) array. `scan` fills it in eagerly and
+/// recursively; `scanShallow` only fills the top level and leaves subdirectories at
+/// `[]` as a disclosure-triangle placeholder until a full `scan` swaps in.
 public struct TreeNode: Identifiable, Equatable, Sendable {
     public let url: URL
     public var id: URL { url }
@@ -24,7 +25,20 @@ public enum ProjectScanner {
             url: root,
             name: root.lastPathComponent,
             isDirectory: true,
-            children: children(of: root, showHidden: showHidden)
+            children: children(of: root, showHidden: showHidden, recursive: true)
+        )
+    }
+
+    /// Lists only `root`'s immediate entries — subdirectories get `children: []` rather
+    /// than being walked. Lets callers render a window instantly, then swap in a full
+    /// `scan` once it's ready. Goes through the same `children(of:)` sort path as `scan`
+    /// so rows don't reorder when that swap happens.
+    public static func scanShallow(root: URL, showHidden: Bool = false) -> TreeNode {
+        TreeNode(
+            url: root,
+            name: root.lastPathComponent,
+            isDirectory: true,
+            children: children(of: root, showHidden: showHidden, recursive: false)
         )
     }
 
@@ -42,7 +56,7 @@ public enum ProjectScanner {
         return result
     }
 
-    private static func children(of directory: URL, showHidden: Bool) -> [TreeNode] {
+    private static func children(of directory: URL, showHidden: Bool, recursive: Bool) -> [TreeNode] {
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey]
@@ -60,7 +74,8 @@ public enum ProjectScanner {
             let isDir = isSymlink ? false : ((try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false)
 
             if isDir {
-                dirs.append(TreeNode(url: url, name: name, isDirectory: true, children: children(of: url, showHidden: showHidden)))
+                let subChildren = recursive ? children(of: url, showHidden: showHidden, recursive: true) : []
+                dirs.append(TreeNode(url: url, name: name, isDirectory: true, children: subChildren))
             } else {
                 files.append(TreeNode(url: url, name: name, isDirectory: false, children: nil))
             }
