@@ -21,6 +21,7 @@ struct MeatPadApp: App {
             if let noteID {
                 NoteWindow(noteID: noteID)
                     .environmentObject(AppModel.shared)
+                    .keyboardFocusRingOnly()
             }
         }
         .commands {
@@ -30,6 +31,8 @@ struct MeatPadApp: App {
                     .keyboardShortcut("n", modifiers: .command)
                 Button("Open…") { openProjectPanel() }
                     .keyboardShortcut("o", modifiers: .command)
+                Button("All Notes") { openWindow(id: "all-notes") }
+                    .keyboardShortcut("l", modifiers: [.command, .shift])
                 OpenRecentCommands(openProject: openProject)
             }
             // Replacing .saveItem removes the system Close (Cmd+W) along with Save et al,
@@ -72,23 +75,27 @@ struct MeatPadApp: App {
         WindowGroup("Project", for: URL.self) { $folderURL in
             if let folderURL {
                 ProjectWindow(root: folderURL)
+                    .keyboardFocusRingOnly()
             }
         }
 
         Window("All Notes", id: "all-notes") {
             NotesBrowserWindow()
                 .environmentObject(AppModel.shared)
+                .keyboardFocusRingOnly()
         }
 
         MenuBarExtra("MeatPad", systemImage: "note.text") {
             MenuBarNotesView()
                 .environmentObject(AppModel.shared)
+                .keyboardFocusRingOnly()
         }
         .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView()
                 .environmentObject(AppModel.shared)
+                .keyboardFocusRingOnly()
         }
     }
 

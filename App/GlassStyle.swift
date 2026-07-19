@@ -62,6 +62,16 @@ extension View {
     }
 }
 
+extension View {
+    /// SwiftUI draws a blue focus ring on plain/borderless controls even when the user
+    /// never navigates by keyboard. Show focus rings only when Full Keyboard Access is on.
+    // ponytail: setting is read per scene build, not observed — toggling Full Keyboard
+    // Access mid-run needs new windows to take effect.
+    func keyboardFocusRingOnly() -> some View {
+        focusEffectDisabled(!NSApplication.shared.isFullKeyboardAccessEnabled)
+    }
+}
+
 struct GlassIconButtonStyle: ButtonStyle {
     var selected = false
 
