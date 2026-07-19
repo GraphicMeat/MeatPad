@@ -12,8 +12,11 @@ public struct Note: Identifiable, Equatable, Sendable, Codable {
     // NSStringFromRect(window.frame); nil = never positioned (legacy sidecars decode
     // fine — synthesized Codable treats a missing key on an optional as nil).
     public var windowFrame: String?
+    // User folder name; nil = the implicit default "Notes" folder. Same legacy-decode
+    // story as windowFrame.
+    public var folder: String?
 
-    public init(id: UUID, languageID: String?, created: Date, modified: Date, cursor: Int, title: String, windowFrame: String? = nil) {
+    public init(id: UUID, languageID: String?, created: Date, modified: Date, cursor: Int, title: String, windowFrame: String? = nil, folder: String? = nil) {
         self.id = id
         self.languageID = languageID
         self.created = created
@@ -21,6 +24,7 @@ public struct Note: Identifiable, Equatable, Sendable, Codable {
         self.cursor = cursor
         self.title = title
         self.windowFrame = windowFrame
+        self.folder = folder
     }
 }
 

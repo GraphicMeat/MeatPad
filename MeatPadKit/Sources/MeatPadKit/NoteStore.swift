@@ -2,6 +2,9 @@ import Foundation
 
 public enum NoteStoreError: Error, Equatable {
     case notFound(UUID)
+    case folderExists(String)
+    case folderNotFound(String)
+    case invalidFolderName
 }
 
 /// Owns the on-disk collection of notes: one `<uuid>.txt` (contents) + `<uuid>.json`
@@ -13,6 +16,10 @@ public final class NoteStore: ObservableObject {
 
     /// Sorted by `modified`, most recent first.
     @Published public private(set) var notes: [Note] = []
+
+    /// User-created folders in creation order. The default "Notes" folder is implicit
+    /// and never appears here.
+    @Published public private(set) var folders: [String] = []
 
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -33,11 +40,12 @@ public final class NoteStore: ObservableObject {
         try fm.createDirectory(at: rootURL, withIntermediateDirectories: true)
         try fm.createDirectory(at: trashURL, withIntermediateDirectories: true)
         notes = try Self.loadNotes(from: rootURL)
+        folders = Self.loadFolders(from: foldersURL)
     }
 
-    public func createNote() throws -> Note {
+    public func createNote(in folder: String? = nil) throws -> Note {
         let now = Date()
-        let note = Note(id: UUID(), languageID: nil, created: now, modified: now, cursor: 0, title: "New Note")
+        let note = Note(id: UUID(), languageID: nil, created: now, modified: now, cursor: 0, title: "New Note", folder: folder)
         try write(contents: "", note: note)
         notes.append(note)
         resort()
@@ -83,6 +91,78 @@ public final class NoteStore: ObservableObject {
             try fm.moveItem(at: url, to: trashURL.appendingPathComponent(url.lastPathComponent))
         }
         notes.removeAll { $0.id == id }
+    }
+
+    // MARK: - Folders
+
+    public func createFolder(_ name: String) throws {
+        let trimmed = try validated(name)
+        guard !folders.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            throw NoteStoreError.folderExists(name)
+        }
+        folders.append(trimmed)
+        try saveFolders()
+    }
+
+    public func renameFolder(_ old: String, to new: String) throws {
+        guard let idx = folders.firstIndex(of: old) else { throw NoteStoreError.folderNotFound(old) }
+        let trimmed = try validated(new)
+        // Uniqueness against every OTHER folder — case-change rename of itself is legal.
+        guard !folders.enumerated().contains(where: { $0.offset != idx && $0.element.caseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            throw NoteStoreError.folderExists(new)
+        }
+        folders[idx] = trimmed
+        try saveFolders()
+        // Rewrite member sidecars; keep going on individual failures, surface the first
+        // at the end (per-note sidecars are the source of truth, reload stays consistent).
+        var firstError: Error?
+        for var note in notes where note.folder == old {
+            note.folder = trimmed
+            do {
+                try writeSidecar(note)
+                if let i = notes.firstIndex(where: { $0.id == note.id }) { notes[i] = note }
+            } catch {
+                if firstError == nil { firstError = error }
+            }
+        }
+        if let firstError { throw firstError }
+    }
+
+    public func deleteFolder(_ name: String) throws {
+        guard folders.contains(name) else { throw NoteStoreError.folderNotFound(name) }
+        var firstError: Error?
+        for id in notes.filter({ $0.folder == name }).map(\.id) {
+            do { try trash(id: id) } catch { if firstError == nil { firstError = error } }
+        }
+        folders.removeAll { $0 == name }
+        try saveFolders()
+        if let firstError { throw firstError }
+    }
+
+    /// Trims, rejects empty and the reserved default-folder name.
+    private func validated(_ name: String) throws -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.caseInsensitiveCompare("Notes") != .orderedSame else {
+            throw NoteStoreError.invalidFolderName
+        }
+        return trimmed
+    }
+
+    private var foldersURL: URL {
+        rootURL.appendingPathComponent("folders.json")
+    }
+
+    /// Self-healing: missing or corrupt folders.json = no user folders. Notes referencing
+    /// unknown folders keep their sidecar `folder` value (a restored file re-adopts them);
+    /// the UI treats them as default-folder.
+    private static func loadFolders(from url: URL) -> [String] {
+        guard let data = try? Data(contentsOf: url),
+              let names = try? decoder.decode([String].self, from: data) else { return [] }
+        return names
+    }
+
+    private func saveFolders() throws {
+        try Self.encoder.encode(folders).write(to: foldersURL, options: .atomic)
     }
 
     public static func defaultRoot() -> URL {

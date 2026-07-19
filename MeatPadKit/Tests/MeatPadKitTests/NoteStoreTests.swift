@@ -267,4 +267,100 @@ final class NoteStoreTests: XCTestCase {
         let root = NoteStore.defaultRoot()
         XCTAssertTrue(root.path.hasSuffix("Application Support/MeatPad/Notes"))
     }
+
+    // MARK: - Folders
+
+    func testFoldersEmptyOnFreshStore() throws {
+        let store = try makeStore()
+        XCTAssertEqual(store.folders, [])
+    }
+
+    func testCreateFolderPersistsAcrossReload() throws {
+        let store = try makeStore()
+        try store.createFolder("Work")
+        try store.createFolder("Recipes")
+        XCTAssertEqual(store.folders, ["Work", "Recipes"])
+        let reloaded = try makeStore()
+        XCTAssertEqual(reloaded.folders, ["Work", "Recipes"])
+    }
+
+    func testCreateFolderTrimsAndRejectsEmpty() throws {
+        let store = try makeStore()
+        try store.createFolder("  Work  ")
+        XCTAssertEqual(store.folders, ["Work"])
+        XCTAssertThrowsError(try store.createFolder("   ")) { error in
+            XCTAssertEqual(error as? NoteStoreError, .invalidFolderName)
+        }
+    }
+
+    func testCreateFolderRejectsCaseInsensitiveDuplicateAndReservedName() throws {
+        let store = try makeStore()
+        try store.createFolder("Work")
+        XCTAssertThrowsError(try store.createFolder("work")) { error in
+            XCTAssertEqual(error as? NoteStoreError, .folderExists("work"))
+        }
+        XCTAssertThrowsError(try store.createFolder("notes")) { error in
+            XCTAssertEqual(error as? NoteStoreError, .invalidFolderName)
+        }
+    }
+
+    func testRenameFolderRewritesMemberSidecars() throws {
+        let store = try makeStore()
+        try store.createFolder("Work")
+        let member = try store.createNote(in: "Work")
+        let outsider = try store.createNote()
+        try store.renameFolder("Work", to: "Job")
+        XCTAssertEqual(store.folders, ["Job"])
+        XCTAssertEqual(store.notes.first(where: { $0.id == member.id })?.folder, "Job")
+        XCTAssertNil(store.notes.first(where: { $0.id == outsider.id })?.folder)
+        // Persisted, not just in-memory:
+        let reloaded = try makeStore()
+        XCTAssertEqual(reloaded.notes.first(where: { $0.id == member.id })?.folder, "Job")
+    }
+
+    func testRenameFolderUnknownThrows() throws {
+        let store = try makeStore()
+        XCTAssertThrowsError(try store.renameFolder("Nope", to: "X")) { error in
+            XCTAssertEqual(error as? NoteStoreError, .folderNotFound("Nope"))
+        }
+    }
+
+    func testRenameFolderAllowsCaseChangeOfItself() throws {
+        let store = try makeStore()
+        try store.createFolder("work")
+        try store.renameFolder("work", to: "Work")
+        XCTAssertEqual(store.folders, ["Work"])
+    }
+
+    func testDeleteFolderTrashesMembersAndKeepsOthers() throws {
+        let store = try makeStore()
+        try store.createFolder("Work")
+        let member = try store.createNote(in: "Work")
+        let outsider = try store.createNote()
+        try store.deleteFolder("Work")
+        XCTAssertEqual(store.folders, [])
+        XCTAssertNil(store.notes.first(where: { $0.id == member.id }))
+        XCTAssertNotNil(store.notes.first(where: { $0.id == outsider.id }))
+        let trashed = tempDir.appendingPathComponent(".trash").appendingPathComponent("\(member.id.uuidString).txt")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trashed.path))
+    }
+
+    func testCorruptFoldersFileSelfHealsToEmpty() throws {
+        _ = try makeStore()
+        try Data("not json".utf8).write(to: tempDir.appendingPathComponent("folders.json"))
+        let store = try makeStore()
+        XCTAssertEqual(store.folders, [])
+    }
+
+    func testLegacySidecarWithoutFolderKeyDecodesToNilFolder() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+        // Strip the folder key by rewriting the sidecar from legacy-shaped JSON.
+        let url = tempDir.appendingPathComponent("\(note.id.uuidString).json")
+        var object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+        object.removeValue(forKey: "folder")
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        let reloaded = try makeStore()
+        XCTAssertNil(reloaded.notes.first(where: { $0.id == note.id })?.folder)
+    }
 }
