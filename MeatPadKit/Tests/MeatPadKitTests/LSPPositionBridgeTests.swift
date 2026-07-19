@@ -47,6 +47,28 @@ final class LSPPositionBridgeTests: XCTestCase {
         XCTAssertNil(LSPPositionBridge.offset(of: Position(line: 1, character: 3), in: text))
     }
 
+    // MARK: - Surrogate-pair clamping — mid-pair offsets clamp to the pair's start
+
+    func testOffsetMidSurrogatePairClampsToPairStart() {
+        // "😀x": character 1 lands between the emoji's two UTF-16 units; clamp to 0.
+        XCTAssertEqual(LSPPositionBridge.offset(of: Position(line: 0, character: 1), in: "😀x"), 0)
+        // character 0 (pair start) and character 2 (past the pair) are untouched.
+        XCTAssertEqual(LSPPositionBridge.offset(of: Position(line: 0, character: 0), in: "😀x"), 0)
+        XCTAssertEqual(LSPPositionBridge.offset(of: Position(line: 0, character: 2), in: "😀x"), 2)
+    }
+
+    func testPositionMidSurrogatePairClampsToPairStart() {
+        // Offset 1 is mid-pair in "😀x"; clamp lands back at the pair's start, (0, 0).
+        XCTAssertEqual(LSPPositionBridge.position(of: 1, in: "😀x"), Position(line: 0, character: 0))
+    }
+
+    func testNSRangeStraddlingSurrogatePairsClampsBothEnds() {
+        // "😀😀": 4 UTF-16 units (pair, pair). character 1 and 3 each split a pair.
+        let range = LSPRange(start: Position(line: 0, character: 1), end: Position(line: 0, character: 3))
+        // start clamps 1 -> 0 (first pair's start); end clamps 3 -> 2 (second pair's start).
+        XCTAssertEqual(LSPPositionBridge.nsRange(of: range, in: "😀😀"), NSRange(location: 0, length: 2))
+    }
+
     // MARK: - CRLF handling — "\n" is the only line separator
 
     func testCRLFTreatsCarriageReturnAsOrdinaryUnitOnThePrecedingLine() {
@@ -91,12 +113,18 @@ final class LSPPositionBridgeTests: XCTestCase {
 
     func testPositionRoundTripsWithOffsetForEmojiAndCJK() {
         let text = "😀\n中文"
+        let units = Array(text.utf16)
         for offset in 0...text.utf16.count {
             guard let pos = LSPPositionBridge.position(of: offset, in: text) else {
                 XCTFail("expected a position for offset \(offset)")
                 continue
             }
-            XCTAssertEqual(LSPPositionBridge.offset(of: pos, in: text), offset)
+            // Every offset round-trips exactly, except one that splits the emoji's surrogate
+            // pair (offset 1): that clamps back to the pair's start (offset 0) on the way in.
+            let isMidPair = offset > 0 && offset < units.count
+                && (0xDC00...0xDFFF).contains(units[offset])
+                && (0xD800...0xDBFF).contains(units[offset - 1])
+            XCTAssertEqual(LSPPositionBridge.offset(of: pos, in: text), isMidPair ? offset - 1 : offset)
         }
     }
 
