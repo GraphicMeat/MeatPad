@@ -98,21 +98,26 @@ public final class NoteStore: ObservableObject {
     public func createFolder(_ name: String) throws {
         let trimmed = try validated(name)
         guard !folders.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) else {
-            throw NoteStoreError.folderExists(name)
+            throw NoteStoreError.folderExists(trimmed)
         }
-        folders.append(trimmed)
-        try saveFolders()
+        let updated = folders + [trimmed]
+        try saveFolders(updated)
+        folders = updated
     }
 
+    /// `old` is matched exact (not case-insensitive) by design — callers pass names
+    /// straight from `folders`, so exact match is always correct here.
     public func renameFolder(_ old: String, to new: String) throws {
         guard let idx = folders.firstIndex(of: old) else { throw NoteStoreError.folderNotFound(old) }
         let trimmed = try validated(new)
         // Uniqueness against every OTHER folder — case-change rename of itself is legal.
         guard !folders.enumerated().contains(where: { $0.offset != idx && $0.element.caseInsensitiveCompare(trimmed) == .orderedSame }) else {
-            throw NoteStoreError.folderExists(new)
+            throw NoteStoreError.folderExists(trimmed)
         }
-        folders[idx] = trimmed
-        try saveFolders()
+        var updated = folders
+        updated[idx] = trimmed
+        try saveFolders(updated)
+        folders = updated
         // Rewrite member sidecars; keep going on individual failures, surface the first
         // at the end (per-note sidecars are the source of truth, reload stays consistent).
         var firstError: Error?
@@ -128,14 +133,17 @@ public final class NoteStore: ObservableObject {
         if let firstError { throw firstError }
     }
 
+    /// `name` is matched exact (not case-insensitive) by design — callers pass names
+    /// straight from `folders`, so exact match is always correct here.
     public func deleteFolder(_ name: String) throws {
         guard folders.contains(name) else { throw NoteStoreError.folderNotFound(name) }
         var firstError: Error?
         for id in notes.filter({ $0.folder == name }).map(\.id) {
             do { try trash(id: id) } catch { if firstError == nil { firstError = error } }
         }
-        folders.removeAll { $0 == name }
-        try saveFolders()
+        let updated = folders.filter { $0 != name }
+        try saveFolders(updated)
+        folders = updated
         if let firstError { throw firstError }
     }
 
@@ -161,8 +169,8 @@ public final class NoteStore: ObservableObject {
         return names
     }
 
-    private func saveFolders() throws {
-        try Self.encoder.encode(folders).write(to: foldersURL, options: .atomic)
+    private func saveFolders(_ list: [String]) throws {
+        try Self.encoder.encode(list).write(to: foldersURL, options: .atomic)
     }
 
     public static func defaultRoot() -> URL {
