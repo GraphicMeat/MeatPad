@@ -15,14 +15,12 @@ struct MenuBarNotesView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var query = ""
 
-    // ponytail: title-only substring match, no full-text scan. Good enough at P1 note
-    // counts; revisit if search needs to cover contents too.
-    private var filtered: [Note] {
-        let notes = noteStore.notes
-        let matched = query.isEmpty
-            ? notes
-            : notes.filter { $0.title.localizedCaseInsensitiveContains(query) }
-        return Array(matched.prefix(15))
+    private var matches: [NoteSearchMatch] {
+        Array(noteStore.searchIndex.search(query, notes: noteStore.notes).prefix(15))
+    }
+
+    private func note(for id: UUID) -> Note? {
+        noteStore.notes.first { $0.id == id }
     }
 
     var body: some View {
@@ -44,25 +42,35 @@ struct MenuBarNotesView: View {
                 GlassSearchField(prompt: String(localized: "Search notes"), text: $query)
                     .padding(10)
 
-                if filtered.isEmpty {
+                if matches.isEmpty {
                     ContentUnavailableView(
                         noteStore.notes.isEmpty ? "No notes yet" : "No matches",
                         systemImage: noteStore.notes.isEmpty ? "note.text.badge.plus" : "magnifyingglass"
                     )
                 } else {
-                    List(filtered) { note in
-                        Button { open(note.id) } label: {
-                            HStack(spacing: 9) {
-                                Image(systemName: "note.text")
-                                    .foregroundStyle(MeatPadGlass.tint.gradient)
-                                Text(note.title).lineLimit(1)
-                                Spacer()
-                                RelativeTimeText(date: note.modified)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                    List(matches, id: \.noteID) { match in
+                        if let note = note(for: match.noteID) {
+                            Button { open(note.id) } label: {
+                                HStack(spacing: 9) {
+                                    Image(systemName: "note.text")
+                                        .foregroundStyle(MeatPadGlass.tint.gradient)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(note.title).lineLimit(1)
+                                        if match.rangeInExcerpt != nil {
+                                            Text(match.excerpt)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                    Spacer()
+                                    RelativeTimeText(date: note.modified)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
