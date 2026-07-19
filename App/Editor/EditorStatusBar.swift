@@ -13,6 +13,10 @@ struct EditorStatusBar: View {
     /// `nil` hides it entirely — the default, so notes and other non-project surfaces
     /// are unaffected.
     var lspStatus: String? = nil
+    /// Transient message (e.g. "Renamed in 3 files" — Task 6) shown next to `lspStatus`
+    /// and cleared automatically by the owner (`ProjectViewModel.flashStatus`); `nil`
+    /// hides it, same "the host decides, this view just renders" contract as `lspStatus`.
+    var flashMessage: String? = nil
 
     var body: some View {
         let line = Self.currentLine(of: text, cursor: cursor)
@@ -33,6 +37,12 @@ struct EditorStatusBar: View {
 
             if let lspStatus {
                 Text(lspStatus)
+            }
+            if let flashMessage {
+                Text(flashMessage)
+                    .foregroundStyle(.primary)
+                    .transition(.opacity)
+                    .animation(.easeOut(duration: 0.2), value: flashMessage)
             }
 
             Spacer()

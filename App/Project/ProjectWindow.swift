@@ -76,6 +76,9 @@ struct ProjectWindow: View {
                 FilterCommandSheet(context: context, onDismiss: { executor.filterContext = nil })
             }
         }
+        .sheet(item: $viewModel.renameRequest) { request in
+            RenameSymbolSheet(request: request, project: viewModel)
+        }
         .frame(minWidth: 720, minHeight: 480)
         .navigationTitle(viewModel.root.lastPathComponent)
         // Publish this window's VMs so the focused-window Save/Close/Find commands route here.

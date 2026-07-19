@@ -63,6 +63,12 @@ struct EditorCommandContext {
     /// availability contract as `goToDefinition`/`findReferences`.
     let documentSymbolsAvailable: Bool
     let documentSymbols: () -> Void
+    /// Rename Symbol (Task 6) — caret-based like `goToDefinition`/`findReferences`, same
+    /// availability contract. Defaults to "unavailable, no-op" so note windows (no
+    /// `lspManager`, per the plan's "Notes/no-server: menu disabled") need no changes at
+    /// their call sites.
+    let renameSymbolAvailable: Bool
+    let renameSymbol: () -> Void
 
     /// Standard context over an editor's STTextView. `fileURL`/`projectRoot` are nil for notes.
     @MainActor
@@ -79,7 +85,9 @@ struct EditorCommandContext {
         findReferencesAvailable: Bool = false,
         findReferences: @escaping () -> Void = {},
         documentSymbolsAvailable: Bool = false,
-        documentSymbols: @escaping () -> Void = {}
+        documentSymbols: @escaping () -> Void = {},
+        renameSymbolAvailable: Bool = false,
+        renameSymbol: @escaping () -> Void = {}
     ) -> EditorCommandContext {
         EditorCommandContext(
             hostID: hostID,
@@ -117,7 +125,9 @@ struct EditorCommandContext {
             findReferencesAvailable: findReferencesAvailable,
             findReferences: findReferences,
             documentSymbolsAvailable: documentSymbolsAvailable,
-            documentSymbols: documentSymbols
+            documentSymbols: documentSymbols,
+            renameSymbolAvailable: renameSymbolAvailable,
+            renameSymbol: renameSymbol
         )
     }
 

@@ -86,7 +86,8 @@ private struct EditorPane: View {
                 languageOverride: editor.languageOverride,
                 language: editor.language,
                 onSelectLanguage: { editor.languageOverride = $0 },
-                lspStatus: lspStatusText
+                lspStatus: lspStatusText,
+                flashMessage: project.statusFlash
             )
         }
         .overlay(alignment: .top) {
@@ -119,6 +120,11 @@ private struct EditorPane: View {
             documentSymbolsAvailable: project.lspStatusByLanguage[editor.language?.id ?? ""] == .running,
             documentSymbols: {
                 project.showDocumentSymbols(for: url, languageID: editor.language?.id)
+            },
+            renameSymbolAvailable: project.lspStatusByLanguage[editor.language?.id ?? ""] == .running,
+            renameSymbol: {
+                guard let tv = snippetController.textView else { return }
+                project.requestRenameSymbol(from: url, languageID: editor.language?.id, offset: tv.textSelection.location)
             }
         ))
     }

@@ -339,6 +339,134 @@ final class ProjectViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Rename Symbol (0.7 LSP plan Task 6)
+
+    /// One in-flight rename prompt, shown via `.sheet(item:)` in `ProjectWindow`. Unlike
+    /// the Filter Through Command sheet (routed through the app-wide `CommandExecutor
+    /// .filterContext` because Commands are shared across every window type — notes
+    /// included), rename only ever fires from a project window with a live LSP server
+    /// (`5. Notes/no-server: menu disabled` in the plan), so it's scoped straight to this
+    /// VM — no cross-window host-matching needed.
+    @Published var renameRequest: RenameSymbolRequest?
+    /// Transient status-bar text ("Renamed in N files") — the "silent on full success"
+    /// half of the plan's results contract; a skipped/failed file instead gets the noisy
+    /// half, `presentRenameSummary`'s modal alert. Self-clearing, not a queue: a second
+    /// flash before the first clears just restarts the same window on the new text.
+    @Published private(set) var statusFlash: String?
+    private var statusFlashTask: Task<Void, Never>?
+
+    private func flashStatus(_ message: String) {
+        statusFlashTask?.cancel()
+        statusFlash = message
+        statusFlashTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard !Task.isCancelled else { return }
+            self?.statusFlash = nil
+        }
+    }
+
+    /// `textDocument/prepareRename` (best-effort) then shows the rename prompt. Same
+    /// silent-no-server-degrade contract as `goToDefinition`/`findReferences`.
+    ///
+    /// `prepareRename` is optional in the LSP spec — plenty of servers don't implement it.
+    /// A failed round trip (transport failure, or a "method not found" JSON-RPC error)
+    /// falls back to the local word-under-caret range, exactly as if the server had never
+    /// been asked. A *successful* response of `nil`, though, is the server explicitly
+    /// saying "nothing renameable here" — treated like `findReferences`' empty-result case
+    /// (a beep, not a fallback guess): guessing would mean renaming whatever word sits
+    /// under the caret even though the server looked and found nothing.
+    func requestRenameSymbol(from url: URL, languageID: String?, offset: Int) {
+        guard let languageID, lspStatusByLanguage[languageID] == .running,
+              let handle = lspManager.server(for: languageID) else { return }
+        Task { [weak self] in
+            guard let text = EditorRegistry.shared.fileViewModel(for: url)?.text,
+                  let position = LSPPositionBridge.position(of: offset, in: text) else { return }
+            let params = PrepareRenameParams(textDocument: TextDocumentIdentifier(uri: url.absoluteString), position: position)
+            guard let self else { return }
+
+            // do/catch, not `try?`: Swift flattens `try?` on an `async throws -> T??`
+            // call down to one Optional, which would erase exactly the distinction this
+            // needs (thrown == unsupported vs. succeeded-with-nil == "nothing here" —
+            // see doc comment above). A thrown error (transport failure, or a JSON-RPC
+            // "method not found" from a server that never implemented `prepareRename`)
+            // falls back to the local word range; a clean `nil` response beeps instead.
+            let target: (range: NSRange, name: String)?
+            do {
+                guard let response = try await handle.prepareRename(params: params) else {
+                    NSSound.beep()
+                    return
+                }
+                target = RenameSymbol.target(from: response, position: position, text: text)
+            } catch {
+                target = RenameSymbol.wordRange(in: text as NSString, at: offset)
+                    .map { ($0, (text as NSString).substring(with: $0)) }
+            }
+            guard let target, !target.name.isEmpty else {
+                NSSound.beep()
+                return
+            }
+            self.renameRequest = RenameSymbolRequest(
+                fileURL: url, languageID: languageID, offset: offset, position: position, defaultName: target.name
+            )
+        }
+    }
+
+    /// `textDocument/rename` + apply. Re-checks the server's still alive (defensive — the
+    /// sheet only ever shows after `requestRenameSymbol`'s own guard already passed, but a
+    /// slow prompt racing a server crash is possible) rather than assuming the caller did.
+    func performRename(_ request: RenameSymbolRequest, newName: String) {
+        guard let handle = lspManager.server(for: request.languageID) else { return }
+        Task { [weak self] in
+            let params = RenameParams(
+                textDocument: TextDocumentIdentifier(uri: request.fileURL.absoluteString),
+                position: request.position, newName: newName
+            )
+            // Double-optional flatten: transport failure, or the server declining to
+            // produce an edit for this rename — both are "nothing to apply".
+            guard let edit = (try? await handle.rename(params: params)) ?? nil else {
+                NSSound.beep()
+                return
+            }
+            guard let self else { return }
+            let outcome = RenameSymbol.apply(edit, originatingFile: request.fileURL, originatingOffset: request.offset)
+            if let caret = outcome.originatingCaret {
+                self.open(file: request.fileURL, reveal: NSRange(location: caret, length: 0))
+            }
+            self.presentRenameSummary(outcome.results)
+        }
+    }
+
+    /// Silent on full success (a status-bar flash instead of a modal — plan: "silent on
+    /// full success... lazy correct"); a skipped/failed file surfaces the full per-file
+    /// list in a modal, since that's the one case that needs the user's attention (a
+    /// rename that's only partially applied across the project).
+    private func presentRenameSummary(_ results: [RenameSymbol.FileResult]) {
+        guard !results.isEmpty else {
+            NSSound.beep() // WorkspaceEdit normalized to zero touchable files — nothing happened.
+            return
+        }
+        let failed = results.filter { !$0.success }
+        guard !failed.isEmpty else {
+            let n = results.count
+            flashStatus(n == 1 ? String(localized: "Renamed in 1 file") : String(localized: "Renamed in \(n) files"))
+            return
+        }
+        let succeeded = results.count - failed.count
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Rename Symbol")
+        var lines: [String] = []
+        if succeeded > 0 {
+            lines.append(succeeded == 1
+                ? String(localized: "Renamed successfully in 1 file.")
+                : String(localized: "Renamed successfully in \(succeeded) files."))
+        }
+        lines.append(String(localized: "Not renamed:"))
+        lines += failed.map { "\($0.url.lastPathComponent) — \($0.reason ?? String(localized: "unknown error"))" }
+        alert.informativeText = lines.joined(separator: "\n")
+        alert.addButton(withTitle: String(localized: "OK"))
+        if let window { alert.beginSheetModal(for: window, completionHandler: nil) } else { alert.runModal() }
+    }
+
     /// Called by the editor after it actually scrolled/selected the target. Token-guarded
     /// so a slow consumer can't clear a newer target: a fresh `CodeEditor.Coordinator` on
     /// a later tab reselect never replays old reveals because the target is gone by then.

@@ -44,6 +44,11 @@ struct MeatPadApp: App {
             // plain-text only and never adopts NSFontPanel, so that menu was dead weight
             // and its Cmd+T would otherwise race our quick-open binding below.
             CommandGroup(replacing: .textFormatting) { }
+            // Edit ▸ … ▸ Rename Symbol… (0.7 LSP plan Task 6), right after Cut/Copy/Paste.
+            CommandGroup(after: .pasteboard) {
+                Divider()
+                RenameSymbolCommand()
+            }
             CommandGroup(replacing: .printItem) { PrintCommand() }
             CommandGroup(after: .toolbar) {
                 Menu("Language") { LanguageCommands() }
@@ -277,6 +282,26 @@ private struct DocumentSymbolsCommand: View {
         Button("Document Symbols") { context?.documentSymbols() }
             .keyboardShortcut("o", modifiers: [.command, .shift])
             .disabled(context?.documentSymbolsAvailable != true)
+    }
+}
+
+/// ⌃⌘E: Rename Symbol… (0.7 LSP plan Task 6), in the Edit menu (per the plan — the
+/// Navigate-menu LSP items are all read-only lookups; rename is a write, so Edit is where
+/// it belongs). Grepped every `.keyboardShortcut` in this file first (see
+/// `GoToDefinitionCommand`'s own note) — "e" isn't bound anywhere, plain or modified, and
+/// SwiftUI's own implicit Edit-menu shortcuts (Cmd+Z/X/C/V/A) don't touch it either. Chosen
+/// to match this app's existing "Cmd+Ctrl+<letter>" family for LSP menu commands (⌃⌘J go
+/// to definition, ⌃⌘R find references) rather than reaching for an F-key: SwiftUI's
+/// `KeyEquivalent` has no named F-key cases, and improvising one from a raw NSEvent
+/// function-key code is a much less certain bet than reusing a pattern already proven to
+/// render correctly in this app's menu bar. Disabled the same way as the other LSP items.
+private struct RenameSymbolCommand: View {
+    @FocusedValue(\.editorCommandContext) private var context
+
+    var body: some View {
+        Button("Rename Symbol…") { context?.renameSymbol() }
+            .keyboardShortcut("e", modifiers: [.command, .control])
+            .disabled(context?.renameSymbolAvailable != true)
     }
 }
 
