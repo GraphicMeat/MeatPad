@@ -9,6 +9,10 @@ struct EditorStatusBar: View {
     let languageOverride: String?
     let language: Language?
     let onSelectLanguage: (String?) -> Void
+    /// Language server status text (e.g. "LSP ✓"), rendered after the language menu.
+    /// `nil` hides it entirely — the default, so notes and other non-project surfaces
+    /// are unaffected.
+    var lspStatus: String? = nil
 
     var body: some View {
         let line = Self.currentLine(of: text, cursor: cursor)
@@ -26,6 +30,10 @@ struct EditorStatusBar: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+
+            if let lspStatus {
+                Text(lspStatus)
+            }
 
             Spacer()
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import MeatPadKit
 
 /// Detail pane: the editor for the selected tab, or a placeholder when nothing is open.
@@ -69,7 +70,8 @@ private struct EditorPane: View {
             snippetController: snippetController,
             symbolIndex: project.symbolIndex,
             currentFileURL: url,
-            onCursorChange: { cursor = $0 }
+            onCursorChange: { cursor = $0 },
+            onDocumentChanged: { project.notifyLSPDocumentChanged(url) }
         )
         .safeAreaInset(edge: .bottom, spacing: 0) {
             EditorStatusBar(
@@ -77,10 +79,16 @@ private struct EditorPane: View {
                 cursor: cursor,
                 languageOverride: editor.languageOverride,
                 language: editor.language,
-                onSelectLanguage: { editor.languageOverride = $0 }
+                onSelectLanguage: { editor.languageOverride = $0 },
+                lspStatus: lspStatusText
             )
         }
-        .overlay(alignment: .top) { banner }
+        .overlay(alignment: .top) {
+            VStack(spacing: 0) {
+                lspBanner
+                banner
+            }
+        }
         .focusedSceneValue(\.snippetInsertion, SnippetInsertion(languageID: editor.language?.id, insert: { snippetController.insert($0) }))
         .focusedSceneValue(\.editorCommandContext, EditorCommandContext.make(
             hostID: ObjectIdentifier(project),
@@ -107,6 +115,34 @@ private struct EditorPane: View {
             }
         case nil:
             EmptyView()
+        }
+    }
+
+    /// Project-wide missing-server notice (not keyed to `url` — see `ProjectViewModel
+    /// .lspBanner`), shown over whichever tab happens to be visible.
+    @ViewBuilder
+    private var lspBanner: some View {
+        if let state = project.lspBanner {
+            BannerBar(message: String(localized: "No language server found for \(state.languageName)")) {
+                Button("Copy Install Command") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(state.installHint, forType: .string)
+                }
+                Button("Dismiss") { project.dismissLSPBanner() }
+            }
+        }
+    }
+
+    /// `nil` hides the status item entirely — only files whose language the LSP
+    /// manager actually tracks (a `documentOpened` was sent for it) get an entry in
+    /// `statusByLanguage`.
+    private var lspStatusText: String? {
+        guard let languageID = editor.language?.id,
+              let status = project.lspStatusByLanguage[languageID] else { return nil }
+        switch status {
+        case .running: return "LSP ✓"
+        case .starting: return "LSP…"
+        case .notInstalled, .failed: return "LSP ✕"
         }
     }
 }

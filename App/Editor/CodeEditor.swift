@@ -42,6 +42,10 @@ struct CodeEditor: NSViewRepresentable {
     /// `symbolIndex` for project-less surfaces.
     var currentFileURL: URL? = nil
     var onCursorChange: (Int) -> Void
+    /// Fired on the same 150ms debounce as syntax highlighting, after a real text edit
+    /// (see `scheduleHighlight`) — the LSP `textDocument/didChange` hook. `nil` for
+    /// notes and any other project-less surface.
+    var onDocumentChanged: (() -> Void)? = nil
 
     /// SF Mono at the given point size.
     static func font(size: CGFloat) -> NSFont {
@@ -302,7 +306,10 @@ struct CodeEditor: NSViewRepresentable {
         func scheduleHighlight() {
             pendingHighlight?.cancel()
             let work = DispatchWorkItem { [weak self] in
-                MainActor.assumeIsolated { self?.applyHighlight() }
+                MainActor.assumeIsolated {
+                    self?.applyHighlight()
+                    self?.parent.onDocumentChanged?()
+                }
             }
             pendingHighlight = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)

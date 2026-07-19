@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import MeatPadKit
+import ProcessEnv
 
 /// Owns one project window's state: the live file tree (rescanned on any change under
 /// `root`), the open tabs, and the save/close/external-change flows over them. The file
@@ -11,8 +12,22 @@ final class ProjectViewModel: ObservableObject {
     /// Banner shown over the editor when disk diverges from the open buffer.
     enum Banner: Equatable { case changedOnDisk, deleted }
 
+    /// Project-scoped "language server isn't installed" notice — parallel to `banners`
+    /// (which is per-URL), since a missing server is a project-wide fact about a
+    /// language, not a fact about any one open file.
+    struct LSPBannerState: Equatable {
+        let languageID: String
+        let languageName: String
+        let installHint: String
+    }
+
     /// Which content the sidebar shows: the live file tree, or Cmd+Shift+F project search.
     enum SidebarMode: Hashable { case files, search }
+
+    /// Language IDs `LSPServerDetector` knows about — the only ones that ever touch
+    /// `lspManager`. Derived from the kit's own catalog instead of a second hardcoded
+    /// list here, so a language added to the kit's catalog is picked up automatically.
+    private static let lspKnownLanguageIDs = Set(LSPServerDetector.knownServers.flatMap(\.languageIDs))
 
     let root: URL
     @Published var tree: TreeNode
@@ -20,6 +35,23 @@ final class ProjectViewModel: ObservableObject {
     @Published var selectedTab: URL?
     /// At-most-one-visible per tab; the host shows `banners[selectedTab]`.
     @Published var banners: [URL: Banner] = [:]
+    /// Per-project language server manager, detected once at init. Lazily starts a
+    /// server the first time a file of that language opens; torn down when the project
+    /// window actually closes (`ProjectWindowCloseGuard.windowShouldClose`).
+    let lspManager: LSPProjectManager
+    /// Mirrors `lspManager.statusByLanguage`, republished so SwiftUI observes it (the
+    /// manager's own property isn't `@Published`).
+    @Published private(set) var lspStatusByLanguage: [String: LSPServerStatus] = [:]
+    /// Single project-level missing-server notice — see `LSPBannerState`.
+    @Published var lspBanner: LSPBannerState?
+    /// Languages a missing-server banner has already been shown for this session — shown
+    /// at most once per language per project, whether or not the user dismissed it.
+    ///
+    /// ponytail: `lspBanner` is a single slot, so two different missing languages opened
+    /// back-to-back before the first is dismissed means the second replaces the first
+    /// (both still get marked "shown", so neither retriggers). A queue would cover the
+    /// rare multi-missing-language case; not worth it for one banner at a time.
+    private var lspBannerShownLanguages: Set<String> = []
     /// Cmd+T quick-open overlay, toggled by the app-level command.
     @Published var quickOpenVisible = false
     @Published var sidebarMode: SidebarMode = .files
@@ -56,6 +88,14 @@ final class ProjectViewModel: ObservableObject {
 
     init(root: URL) {
         self.root = root
+        // GUI apps launched from Finder don't inherit the login shell's PATH (the LSP
+        // plan's "CRITICAL gotcha"); `ProcessInfo.userEnvironment` (ChimeHQ's ProcessEnv,
+        // already a transitive build dependency via MeatPadKit) reconstructs it by
+        // shelling out to the user's shell once. Detection AND every server process
+        // launch use this same resolved environment, never the app's own.
+        let userEnvironment = ProcessInfo.processInfo.userEnvironment
+        let detected = LSPServerDetector.detect(userEnvironment: userEnvironment)
+        self.lspManager = LSPProjectManager(projectRoot: root, detected: detected, userEnvironment: userEnvironment)
         // Shows the window instantly with just the top level, then `rescan()` below
         // fills in the full tree off the main thread — opening a big repo no longer
         // blocks the window from appearing.
@@ -64,6 +104,9 @@ final class ProjectViewModel: ObservableObject {
             self?.rescan()
         }
         rescan()
+        lspManager.onStatusChange = { [weak self] statuses in
+            self?.lspStatusByLanguage = statuses
+        }
         // Session restore: AppModel stashed this root's saved tabs/selection keyed by
         // standardized URL just before calling openWindow. Consume once; drop tabs for
         // files that vanished since the session was saved, falling back to the first
@@ -84,6 +127,9 @@ final class ProjectViewModel: ObservableObject {
             selectedTab = pending
             AppModel.shared.pendingFileOpen = nil
         }
+        // Restored/pre-opened tabs above bypass `open(file:)` (they assign `tabs`
+        // directly to preserve order/selection), so notify the LSP manager for them here.
+        for url in tabs { notifyLSPDocumentOpened(url) }
     }
 
     /// Runs a full recursive scan off the main actor and swaps it in when done. Cancels
@@ -139,8 +185,10 @@ final class ProjectViewModel: ObservableObject {
     }
 
     func open(file: URL) {
-        if !tabs.contains(file) { tabs.append(file) }
+        let isNew = !tabs.contains(file)
+        if isNew { tabs.append(file) }
         selectedTab = file
+        if isNew { notifyLSPDocumentOpened(file) }
     }
 
     /// Same as `open(file:)`, plus a one-shot reveal of `range` in the newly-shown editor
@@ -163,6 +211,9 @@ final class ProjectViewModel: ObservableObject {
     /// Drops the tab unconditionally (no prompt); callers that need the dirty guard use
     /// `requestClose`. Also clears any banner/suppression bookkeeping for the URL.
     func closeTab(_ url: URL) {
+        if let languageID = lspLanguageID(for: url) {
+            lspManager.documentClosed(url: url, languageID: languageID)
+        }
         tabs.removeAll { $0 == url }
         if selectedTab == url { selectedTab = tabs.last }
         banners[url] = nil
@@ -309,6 +360,7 @@ final class ProjectViewModel: ObservableObject {
         if let vm = EditorRegistry.shared.fileViewModel(for: url) { try? vm.revert() }
         banners[url] = nil
         dismissedChanges.remove(url)
+        notifyLSPDocumentChanged(url)
     }
 
     /// "Keep Mine" / "Dismiss": hide the banner and stop re-raising it on every
@@ -316,6 +368,50 @@ final class ProjectViewModel: ObservableObject {
     func dismissBanner(_ url: URL) {
         banners[url] = nil
         dismissedChanges.insert(url)
+    }
+
+    /// Dismisses the missing-server notice. `lspBannerShownLanguages` already stops it
+    /// from coming back this session — nothing else to record here.
+    func dismissLSPBanner() {
+        lspBanner = nil
+    }
+
+    // MARK: - LSP document lifecycle
+
+    /// `url`'s language ID, but only when it's one `LSPProjectManager` knows how to
+    /// launch a server for — the gate that keeps every other language from ever
+    /// touching `lspManager`.
+    private func lspLanguageID(for url: URL) -> String? {
+        guard let languageID = EditorRegistry.shared.fileViewModel(for: url)?.language?.id,
+              Self.lspKnownLanguageIDs.contains(languageID) else { return nil }
+        return languageID
+    }
+
+    /// Sends `textDocument/didOpen` (lazily starting that language's server on first
+    /// use) and, the first time this project sees that language come up missing,
+    /// raises the install-hint banner.
+    private func notifyLSPDocumentOpened(_ url: URL) {
+        guard let vm = EditorRegistry.shared.fileViewModel(for: url),
+              let languageID = vm.language?.id, Self.lspKnownLanguageIDs.contains(languageID) else { return }
+        lspManager.documentOpened(url: url, languageID: languageID, text: vm.text)
+
+        guard !lspBannerShownLanguages.contains(languageID),
+              case .notInstalled(let installHint) = lspManager.statusByLanguage[languageID] else { return }
+        lspBannerShownLanguages.insert(languageID)
+        lspBanner = LSPBannerState(
+            languageID: languageID,
+            languageName: Languages.byID(languageID)?.name ?? languageID,
+            installHint: installHint
+        )
+    }
+
+    /// Debounced `textDocument/didChange` — called from `CodeEditor`'s existing
+    /// highlight debounce (see `CodeEditor.onDocumentChanged`) rather than on every
+    /// keystroke.
+    func notifyLSPDocumentChanged(_ url: URL) {
+        guard let languageID = lspLanguageID(for: url) else { return }
+        let text = EditorRegistry.shared.fileViewModel(for: url)?.text ?? ""
+        lspManager.documentChanged(url: url, languageID: languageID, text: text)
     }
 
     private func presentError(_ error: Error, verb: String, url: URL) {
@@ -355,9 +451,18 @@ final class ProjectWindowCloseGuard: NSObject, NSWindowDelegate {
         // (same pattern as the STTextViewDelegate callbacks).
         let allowed = MainActor.assumeIsolated { viewModel?.confirmWindowClose() ?? true }
         guard allowed else { return false }
+        let willClose: Bool
         if let original, original.responds(to: #selector(NSWindowDelegate.windowShouldClose(_:))) {
-            return original.windowShouldClose?(sender) ?? true
+            willClose = original.windowShouldClose?(sender) ?? true
+        } else {
+            willClose = true
         }
-        return true
+        // Only tear down the project's language servers once the window is actually
+        // closing — `original`'s answer (if any) is the final word, so this can't fire
+        // on a close that gets vetoed after our own guard already said yes.
+        if willClose {
+            MainActor.assumeIsolated { viewModel?.lspManager.shutdown() }
+        }
+        return willClose
     }
 }

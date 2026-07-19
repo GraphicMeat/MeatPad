@@ -180,6 +180,17 @@ final class AppModel: ObservableObject {
         scheduleSessionSave()
     }
 
+    /// Quit doesn't close each project window individually (`applicationShouldTerminate`
+    /// answers `.terminateNow` directly), so `ProjectWindowCloseGuard.windowShouldClose`
+    /// never runs and never gets a chance to shut its project's language servers down.
+    /// Called from `applicationWillTerminate` to give every still-open project's servers
+    /// the same graceful exit notification a normal window close would have sent.
+    func shutdownAllProjectLSPManagers() {
+        for viewModel in projectViewModels.values {
+            viewModel.lspManager.shutdown()
+        }
+    }
+
     /// Called from `applicationDidFinishLaunching`: reopens whatever was open at last
     /// quit, dropping ids for notes and project roots that no longer exist on disk.
     /// Falls back to one fresh note when there's nothing valid to restore, so launch

@@ -493,5 +493,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         AppModel.shared.saveSessionNow()
+        AppModel.shared.shutdownAllProjectLSPManagers()
     }
 }
