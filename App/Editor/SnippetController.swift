@@ -25,6 +25,43 @@ final class SnippetTextView: STTextView {
     /// Fold All / Unfold All, routed from the Edit menu via `EditorCommandContext`.
     var onFoldAll: (() -> Void)?
     var onUnfoldAll: (() -> Void)?
+    /// Hover-tracking seam (0.7 LSP plan Task 3). `mouseMoved` always calls `super` first —
+    /// preserving STTextView's own `inputContext` forwarding (marked text / IME) — before this
+    /// hook runs, so hover tracking never changes that behavior. Only wired up (and the
+    /// tracking area only installed, via `installHoverTracking()`) when `CodeEditor.makeNSView`
+    /// sees a live `lspManager` — notes and other project-less surfaces get neither, so there's
+    /// no dead tracking area or closure call for a feature that can never fire there.
+    var onHoverMouseMoved: ((NSEvent) -> Void)?
+    /// Fired on `mouseExited` (cursor left the text view) and `resignFirstResponder` (editor
+    /// lost focus) — both are hover dismiss triggers per the 0.7 LSP plan.
+    var onHoverDismiss: (() -> Void)?
+
+    /// `.inVisibleRect` keeps the tracking area's rect in sync with the view's own bounds as it
+    /// resizes/scrolls, so this only needs to run once (`makeNSView`, not `updateTrackingAreas`).
+    func installHoverTracking() {
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .mouseMoved, .inVisibleRect, .activeInKeyWindow],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        onHoverMouseMoved?(event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        onHoverDismiss?()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        onHoverDismiss?()
+        return result
+    }
 
     override func insertTab(_ sender: Any?) {
         if onInsertTab?() == true { return }

@@ -25,6 +25,14 @@ final class LSPController {
     /// bookkeeping shape as `FoldController.chevronLines`.
     private var markerLines: Set<Int> = []
 
+    /// Debounce for `mouseMoved`-driven hover requests; cancelled on move/scroll/type/exit —
+    /// see `mouseMoved(_:handle:fileURL:)` and `dismissHover()`.
+    private var hoverDebounceTask: Task<Void, Never>?
+    /// The character index hover is currently debouncing towards, or already showing for.
+    /// `nil` whenever nothing is pending or displayed.
+    private var trackedCharIndex: Int?
+    private var hoverPanel: HoverPanel?
+
     func attach(to textView: STTextView) {
         self.textView = textView
     }
@@ -106,6 +114,124 @@ final class LSPController {
         markerLines = Set(severityByLine.keys)
     }
 
+    // MARK: - Hover (0.7 LSP plan Task 3)
+
+    /// Called from `SnippetTextView.onHoverMouseMoved` (only wired up when a project has an
+    /// `lspManager` — see that closure's doc comment) on every `mouseMoved`. `handle`/`fileURL`
+    /// are re-evaluated by the caller on each call (server may still be starting), not cached
+    /// here — a `nil` handle degrades silently: the debounce still tracks the character index
+    /// (so a later-arriving server doesn't need the mouse to move again), but never fires a
+    /// request.
+    func mouseMoved(_ event: NSEvent, handle: LSPServerHandle?, fileURL: URL?) {
+        guard let textView, let window = textView.window else { return }
+        let screenPoint = window.convertPoint(toScreen: event.locationInWindow)
+        let charIndex = textView.characterIndex(for: screenPoint)
+        guard charIndex != NSNotFound else {
+            dismissHover()
+            return
+        }
+        // Resting at the same character (or drifting a pixel within the currently-shown/
+        // currently-debouncing one) is a no-op — this is the "~350ms rest at same character
+        // index" debounce the plan calls for, not a per-pixel one.
+        guard charIndex != trackedCharIndex else { return }
+        dismissHover()
+        trackedCharIndex = charIndex
+        guard let handle, let fileURL else { return }
+        hoverDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.requestHover(charIndex: charIndex, handle: handle, fileURL: fileURL)
+        }
+    }
+
+    /// Cancels any in-flight debounce/request and hides the panel if one is showing. Called on
+    /// every dismiss trigger from the plan (`mouseExited`, scroll, any keystroke, editor
+    /// resign) — see call sites in `CodeEditor.Coordinator` — as well as whenever `mouseMoved`
+    /// itself moves off the tracked character.
+    func dismissHover() {
+        hoverDebounceTask?.cancel()
+        hoverDebounceTask = nil
+        trackedCharIndex = nil
+        if let hoverPanel {
+            hoverPanel.parent?.removeChildWindow(hoverPanel)
+            hoverPanel.orderOut(nil)
+        }
+        hoverPanel = nil
+    }
+
+    /// Fires after the debounce elapses. `text` is captured fresh here (not back in
+    /// `mouseMoved`) — the "current buffer generation" the request goes out against — and
+    /// re-checked against `textView.text` after the response returns: an edit anywhere during
+    /// the round trip (wait + request) invalidates the response, so a hover for stale content
+    /// is silently dropped rather than shown. `trackedCharIndex == charIndex` is a second,
+    /// cheaper guard for the common case (mouse already moved elsewhere, `dismissHover` already
+    /// cancelled this Task — this just also covers the rare non-cancellation race).
+    private func requestHover(charIndex: Int, handle: LSPServerHandle, fileURL: URL) async {
+        guard let textView, let text = textView.text,
+              let position = LSPPositionBridge.position(of: charIndex, in: text) else { return }
+        let params = TextDocumentPositionParams(uri: fileURL.absoluteString, position: position)
+        guard let hover = (try? await handle.hover(params: params)) ?? nil else { return }
+        guard !Task.isCancelled, trackedCharIndex == charIndex, textView.text == text else { return }
+        presentHover(hover, anchorCharIndex: charIndex, in: text)
+    }
+
+    /// Renders `hover` in a borderless, non-activating `NSPanel` anchored just below its
+    /// token — `firstRect(forCharacterRange:actualRange:)` (STTextView's `NSTextInputClient`
+    /// conformance) gives that token's screen rect directly, the same API IME candidate windows
+    /// anchor against. A panel (not `NSPopover`) is the "doesn't steal focus" choice from the
+    /// plan: `orderFront` never makes it key, so showing it can't itself trigger
+    /// `resignFirstResponder` on the editor (which would immediately dismiss it again).
+    ///
+    /// ponytail: dismissed unconditionally on `mouseExited` from the text view — doesn't check
+    /// whether the cursor actually landed on the popover itself. Fine for a read-only tooltip;
+    /// add popover-region tracking if hover content ever needs to be selectable/copyable.
+    private func presentHover(_ hover: Hover, anchorCharIndex: Int, in text: String) {
+        guard let textView, let window = textView.window else { return }
+        let plainText = Self.plainText(from: hover.contents)
+        guard !plainText.isEmpty else { return }
+
+        let anchorRange: NSRange
+        if let range = hover.range, let nsRange = LSPPositionBridge.nsRange(of: range, in: text) {
+            anchorRange = nsRange
+        } else {
+            anchorRange = NSRange(location: anchorCharIndex, length: 0)
+        }
+        let screenRect = textView.firstRect(forCharacterRange: anchorRange, actualRange: nil)
+
+        let panel = HoverPanel(plainText: plainText)
+        panel.setFrameOrigin(NSPoint(x: screenRect.minX, y: screenRect.minY - panel.frame.height - 4))
+        window.addChildWindow(panel, ordered: .above)
+        panel.orderFront(nil)
+        hoverPanel = panel
+    }
+
+    /// `MarkupContent`/`MarkedString` markdown -> plain text, first cut per the plan ("STRIP to
+    /// plain text first cut... else plain"). Regex-based, not a real markdown parser — good
+    /// enough to de-noise fences/emphasis/links/headers for a tooltip; a rendered/monospaced
+    /// upgrade is future work, not required here.
+    private static func plainText(from contents: ThreeTypeOption<MarkedString, [MarkedString], MarkupContent>) -> String {
+        let raw: String
+        switch contents {
+        case .optionA(let marked):
+            raw = marked.value
+        case .optionB(let markedList):
+            raw = markedList.map(\.value).joined(separator: "\n\n")
+        case .optionC(let markup):
+            raw = markup.kind == .markdown ? stripMarkdown(markup.value) : markup.value
+        }
+        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func stripMarkdown(_ markdown: String) -> String {
+        var s = markdown
+        s = s.replacingOccurrences(of: #"```[a-zA-Z0-9_+\-]*\n?"#, with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: "```", with: "")
+        s = s.replacingOccurrences(of: #"\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
+        s = s.replacingOccurrences(of: #"(?m)^#{1,6}\s*"#, with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: #"[`*_]"#, with: "", options: .regularExpression)
+        return s
+    }
+
     private static func color(for severity: DiagnosticSeverity) -> NSColor {
         switch severity {
         case .error: return .systemRed
@@ -151,6 +277,59 @@ private final class DiagnosticMarkerView: NSView {
         let size = NSSize(width: 12, height: 12)
         image.draw(in: NSRect(x: 1, y: (bounds.height - size.height) / 2, width: size.width, height: size.height))
     }
+}
+
+/// Borderless, non-key floating panel showing plain-text hover documentation. See
+/// `LSPController.presentHover`'s doc comment for why a panel (not `NSPopover`) is used.
+private final class HoverPanel: NSPanel {
+    init(plainText: String) {
+        let maxWidth: CGFloat = 420
+        let padding: CGFloat = 8
+        let attributed = NSAttributedString(string: plainText, attributes: [
+            .font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: NSColor.labelColor,
+        ])
+        let textSize = attributed.boundingRect(
+            with: NSSize(width: maxWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).size
+        let contentSize = NSSize(width: ceil(textSize.width) + padding * 2, height: ceil(textSize.height) + padding * 2)
+
+        super.init(
+            contentRect: NSRect(origin: .zero, size: contentSize),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        isFloatingPanel = true
+        level = .popUpMenu
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        hidesOnDeactivate = false
+
+        let background = NSVisualEffectView(frame: NSRect(origin: .zero, size: contentSize))
+        background.material = .popover
+        background.state = .active
+        background.wantsLayer = true
+        background.layer?.cornerRadius = 6
+        background.layer?.masksToBounds = true
+
+        let textField = NSTextField(frame: NSRect(x: padding, y: padding, width: textSize.width, height: textSize.height))
+        textField.attributedStringValue = attributed
+        textField.isEditable = false
+        textField.isBordered = false
+        textField.drawsBackground = false
+        textField.maximumNumberOfLines = 0
+        textField.cell?.wraps = true
+        textField.cell?.truncatesLastVisibleLine = false
+
+        background.addSubview(textField)
+        contentView = background
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
 }
 
 private extension Array where Element: Comparable {

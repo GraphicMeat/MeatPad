@@ -80,6 +80,15 @@ struct CodeEditor: NSViewRepresentable {
         coord.foldController.attach(to: textView)
         coord.lspController.attach(to: textView)
 
+        // Hover tracking (0.7 LSP plan Task 3): only installed for LSP-backed editors — notes
+        // and other project-less surfaces (`lspManager == nil`) get no tracking area at all,
+        // per the plan's "zero behavior" requirement, not just a request-time no-op.
+        if lspManager != nil {
+            textView.installHoverTracking()
+            textView.onHoverMouseMoved = { [weak coord] event in MainActor.assumeIsolated { coord?.hoverMouseMoved(event) } }
+            textView.onHoverDismiss = { [weak coord] in MainActor.assumeIsolated { coord?.lspController.dismissHover() } }
+        }
+
         textView.textDelegate = coord
         textView.showsLineNumbers = true
         textView.highlightSelectedLine = true
@@ -219,7 +228,11 @@ struct CodeEditor: NSViewRepresentable {
                 queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self, let textView = self.textView, textView.isCompletionActive,
+                    guard let self else { return }
+                    // Hover is a screen-anchored child window like the completion popup below —
+                    // it doesn't track content scrolling either, so any scroll dismisses it.
+                    self.lspController.dismissHover()
+                    guard let textView = self.textView, textView.isCompletionActive,
                           Date().timeIntervalSince(self.lastTextChange) > 0.15 else { return }
                     textView.cancelComplete(nil)
                 }
@@ -254,6 +267,13 @@ struct CodeEditor: NSViewRepresentable {
             guard let textView else { return false }
             completionController.trigger(textView: textView)
             return true
+        }
+
+        /// Routed from `SnippetTextView.onHoverMouseMoved` (installed only when `lspManager`
+        /// is non-nil — see `makeNSView`). `lspHandle` may still be `nil` here (server starting/
+        /// crashed/not installed) — `LSPController.mouseMoved` degrades silently in that case.
+        func hoverMouseMoved(_ event: NSEvent) {
+            lspController.mouseMoved(event, handle: lspHandle, fileURL: parent.currentFileURL)
         }
 
         func rebuildHighlighter(languageID: String?) {
@@ -371,6 +391,7 @@ struct CodeEditor: NSViewRepresentable {
             MainActor.assumeIsolated {
                 guard let textView else { return }
                 lastTextChange = Date()
+                lspController.dismissHover()
                 let new = textView.text ?? ""
                 if parent.text != new { parent.text = new }
                 scheduleHighlight()
@@ -381,6 +402,7 @@ struct CodeEditor: NSViewRepresentable {
         nonisolated func textViewDidChangeSelection(_ notification: Notification) {
             MainActor.assumeIsolated {
                 guard let textView, !isUpdatingView else { return }
+                lspController.dismissHover()
                 parent.onCursorChange(textView.textSelection.location)
                 parent.snippetController?.caretDidMove(to: textView.textSelection.location)
                 completionController.syncPopup(textView: textView)
