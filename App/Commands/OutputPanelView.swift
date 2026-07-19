@@ -10,8 +10,9 @@ struct OutputPanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Divider()
             HStack(spacing: 8) {
+                Image(systemName: "terminal.fill")
+                    .foregroundStyle(MeatPadGlass.violet.gradient)
                 Text(output.commandName).font(.caption.bold())
                 if output.isRunning {
                     ProgressView().controlSize(.small)
@@ -51,6 +52,7 @@ struct OutputPanelView: View {
             }
         }
         .frame(height: 180)
-        .background(.bar)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) { Divider().opacity(0.45) }
     }
 }

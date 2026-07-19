@@ -6,23 +6,27 @@ import Combine
 /// distinct. Hosted via `.safeAreaInset(edge: .top)` on the detail pane.
 struct TabBarView: View {
     @ObservedObject var viewModel: ProjectViewModel
+    @Namespace private var tabSelection
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 0) {
+            HStack(spacing: 6) {
                 ForEach(viewModel.tabs, id: \.self) { url in
                     TabItem(
                         url: url,
                         isSelected: viewModel.selectedTab == url,
+                        selectionNamespace: tabSelection,
                         select: { viewModel.selectedTab = url },
                         close: { viewModel.requestClose(url) }
                     )
-                    Divider().frame(height: 16)
                 }
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
         }
-        .frame(height: 32)
-        .background(.bar)
+        .frame(height: 42)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) { Divider().opacity(0.4) }
     }
 }
 
@@ -30,6 +34,7 @@ struct TabBarView: View {
 private struct TabItem: View {
     let url: URL
     let isSelected: Bool
+    let selectionNamespace: Namespace.ID
     let select: () -> Void
     let close: () -> Void
 
@@ -39,18 +44,21 @@ private struct TabItem: View {
 
     @State private var hovering = false
 
-    init(url: URL, isSelected: Bool, select: @escaping () -> Void, close: @escaping () -> Void) {
+    init(url: URL, isSelected: Bool, selectionNamespace: Namespace.ID, select: @escaping () -> Void, close: @escaping () -> Void) {
         self.url = url
         self.isSelected = isSelected
+        self.selectionNamespace = selectionNamespace
         self.select = select
         self.close = close
         _editor = ObservedObject(wrappedValue: OptionalFileEditor(url: url))
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            // Reserve the dot's slot so the title doesn't shift when it appears; the close
-            // button overlays the dot on hover.
+        HStack(spacing: 7) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(isSelected ? MeatPadGlass.violet : .secondary)
+
             ZStack {
                 if editor.isDirty {
                     Image(systemName: "circle.fill").font(.system(size: 6))
@@ -65,20 +73,40 @@ private struct TabItem: View {
                     .help("Close Tab")
                 }
             }
-            .frame(width: 12)
+            .frame(width: 11)
 
             Text(url.lastPathComponent)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .font(.system(size: 12))
+                .font(.system(size: 12, weight: isSelected ? .medium : .regular))
         }
         .padding(.horizontal, 10)
         .frame(maxWidth: 180)
-        .frame(height: 32)
-        .background(isSelected ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
-        .contentShape(Rectangle())
-        .onTapGesture(perform: select)
+        .frame(height: 29)
+        .foregroundStyle(isSelected ? .primary : .secondary)
+        .background {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(.white.opacity(0.09))
+                    .matchedGeometryEffect(id: "active-tab", in: selectionNamespace)
+            } else if hovering {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(.white.opacity(0.045))
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Capsule()
+                .fill(MeatPadGlass.violet)
+                .frame(height: 2)
+                .padding(.horizontal, 9)
+                .opacity(isSelected ? 1 : 0)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .onTapGesture {
+            withAnimation(.easeOut(duration: 0.14)) { select() }
+        }
         .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 

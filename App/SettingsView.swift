@@ -17,6 +17,7 @@ struct SettingsView: View {
                 .tabItem { Label("Commands", systemImage: "terminal") }
         }
         .frame(width: 640, height: 560)
+        .background { AmbientGlassBackground() }
     }
 }
 
@@ -26,13 +27,40 @@ private struct GeneralSettingsView: View {
     @EnvironmentObject private var appModel: AppModel
 
     var body: some View {
-        Form {
-            Stepper(value: $appModel.fontSize, in: 10...24) {
-                Text("Font Size: \(Int(appModel.fontSize))")
-            }
+        ZStack {
+            AmbientGlassBackground()
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Editor")
+                        .font(.title2.weight(.semibold))
+                    Text("Tune MeatPad to match the way you write.")
+                        .foregroundStyle(.secondary)
+                }
 
-            Toggle("Soft Wrap", isOn: $appModel.softWrap)
+                VStack(spacing: 0) {
+                    HStack {
+                        Label("Font size", systemImage: "textformat.size")
+                        Spacer()
+                        Stepper(value: $appModel.fontSize, in: 10...24) {
+                            Text("\(Int(appModel.fontSize)) pt")
+                                .monospacedDigit()
+                                .frame(width: 42, alignment: .trailing)
+                        }
+                    }
+                    .padding(14)
+
+                    Divider().opacity(0.45).padding(.leading, 44)
+
+                    Toggle(isOn: $appModel.softWrap) {
+                        Label("Soft wrap", systemImage: "arrow.turn.down.right")
+                    }
+                    .padding(14)
+                }
+                .glassPanel(cornerRadius: 14, shadow: false)
+
+                Spacer()
+            }
+            .padding(24)
         }
-        .padding(20)
     }
 }

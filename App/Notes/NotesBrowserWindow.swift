@@ -25,6 +25,7 @@ struct NotesBrowserWindow: View {
         } detail: {
             detail
         }
+        .background { AmbientGlassBackground() }
         .frame(minWidth: 720, minHeight: 480)
         .onAppear { AppModel.shared.browserWindowDidAppear() }
         .onDisappear { AppModel.shared.browserWindowDidDisappear() }
@@ -37,17 +38,22 @@ struct NotesBrowserWindow: View {
                 .foregroundStyle(.secondary)
         } else {
             List(filtered, selection: $selection) { note in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(note.title).lineLimit(1)
-                    Text(note.modified, style: .relative)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 9) {
+                    Image(systemName: "note.text")
+                        .foregroundStyle(MeatPadGlass.tint.gradient)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(note.title).lineLimit(1)
+                        Text(note.modified, style: .relative)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .contextMenu {
                     Button("Open in New Window") { openInNewWindow(note.id) }
                     Button("Move to Trash", role: .destructive) { trash(note.id) }
                 }
             }
+            .scrollContentBackground(.hidden)
             .overlay {
                 if filtered.isEmpty {
                     Text("No matches")
@@ -64,9 +70,22 @@ struct NotesBrowserWindow: View {
             NoteDetailEditor(noteID: selection) { openInNewWindow(selection) }
                 .id(selection)
         } else {
-            Text("Select a note")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ZStack {
+                AmbientGlassBackground()
+                VStack(spacing: 12) {
+                    Image(systemName: "note.text")
+                        .font(.system(size: 30, weight: .light))
+                        .foregroundStyle(MeatPadGlass.tint.gradient)
+                    Text("Select a note")
+                        .font(.title3.weight(.medium))
+                    Text("Your notes stay ready when inspiration strikes.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(26)
+                .glassPanel()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

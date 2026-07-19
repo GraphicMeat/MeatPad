@@ -16,17 +16,28 @@ struct QuickOpenView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TextField("Quick Open", text: $query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 16))
-                .padding(12)
-                .focused($focused)
+            HStack(spacing: 10) {
+                Image(systemName: "sparkle.magnifyingglass")
+                    .foregroundStyle(MeatPadGlass.violet.gradient)
+                TextField("Search files", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 16, weight: .medium))
+                    .focused($focused)
+                Text("⌘T")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(.thinMaterial, in: Capsule())
+            }
+                .padding(.horizontal, 16)
+                .frame(height: 52)
                 .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
                 .onKeyPress(.downArrow) { moveSelection(1); return .handled }
                 .onKeyPress(.return) { openSelected(); return .handled }
                 .onKeyPress(.escape) { dismiss(); return .handled }
 
-            Divider()
+            Divider().opacity(0.55)
 
             if matches.isEmpty {
                 Text(query.isEmpty ? "No files" : "No matches")
@@ -53,12 +64,10 @@ struct QuickOpenView: View {
                 }
             }
         }
-        .frame(width: 560)
-        .frame(maxHeight: 400)
+        .frame(width: 580)
+        .frame(maxHeight: 420)
         .fixedSize(horizontal: false, vertical: true)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .shadow(radius: 20)
+        .glassPanel(cornerRadius: 20)
         .onAppear {
             rerank()
             focused = true
@@ -87,10 +96,20 @@ struct QuickOpenView: View {
             .lineLimit(1)
             .truncationMode(.middle)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(isSelected ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(isSelected ? AnyShapeStyle(MeatPadGlass.violet.opacity(0.18)) : AnyShapeStyle(.clear))
+            }
+            .overlay(alignment: .leading) {
+                Capsule().fill(MeatPadGlass.violet)
+                    .frame(width: 3, height: 18)
+                    .opacity(isSelected ? 1 : 0)
+            }
+            .padding(.horizontal, 7)
             .contentShape(Rectangle())
+            .animation(.easeOut(duration: 0.12), value: isSelected)
     }
 
     private func moveSelection(_ delta: Int) {

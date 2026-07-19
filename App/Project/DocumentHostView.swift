@@ -11,9 +11,22 @@ struct DocumentHostView: View {
             // never bleeds across tabs.
             DocumentContent(url: url, project: viewModel).id(url)
         } else {
-            VStack(spacing: 8) {
-                Text(viewModel.root.lastPathComponent).font(.title2)
-                Text("Select a file").foregroundStyle(.secondary)
+            ZStack {
+                AmbientGlassBackground()
+                VStack(spacing: 14) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 32, weight: .light))
+                        .foregroundStyle(MeatPadGlass.violet.gradient)
+                    VStack(spacing: 4) {
+                        Text(viewModel.root.lastPathComponent)
+                            .font(.title2.weight(.semibold))
+                        Text("Choose a file from the sidebar or press ⌘T")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 30)
+                .padding(.vertical, 26)
+                .glassPanel()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -100,7 +113,7 @@ private struct BannerBar<Actions: View>: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(.bar)
+        .background(.ultraThinMaterial)
         .overlay(alignment: .bottom) { Divider() }
     }
 }

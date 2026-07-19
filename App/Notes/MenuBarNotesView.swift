@@ -26,39 +26,59 @@ struct MenuBarNotesView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            TextField("Search notes", text: $query)
-                .textFieldStyle(.roundedBorder)
-                .padding(8)
-
-            if filtered.isEmpty {
-                Text(noteStore.notes.isEmpty ? "No notes yet" : "No matches")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List(filtered) { note in
-                    Button { open(note.id) } label: {
-                        HStack {
-                            Text(note.title).lineLimit(1)
-                            Spacer()
-                            Text(note.modified, style: .relative)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+        ZStack {
+            AmbientGlassBackground()
+            VStack(spacing: 0) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("MeatPad").font(.headline)
+                        Text("Recent notes").font(.caption).foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
+                    Spacer()
+                    Image(systemName: "note.text")
+                        .foregroundStyle(MeatPadGlass.tint.gradient)
                 }
-                .listStyle(.plain)
-            }
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
 
-            Divider()
+                GlassSearchField(prompt: "Search notes", text: $query)
+                    .padding(10)
 
-            HStack {
-                Button("New Note") { createAndOpen() }
-                Spacer()
-                Button("All Notes") { openBrowser() }
+                if filtered.isEmpty {
+                    ContentUnavailableView(
+                        noteStore.notes.isEmpty ? "No notes yet" : "No matches",
+                        systemImage: noteStore.notes.isEmpty ? "note.text.badge.plus" : "magnifyingglass"
+                    )
+                } else {
+                    List(filtered) { note in
+                        Button { open(note.id) } label: {
+                            HStack(spacing: 9) {
+                                Image(systemName: "note.text")
+                                    .foregroundStyle(MeatPadGlass.tint.gradient)
+                                Text(note.title).lineLimit(1)
+                                Spacer()
+                                Text(note.modified, style: .relative)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                }
+
+                Divider().opacity(0.45)
+
+                HStack {
+                    Button(action: createAndOpen) { Label("New Note", systemImage: "plus") }
+                        .buttonStyle(.borderedProminent)
+                    Spacer()
+                    Button(action: openBrowser) { Label("All Notes", systemImage: "rectangle.stack") }
+                        .buttonStyle(.borderless)
+                }
+                .padding(10)
             }
-            .padding(8)
         }
         .frame(width: 320, height: 400)
     }

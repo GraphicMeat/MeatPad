@@ -13,11 +13,19 @@ struct FileTreeView: View {
                 row(for: node)
             }
         }
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
     }
 
     @ViewBuilder
     private func row(for node: TreeNode) -> some View {
-        Label(node.name, systemImage: node.isDirectory ? "folder" : "doc.text")
+        HStack(spacing: 8) {
+            Image(systemName: node.isDirectory ? "folder.fill" : "doc.text")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(node.isDirectory ? AnyShapeStyle(MeatPadGlass.violet.gradient) : AnyShapeStyle(.secondary))
+                .frame(width: 16)
+            Text(node.name).lineLimit(1)
+        }
             .contentShape(Rectangle())
             .onTapGesture {
                 guard !node.isDirectory else { return }

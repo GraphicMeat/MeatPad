@@ -29,6 +29,7 @@ final class ProjectSearchViewModel: ObservableObject {
     @Published var wholeWord = false { didSet { scheduleSearch() } }
     @Published private(set) var results: [SearchMatch] = []
     @Published private(set) var errorMessage: String?
+    @Published private(set) var isSearching = false
     /// Bumped by the Cmd+Shift+F command to refocus the query field when the sidebar is
     /// already showing Search (a plain sidebar-mode switch can't re-trigger `.onAppear`).
     @Published private(set) var focusToken = UUID()
@@ -69,12 +70,15 @@ final class ProjectSearchViewModel: ObservableObject {
         guard query.count >= 2 else {
             results = []
             lastQuery = nil
+            isSearching = false
             return
         }
 
         let searchQuery = SearchQuery(pattern: query, isRegex: isRegex, caseSensitive: caseSensitive, wholeWord: wholeWord)
+        isSearching = true
         searchTask = Task { [weak self, engine, root] in
-            try? await Task.sleep(nanoseconds: 300_000_000)
+            // A short debounce keeps typing fluid without making search feel delayed.
+            try? await Task.sleep(nanoseconds: 140_000_000)
             guard !Task.isCancelled else { return }
             do {
                 // NativeSearch hops files itself (concurrent task group); this await just
@@ -83,11 +87,13 @@ final class ProjectSearchViewModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 self?.results = matches
                 self?.lastQuery = searchQuery
+                self?.isSearching = false
             } catch {
                 guard !Task.isCancelled else { return }
                 self?.results = []
                 self?.lastQuery = nil
                 self?.errorMessage = error.localizedDescription
+                self?.isSearching = false
             }
         }
     }

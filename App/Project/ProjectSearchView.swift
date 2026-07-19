@@ -13,35 +13,65 @@ struct ProjectSearchView: View {
     @State private var collapsedFiles: Set<URL> = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            TextField("Search", text: $viewModel.query)
-                .textFieldStyle(.roundedBorder)
-                .focused($queryFocused)
-
-            HStack(spacing: 4) {
-                toggle("Aa", isOn: $viewModel.caseSensitive, help: "Match Case")
-                toggle(".*", isOn: $viewModel.isRegex, help: "Regular Expression")
-                toggle("\\b", isOn: $viewModel.wholeWord, help: viewModel.isRegex ? "Not available with regex" : "Whole Word")
-                    .disabled(viewModel.isRegex)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Project Search", systemImage: "text.magnifyingglass")
+                    .font(.headline)
                 Spacer()
+                if viewModel.isSearching {
+                    ProgressView().controlSize(.small)
+                } else if !viewModel.results.isEmpty {
+                    Text("\(viewModel.results.count)")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.thinMaterial, in: Capsule())
+                }
+            }
+
+            GlassSearchField(prompt: "Find in files", text: $viewModel.query, focused: $queryFocused)
+
+            HStack(spacing: 6) {
+                toggle("Aa", icon: nil, isOn: $viewModel.caseSensitive, help: "Match Case")
+                toggle("Regex", icon: "asterisk", isOn: $viewModel.isRegex, help: "Regular Expression")
+                toggle("Word", icon: "textformat", isOn: $viewModel.wholeWord, help: viewModel.isRegex ? "Not available with regex" : "Whole Word")
+                    .disabled(viewModel.isRegex)
             }
 
             if let error = viewModel.errorMessage {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
 
-            Divider().padding(.vertical, 2)
+            Divider().opacity(0.45).padding(.vertical, 2)
 
-            TextField("Replace", text: $viewModel.replaceText)
-                .textFieldStyle(.roundedBorder)
-            Button("Replace All") { viewModel.replaceAll() }
-                .disabled(viewModel.results.isEmpty)
-
-            Divider().padding(.vertical, 2)
+            VStack(alignment: .leading, spacing: 7) {
+                Text("REPLACE")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                TextField("Replace with", text: $viewModel.replaceText)
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 11)
+                    .frame(height: 34)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(.white.opacity(0.18), lineWidth: 0.75)
+                    }
+                Button { viewModel.replaceAll() } label: {
+                    Label("Replace All", systemImage: "arrow.triangle.2.circlepath")
+                        .frame(maxWidth: .infinity)
+                }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.results.isEmpty)
+            }
+            Divider().opacity(0.45).padding(.vertical, 2)
 
             results
         }
-        .padding(8)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear { queryFocused = true }
         .onChange(of: viewModel.focusToken) { _, _ in queryFocused = true }
     }
@@ -49,8 +79,17 @@ struct ProjectSearchView: View {
     @ViewBuilder
     private var results: some View {
         if viewModel.results.isEmpty {
-            if viewModel.query.count >= 2 {
-                Text("No results").font(.caption).foregroundStyle(.secondary)
+            if !viewModel.isSearching {
+                VStack(spacing: 7) {
+                    Image(systemName: viewModel.query.count >= 2 ? "text.magnifyingglass" : "keyboard")
+                        .font(.title3)
+                        .foregroundStyle(.tertiary)
+                    Text(viewModel.query.count >= 2 ? "No matches" : "Type at least 2 characters")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 18)
             }
         } else {
             List {
@@ -67,6 +106,7 @@ struct ProjectSearchView: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
         }
     }
 
@@ -100,10 +140,17 @@ struct ProjectSearchView: View {
         }
     }
 
-    private func toggle(_ title: String, isOn: Binding<Bool>, help: String) -> some View {
-        Button(title) { isOn.wrappedValue.toggle() }
-            .buttonStyle(.bordered)
-            .tint(isOn.wrappedValue ? .accentColor : .secondary)
+    private func toggle(_ title: String, icon: String?, isOn: Binding<Bool>, help: String) -> some View {
+        Button { isOn.wrappedValue.toggle() } label: {
+            if let icon {
+                Label(title, systemImage: icon)
+            } else {
+                Text(title)
+            }
+        }
+            .buttonStyle(GlassIconButtonStyle(selected: isOn.wrappedValue))
+            .font(.caption.weight(.semibold))
+            .lineLimit(1)
             .help(help)
     }
 

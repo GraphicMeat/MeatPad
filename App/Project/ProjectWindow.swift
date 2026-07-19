@@ -8,6 +8,7 @@ struct ProjectWindow: View {
     @StateObject private var viewModel: ProjectViewModel
     @StateObject private var searchViewModel: ProjectSearchViewModel
     @ObservedObject private var executor = AppModel.shared.commandExecutor
+    @Namespace private var sidebarSelection
 
     init(root: URL) {
         _viewModel = StateObject(wrappedValue: ProjectViewModel(root: root))
@@ -25,19 +26,27 @@ struct ProjectWindow: View {
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
-                Picker("Sidebar", selection: $viewModel.sidebarMode) {
-                    Text("Files").tag(ProjectViewModel.SidebarMode.files)
-                    Text("Search").tag(ProjectViewModel.SidebarMode.search)
+                HStack(spacing: 2) {
+                    sidebarButton("Files", icon: "folder", mode: .files)
+                    sidebarButton("Search", icon: "magnifyingglass", mode: .search)
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .padding(8)
+                .padding(3)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(.white.opacity(0.10), lineWidth: 0.5)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
 
                 switch viewModel.sidebarMode {
                 case .files: FileTreeView(viewModel: viewModel)
                 case .search: ProjectSearchView(project: viewModel, viewModel: searchViewModel)
                 }
             }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(.ultraThinMaterial)
+            .navigationSplitViewColumnWidth(min: 250, ideal: 280, max: 340)
         } detail: {
             DocumentHostView(viewModel: viewModel)
                 .safeAreaInset(edge: .top, spacing: 0) {
@@ -78,6 +87,31 @@ struct ProjectWindow: View {
             #endif
         }
         .onDisappear { AppModel.shared.projectWindowDidDisappear(viewModel) }
+    }
+
+    private func sidebarButton(_ title: String, icon: String, mode: ProjectViewModel.SidebarMode) -> some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.16)) { viewModel.sidebarMode = mode }
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.callout.weight(viewModel.sidebarMode == mode ? .semibold : .medium))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(maxWidth: .infinity)
+                .frame(height: 28)
+                .contentShape(Rectangle())
+                .background {
+                    if viewModel.sidebarMode == mode {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(.white.opacity(0.10))
+                            .shadow(color: .black.opacity(0.14), radius: 3, y: 1)
+                            .matchedGeometryEffect(id: "sidebar-mode", in: sidebarSelection)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(viewModel.sidebarMode == mode ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+        .frame(maxWidth: .infinity)
     }
 }
 
