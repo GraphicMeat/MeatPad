@@ -48,6 +48,15 @@ final class HighlighterTests: XCTestCase {
         XCTAssertFalse(keyword.isEmpty, "expected a keyword span covering 'func'; got \(spans)")
     }
 
+    func testMarkdownGrammarsAreRegistered() throws {
+        // Markdown isn't Highlighter-wired yet (next task makes Highlighter
+        // injection-aware), but the registry entries must exist so that task
+        // can build on them.
+        let markdown = try XCTUnwrap(GrammarRegistry.configuration(for: "markdown"))
+        XCTAssertNotNil(markdown.queries[.injections], "markdown grammar must ship an injections query")
+        XCTAssertNotNil(GrammarRegistry.configuration(for: "markdown_inline"))
+    }
+
     func testAllWiredLanguagesLoadGrammarAndQuery() {
         // Every language in the registry except markdown (dropped for P1) must
         // yield a working Highlighter — the bundle locator fails silently (nil),

@@ -1,42 +1,6 @@
 {
-  "originHash" : "c8c02a027b6a028e2249e3505e6e2cd1a99a4a9b590c99c1701699d6cf261515",
+  "originHash" : "44d0d156ac4667a23eec1e5e6d643978fa8ac6a457ec00a88ef5912e8acef65c",
   "pins" : [
-    {
-      "identity" : "coretextswift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/krzyzanowskim/CoreTextSwift",
-      "state" : {
-        "revision" : "833177201d6421e6322296f39fce6ff6ae52618a",
-        "version" : "0.2.0"
-      }
-    },
-    {
-      "identity" : "sparkle",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/sparkle-project/Sparkle",
-      "state" : {
-        "revision" : "b6496a74a087257ef5e6da1c5b29a447a60f5bd7",
-        "version" : "2.9.4"
-      }
-    },
-    {
-      "identity" : "sttextkitplus",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/krzyzanowskim/STTextKitPlus",
-      "state" : {
-        "revision" : "2ee74906f4d753458eeaa9a2f6d4538aacb86a1d",
-        "version" : "0.3.0"
-      }
-    },
-    {
-      "identity" : "sttextview",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/krzyzanowskim/STTextView",
-      "state" : {
-        "revision" : "8569251785daf1f0310eaa9235d1254264f0d249",
-        "version" : "2.3.10"
-      }
-    },
     {
       "identity" : "swifttreesitter",
       "kind" : "remoteSourceControl",
@@ -125,6 +89,15 @@
       "state" : {
         "revision" : "ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24",
         "version" : "0.24.8"
+      }
+    },
+    {
+      "identity" : "tree-sitter-markdown",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
+      "state" : {
+        "revision" : "f969cd3ae3f9fbd4e43205431d0ae286014c05b5",
+        "version" : "0.5.3"
       }
     },
     {

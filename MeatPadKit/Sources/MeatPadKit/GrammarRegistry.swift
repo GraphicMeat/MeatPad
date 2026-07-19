@@ -15,6 +15,8 @@ import TreeSitterC
 import TreeSitterCPP
 import TreeSitterYAML
 import TreeSitterSwift
+import TreeSitterMarkdown
+import TreeSitterMarkdownInline
 
 /// Anchor for `Bundle(for:)` so we can locate resource bundles relative to the
 /// binary that statically links MeatPadKit (the .xctest bundle under `swift test`,
@@ -38,7 +40,8 @@ enum GrammarRegistry {
         let bundleName: String?
     }
 
-    // languageID -> grammar. Missing ids (markdown) simply have no grammar wired.
+    // languageID -> grammar. "markdown_inline" is a grammar-only entry (injected by markdown's
+    // injections.scm, not user-selectable) — it's deliberately absent from Languages.all.
     private static let specs: [String: Spec] = [
         "json":       Spec(function: tree_sitter_json,       name: "JSON",       bundleName: nil),
         "javascript": Spec(function: tree_sitter_javascript, name: "JavaScript", bundleName: nil),
@@ -55,6 +58,11 @@ enum GrammarRegistry {
         "cpp":        Spec(function: tree_sitter_cpp,        name: "CPP",        bundleName: nil),
         "yaml":       Spec(function: tree_sitter_yaml,       name: "YAML",       bundleName: nil),
         "swift":      Spec(function: tree_sitter_swift,      name: "Swift",      bundleName: nil),
+        "markdown":        Spec(function: tree_sitter_markdown,        name: "Markdown",       bundleName: nil),
+        // Injected by markdown's injections.scm as language "markdown_inline" — the key here
+        // must match that exactly. Lives in the same TreeSitterMarkdown product as the block
+        // grammar (two targets, like TypeScript+TSX), so its bundle name needs to be explicit.
+        "markdown_inline": Spec(function: tree_sitter_markdown_inline, name: "MarkdownInline", bundleName: "TreeSitterMarkdown_TreeSitterMarkdownInline"),
     ]
 
     /// A parsed grammar language paired with its highlights query, or nil if unsupported.

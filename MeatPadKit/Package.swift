@@ -25,6 +25,7 @@ let package = Package(
         .package(url: "https://github.com/tree-sitter/tree-sitter-css", exact: "0.23.2"),
         .package(url: "https://github.com/tree-sitter/tree-sitter-python", exact: "0.23.6"),
         .package(url: "https://github.com/tree-sitter-grammars/tree-sitter-yaml", exact: "0.7.0"),
+        .package(url: "https://github.com/tree-sitter-grammars/tree-sitter-markdown", exact: "0.5.3"),
         // Swift grammar has no checked-in generated parser on its release tags; the
         // `with-generated-files` branch ships them plus a working Package.swift.
         // Pinned to an immutable commit of that branch so `swift package update`
@@ -36,6 +37,7 @@ let package = Package(
             name: "MeatPadKit",
             dependencies: [
                 .product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),
+                .product(name: "SwiftTreeSitterLayer", package: "SwiftTreeSitter"),
                 .product(name: "TreeSitterJSON", package: "tree-sitter-json"),
                 .product(name: "TreeSitterJavaScript", package: "tree-sitter-javascript"),
                 // TreeSitterTypeScript product bundles both the TypeScript and TSX modules.
@@ -51,6 +53,8 @@ let package = Package(
                 .product(name: "TreeSitterCPP", package: "tree-sitter-cpp"),
                 .product(name: "TreeSitterYAML", package: "tree-sitter-yaml"),
                 .product(name: "TreeSitterSwift", package: "tree-sitter-swift"),
+                // TreeSitterMarkdown product bundles both the block and inline modules.
+                .product(name: "TreeSitterMarkdown", package: "tree-sitter-markdown"),
             ]
         ),
         .testTarget(name: "MeatPadKitTests", dependencies: ["MeatPadKit"]),
