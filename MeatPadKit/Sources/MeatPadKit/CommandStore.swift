@@ -152,8 +152,17 @@ public final class CommandStore: ObservableObject {
 
     @Published public private(set) var commands: [SavedCommand] = []
 
-    private static let decoder = JSONDecoder()
-    private static let encoder = JSONEncoder()
+    private static let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }()
+
+    private static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }()
 
     public init(directory: URL) {
         self.directory = directory

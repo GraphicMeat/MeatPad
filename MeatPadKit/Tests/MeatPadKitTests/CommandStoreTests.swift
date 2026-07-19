@@ -275,4 +275,22 @@ final class CommandStoreTests: XCTestCase {
         let json = #"{"type":"mystery"}"#
         XCTAssertThrowsError(try JSONDecoder().decode(CommandOrigin.self, from: Data(json.utf8)))
     }
+
+    /// CommandStore's on-disk format uses ISO8601 dates (matching NoteStore's convention),
+    /// not the default epoch-Double encoding — otherwise `imported` origin dates would be
+    /// unreadable/inconsistent with the rest of the app's persisted JSON.
+    func testImportedOriginDateEncodesAsISO8601OnDiskAndRoundTrips() throws {
+        let store1 = makeStore()
+        let originalDate = Date(timeIntervalSince1970: 1_700_000_000)
+        var command = makeCommand(name: "Imported")
+        command.origin = .imported(bundleName: "My.tmbundle", date: originalDate)
+        try store1.add(command)
+
+        let fileURL = tempDir.appendingPathComponent("\(command.id.uuidString).json")
+        let json = try String(contentsOf: fileURL, encoding: .utf8)
+        XCTAssertTrue(json.range(of: #"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"#, options: .regularExpression) != nil, "expected an ISO8601 date string, got: \(json)")
+
+        let store2 = makeStore()
+        XCTAssertEqual(store2.commands.first?.origin, command.origin)
+    }
 }
