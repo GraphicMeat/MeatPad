@@ -466,33 +466,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Guard quit against unsaved *file* documents (notes autosave and flush on their own
     /// `willTerminate` path, untouched). One summary alert covers all dirty files.
+    ///
+    /// Once the save-or-discard decision is settled, quit still isn't necessarily ready to
+    /// proceed: any open project may have live LSP server processes, and those need to be
+    /// asked to shut down and actually reaped before the app exits (see
+    /// `AppModel.shutdownAllProjectLSPManagersAndWait`). When there's nothing to wait for
+    /// this returns `.terminateNow` exactly as before; otherwise it holds termination open
+    /// with `.terminateLater` and replies once shutdown (bounded by its own timeout, so a
+    /// hung server can't hang quitting the app) completes.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let dirty = EditorRegistry.shared.allFileViewModels().filter { $0.isDirty }
-        guard !dirty.isEmpty else { return .terminateNow }
-
-        let alert = NSAlert()
-        let count = dirty.count
-        alert.messageText = count == 1
-            ? String(localized: "1 document has unsaved changes.")
-            : String(localized: "\(count) documents have unsaved changes.")
-        alert.informativeText = String(localized: "Do you want to save your changes before quitting?")
-        alert.addButton(withTitle: String(localized: "Save All"))
-        alert.addButton(withTitle: String(localized: "Discard All"))
-        alert.addButton(withTitle: String(localized: "Cancel"))
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            // Any save failure (disk full, read-only…) cancels the quit so nothing is
-            // silently lost; the helper names the files that couldn't be written.
-            return FileEditorViewModel.saveAllReportingFailures(dirty) ? .terminateNow : .terminateCancel
-        case .alertSecondButtonReturn:
-            return .terminateNow
-        default:
-            return .terminateCancel
+        if !dirty.isEmpty {
+            let alert = NSAlert()
+            let count = dirty.count
+            alert.messageText = count == 1
+                ? String(localized: "1 document has unsaved changes.")
+                : String(localized: "\(count) documents have unsaved changes.")
+            alert.informativeText = String(localized: "Do you want to save your changes before quitting?")
+            alert.addButton(withTitle: String(localized: "Save All"))
+            alert.addButton(withTitle: String(localized: "Discard All"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                // Any save failure (disk full, read-only…) cancels the quit so nothing is
+                // silently lost; the helper names the files that couldn't be written.
+                guard FileEditorViewModel.saveAllReportingFailures(dirty) else { return .terminateCancel }
+            case .alertSecondButtonReturn:
+                break // discard — fall through to the LSP-aware terminate decision below
+            default:
+                return .terminateCancel
+            }
         }
+
+        guard AppModel.shared.hasOpenProjectWindows else { return .terminateNow }
+        Task {
+            await AppModel.shared.shutdownAllProjectLSPManagersAndWait()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         AppModel.shared.saveSessionNow()
-        AppModel.shared.shutdownAllProjectLSPManagers()
     }
 }

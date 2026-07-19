@@ -180,14 +180,29 @@ final class AppModel: ObservableObject {
         scheduleSessionSave()
     }
 
+    /// True when at least one project window is open — `applicationShouldTerminate` uses
+    /// this to decide whether quit needs to wait on LSP shutdown at all.
+    var hasOpenProjectWindows: Bool { !projectViewModels.isEmpty }
+
     /// Quit doesn't close each project window individually (`applicationShouldTerminate`
-    /// answers `.terminateNow` directly), so `ProjectWindowCloseGuard.windowShouldClose`
-    /// never runs and never gets a chance to shut its project's language servers down.
-    /// Called from `applicationWillTerminate` to give every still-open project's servers
-    /// the same graceful exit notification a normal window close would have sent.
-    func shutdownAllProjectLSPManagers() {
-        for viewModel in projectViewModels.values {
-            viewModel.lspManager.shutdown()
+    /// answers `.terminateNow`/`.terminateLater` itself), so `ProjectWindowCloseGuard
+    /// .windowShouldClose` never runs and never gets a chance to shut its project's
+    /// language servers down. Called from `applicationShouldTerminate` to give every
+    /// still-open project's servers the same graceful exit a normal window close would
+    /// have sent — and, unlike the old fire-and-forget `shutdown()`, actually awaited
+    /// before the app is allowed to exit. macOS does not kill child processes when the
+    /// parent quits, and the LSP handle's own self-exit-on-parent-death backstop has been
+    /// observed to leak in practice (live-quit testing, LSP-t4), so detached shutdown
+    /// Tasks that nobody waits on can leave orphaned server processes behind. Every
+    /// project's shutdown runs in parallel via `TaskGroup` so N open projects don't
+    /// serialize into N*timeout.
+    func shutdownAllProjectLSPManagersAndWait(timeout: TimeInterval = 3) async {
+        await withTaskGroup(of: Void.self) { group in
+            for viewModel in projectViewModels.values {
+                group.addTask {
+                    await viewModel.lspManager.shutdownAndWait(timeout: timeout)
+                }
+            }
         }
     }
 
