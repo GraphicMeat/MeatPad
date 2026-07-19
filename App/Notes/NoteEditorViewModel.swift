@@ -23,6 +23,11 @@ final class NoteEditorViewModel: ObservableObject {
     private let debouncer = Debouncer(delay: 1)
     private let frameDebouncer = Debouncer(delay: 0.5)
     @Published private(set) var cursor: Int = 0
+    /// One-shot "scroll to + select this range" target for the editor (search-result
+    /// jumps). Mirrors `ProjectViewModel.revealTarget`: stays set until `CodeEditor`
+    /// confirms it applied it via `revealConsumed`, so a reveal into a not-yet-rendered
+    /// editor can never be lost to render-pass timing.
+    @Published private(set) var revealTarget: RevealTarget?
     private var loaded = false
     private var windowObservers: [NSObjectProtocol] = []
 
@@ -76,6 +81,18 @@ final class NoteEditorViewModel: ObservableObject {
         // otherwise bump `modified`, rewrite the file, and re-sort the recency lists.
         // The cursor rides along on the next content save/flush instead.
         cursor = location
+    }
+
+    /// Requests a one-shot scroll-to + select of `range` in this note's editor. `range`
+    /// is a whole-document UTF-16 `NSRange`. A fresh token marks a new request.
+    func reveal(range: NSRange) {
+        revealTarget = RevealTarget(token: UUID(), range: range)
+    }
+
+    /// Called by the editor after it actually scrolled/selected the target. Token-guarded
+    /// so a slow consumer can't clear a newer target.
+    func revealConsumed(token: UUID) {
+        if revealTarget?.token == token { revealTarget = nil }
     }
 
     func setLanguage(_ id: String?) {

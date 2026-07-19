@@ -318,6 +318,8 @@ private struct NoteDetailEditor: View {
                     fontSize: appModel.fontSize,
                     softWrap: appModel.softWrap,
                     initialCursor: appModel.noteStore.notes.first(where: { $0.id == viewModel.noteID })?.cursor,
+                    reveal: viewModel.revealTarget,
+                    onRevealApplied: { viewModel.revealConsumed(token: $0) },
                     snippetController: snippetController,
                     onCursorChange: viewModel.cursorDidChange
                 )
