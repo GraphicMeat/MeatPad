@@ -2,9 +2,9 @@ import SwiftUI
 import AppKit
 import MeatPadKit
 
-/// Content view for the `MenuBarExtra("MeatPad")` `.window`-style popover: a title
-/// search over the 15 most recently modified notes, plus "New Note" / "All Notes"
-/// footer actions.
+/// Content view for the `MenuBarExtra("MeatPad")` `.window`-style popover: a full-text
+/// (title + content) search via NoteStore's search index, showing the top 15 ranked results,
+/// plus "New Note" / "All Notes" footer actions.
 // ponytail: MenuBarExtra(.window) has no first-party API for a control inside it to
 // close the popover (Apple feedback FB11984872; `@Environment(\.dismiss)` is a no-op
 // here). Clicking outside dismisses it natively, which is an acceptable P1 fallback.

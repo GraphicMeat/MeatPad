@@ -322,7 +322,7 @@ struct NotesBrowserWindow: View {
         if let range = match.rangeInExcerpt {
             let full = NSRange(location: 0, length: mutable.length)
             if range.location >= 0, range.location + range.length <= full.length {
-                mutable.addAttribute(.font, value: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .bold), range: range)
+                mutable.addAttribute(.font, value: NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .bold), range: range)
             }
         }
         return AttributedString(mutable)
