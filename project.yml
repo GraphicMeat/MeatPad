@@ -75,8 +75,8 @@ targets:
         ENABLE_APP_SANDBOX: NO
         SWIFT_VERSION: "5.10"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
-        MARKETING_VERSION: "0.9.3"
-        CURRENT_PROJECT_VERSION: "0.9.3"
+        MARKETING_VERSION: "0.9.4"
+        CURRENT_PROJECT_VERSION: "0.9.4"
   MeatPadUITests:
     type: bundle.ui-testing
     platform: macOS
