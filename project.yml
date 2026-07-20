@@ -15,11 +15,18 @@ packages:
   # LSP wire-protocol vocabulary only (Diagnostic, Position/LSPRange, CompletionItem,
   # Location, WorkspaceEdit, …) — the app needs to speak these types across every 0.7 LSP
   # feature (diagnostics now; completion/hover/goto-def/references/rename next). The actual
-  # client/session machinery (LanguageClient, JSONRPC, ProcessEnv) stays inside MeatPadKit
-  # only, reached through LSPProjectManager — never a direct app dependency.
+  # client/session machinery (LanguageClient, JSONRPC) stays inside MeatPadKit only,
+  # reached through LSPProjectManager — never a direct app dependency. ProcessEnv is
+  # the one exception (see below): the app uses it directly for PATH reconstruction.
   LanguageServerProtocol:
     url: https://github.com/ChimeHQ/LanguageServerProtocol
     from: 0.14.0
+  # ProcessInfo.userEnvironment (PATH reconstruction for GUI-launched LSP detection,
+  # see ProjectViewModel.init) is used directly by the app, not just MeatPadKit —
+  # declared explicitly so it doesn't rely on transitive build-graph visibility.
+  ProcessEnv:
+    url: https://github.com/ChimeHQ/ProcessEnv
+    from: 1.0.0
 targets:
   MeatPad:
     type: application
@@ -33,6 +40,8 @@ targets:
         product: Sparkle
       - package: LanguageServerProtocol
         product: LanguageServerProtocol
+      - package: ProcessEnv
+        product: ProcessEnv
     preBuildScripts:
       - name: Ensure Info.plist (xcodegen output)
         basedOnDependencyAnalysis: false
