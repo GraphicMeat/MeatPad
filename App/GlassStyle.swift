@@ -98,6 +98,19 @@ struct GlassSearchField: View {
     let prompt: String
     @Binding var text: String
     var focused: FocusState<Bool>.Binding?
+    var identifier: String?
+
+    init(
+        prompt: String,
+        text: Binding<String>,
+        focused: FocusState<Bool>.Binding? = nil,
+        identifier: String? = nil
+    ) {
+        self.prompt = prompt
+        _text = text
+        self.focused = focused
+        self.identifier = identifier
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -107,9 +120,11 @@ struct GlassSearchField: View {
                 TextField(prompt, text: $text)
                     .textFieldStyle(.plain)
                     .focused(focused)
+                    .accessibilityIdentifier(identifier ?? prompt)
             } else {
                 TextField(prompt, text: $text)
                     .textFieldStyle(.plain)
+                    .accessibilityIdentifier(identifier ?? prompt)
             }
             if !text.isEmpty {
                 Button { text = "" } label: {

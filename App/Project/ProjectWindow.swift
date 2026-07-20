@@ -141,8 +141,17 @@ struct ProjectWindow: View {
                 }
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier(sidebarAccessibilityIdentifier(for: mode))
         .foregroundStyle(viewModel.sidebarMode == mode ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .frame(maxWidth: .infinity)
+    }
+
+    private func sidebarAccessibilityIdentifier(for mode: ProjectViewModel.SidebarMode) -> String {
+        switch mode {
+        case .files: "project-sidebar-files"
+        case .search: "project-sidebar-search"
+        case .references: "project-sidebar-references"
+        }
     }
 }
 

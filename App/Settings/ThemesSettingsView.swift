@@ -148,7 +148,9 @@ struct ThemesSettingsView: View {
 
     private func editorColorsSection(_ theme: Theme) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Editor Colors").font(.subheadline.bold())
+            Text("Editor Colors")
+                .font(.subheadline.bold())
+                .accessibilityIdentifier("themes-editor-colors")
             ColorPicker("Background", selection: colorBinding(theme, \.editorBackground))
             ColorPicker("Foreground", selection: colorBinding(theme, \.editorForeground))
             ColorPicker("Current Line", selection: colorBinding(theme, \.currentLine))

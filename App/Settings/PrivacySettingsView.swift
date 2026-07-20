@@ -190,7 +190,9 @@ struct PrivacySettingsView: View {
 
     private var deletePanel: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Delete Everything").font(.headline)
+            Text("Delete Everything")
+                .font(.headline)
+                .accessibilityIdentifier("privacy-delete-everything")
             Text("Moves every note, snippet, command, macro, theme, and the window session to the Trash, then quits MeatPad. Recoverable from the Trash until you empty it.")
                 .font(.callout)
                 .foregroundStyle(.secondary)

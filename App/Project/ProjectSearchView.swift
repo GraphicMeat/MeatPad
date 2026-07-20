@@ -30,7 +30,12 @@ struct ProjectSearchView: View {
                 }
             }
 
-            GlassSearchField(prompt: String(localized: "Find in files"), text: $viewModel.query, focused: $queryFocused)
+            GlassSearchField(
+                prompt: String(localized: "Find in files"),
+                text: $viewModel.query,
+                focused: $queryFocused,
+                identifier: "project-search-field"
+            )
 
             HStack(spacing: 6) {
                 toggle("Aa", icon: nil, isOn: $viewModel.caseSensitive, help: String(localized: "Match Case"))
@@ -63,6 +68,7 @@ struct ProjectSearchView: View {
                         .frame(maxWidth: .infinity)
                 }
                     .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("project-replace-all")
                     .disabled(viewModel.results.isEmpty)
             }
             Divider().opacity(0.45).padding(.vertical, 2)

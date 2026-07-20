@@ -77,3 +77,25 @@ targets:
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         MARKETING_VERSION: "0.9.0"
         CURRENT_PROJECT_VERSION: "0.9.0"
+  MeatPadUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - Tests/MeatPadUITests
+    dependencies:
+      - target: MeatPad
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+
+schemes:
+  MeatPad:
+    build:
+      targets:
+        MeatPad: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - MeatPadUITests

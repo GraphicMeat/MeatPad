@@ -5,20 +5,42 @@ import MeatPadKit
 struct SettingsView: View {
     @EnvironmentObject private var appModel: AppModel
 
+    private var captureSize: CGSize {
+        #if DEBUG
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: "ScreenshotMode") {
+            return CGSize(
+                width: max(640, defaults.double(forKey: "ScreenshotWindowWidth")),
+                // SwiftUI's macOS Settings scene adds 88 pt of tab/title chrome outside
+                // this content frame. Subtract it so the captured outer window is the
+                // requested 1440×900 rather than 1440×988.
+                height: max(560, defaults.double(forKey: "ScreenshotWindowHeight") - 88)
+            )
+        }
+        #endif
+        return CGSize(width: 640, height: 560)
+    }
+
     var body: some View {
         TabView {
             GeneralSettingsView()
                 .tabItem { Label("General", systemImage: "gearshape") }
             ThemesSettingsView(themeStore: appModel.themeStore)
-                .tabItem { Label("Themes", systemImage: "paintpalette") }
+                .tabItem {
+                    Label("Themes", systemImage: "paintpalette")
+                        .accessibilityIdentifier("settings-themes-tab")
+                }
             SnippetsSettingsView(library: appModel.snippetLibrary)
                 .tabItem { Label("Snippets", systemImage: "text.badge.plus") }
             CommandsSettingsView(store: appModel.commandStore)
                 .tabItem { Label("Commands", systemImage: "terminal") }
             PrivacySettingsView()
-                .tabItem { Label("Privacy", systemImage: "hand.raised") }
+                .tabItem {
+                    Label("Privacy", systemImage: "hand.raised")
+                        .accessibilityIdentifier("settings-privacy-tab")
+                }
         }
-        .frame(width: 640, height: 560)
+        .frame(width: captureSize.width, height: captureSize.height)
         .background { AmbientGlassBackground() }
     }
 }
