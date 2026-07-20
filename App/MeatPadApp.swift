@@ -547,6 +547,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true])
+        // Menu-bar-only mode (Settings ▸ General). Applied here, before the Dock icon
+        // would first appear; the toggle also flips it live via setActivationPolicy.
+        if UserDefaults.standard.bool(forKey: "menuBarOnly") {
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

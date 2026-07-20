@@ -51,6 +51,8 @@ private struct GeneralSettingsView: View {
     @EnvironmentObject private var appModel: AppModel
     // Read by AppDelegate.applicationShouldHandleReopen via UserDefaults — same key.
     @AppStorage("dockClickAction") private var dockClickAction = "allNotes"
+    // Read at launch by AppDelegate.applicationWillFinishLaunching via UserDefaults — same key.
+    @AppStorage("menuBarOnly") private var menuBarOnly = false
 
     var body: some View {
         ZStack {
@@ -95,6 +97,20 @@ private struct GeneralSettingsView: View {
                         .fixedSize()
                     }
                     .padding(14)
+                    .disabled(menuBarOnly)
+
+                    Divider().opacity(0.45).padding(.leading, 44)
+
+                    Toggle(isOn: $menuBarOnly) {
+                        Label("Menu bar only (hide Dock icon)", systemImage: "menubar.rectangle")
+                    }
+                    .padding(14)
+                    .onChange(of: menuBarOnly) { _, hidden in
+                        NSApp.setActivationPolicy(hidden ? .accessory : .regular)
+                        // Switching policy deactivates the app; reactivate so the
+                        // Settings window (and its key status) survives the flip.
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
                 }
                 .glassPanel(cornerRadius: 14, shadow: false)
 
