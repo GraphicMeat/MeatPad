@@ -239,6 +239,37 @@ public final class LSPProjectManager {
         }
     }
 
+    /// Tells `languageID`'s server that file(s) changed on disk while closed — Rename
+    /// Symbol's closed-file path (`RenameSymbol.applyToFile`) writes straight to disk,
+    /// bypassing `textDocument/didChange` entirely, so the server's own model of these files
+    /// (if it caches file contents at all) goes stale until it notices on its own.
+    /// `workspace/didChangeWatchedFiles` is the LSP-native way to say "go re-read this".
+    ///
+    /// Per spec, clients "SHOULD" only send this once a server has *registered* interest via
+    /// `client/registerCapability`. Checked what the vendored LanguageClient/
+    /// LanguageServerProtocol actually does with that registration
+    /// (`ServerCapabilities+Extensions.swift: applyRegistration`): it decodes the
+    /// `client/registerCapability` request (so the server does get an empty success reply)
+    /// but then, for `workspace/didChangeWatchedFiles` specifically, the switch case is a
+    /// bare `break` — the watcher globs are never stored anywhere queryable. There's also no
+    /// static `ServerCapabilities` field for it (the spec only defines this as a
+    /// dynamic-only registration, unlike e.g. completionProvider). So there is no path,
+    /// through this library, to ask "did this server actually register, and for what
+    /// globs" — the capability-aware version the plan asked for isn't buildable against
+    /// what's vendored.
+    ///
+    /// Sending unconditionally instead: a server that never registered is spec'd to ignore
+    /// file events it doesn't recognize, so this is spec-tolerated, not a violation — and
+    /// the alternative (send nothing, ever) guarantees the exact staleness this method
+    /// exists to fix. `try?` — best-effort, matches `documentClosed`'s own notification.
+    public func filesChangedOnDisk(urls: [URL], languageID: String) {
+        guard !urls.isEmpty, let handle = servers[languageID] else { return }
+        let changes = urls.map { FileEvent(uri: $0.absoluteString, type: .changed) }
+        enqueue(languageID: languageID) {
+            try? await handle.workspaceDidChangeWatchedFiles(DidChangeWatchedFilesParams(changes: changes))
+        }
+    }
+
     public func shutdown() {
         let (handles, terminators) = snapshotAndClearForShutdown()
         for (languageID, handle) in handles {

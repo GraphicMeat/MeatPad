@@ -444,6 +444,7 @@ final class ProjectViewModel: ObservableObject {
                 edit, originatingFile: request.fileURL, originatingOffset: request.offset,
                 originatingTextAtRequest: originTextAtRequest
             )
+            self.syncLSPAfterRename(outcome.results, originatingFile: request.fileURL, languageID: request.languageID)
             if let caret = outcome.originatingCaret {
                 self.open(file: request.fileURL, reveal: NSRange(location: caret, length: 0))
             }
@@ -694,6 +695,44 @@ final class ProjectViewModel: ObservableObject {
         guard let languageID = lspLanguageID(for: url) else { return }
         let text = EditorRegistry.shared.fileViewModel(for: url)?.text ?? ""
         lspManager.documentChanged(url: url, languageID: languageID, text: text)
+    }
+
+    /// Rename Symbol's server-state follow-up (0.9 polish plan Task 2). `RenameSymbol.apply`
+    /// only touches app-side state (`vm.text` for open files, disk for closed ones) — it has
+    /// no LSP access, so nothing tells the server about any of it on its own.
+    ///
+    /// The origin file needs no explicit push here: it's always the file the rename sheet
+    /// was invoked from, which is always `selectedTab` (only the selected tab's `CodeEditor`
+    /// exists at all — `DocumentHostView` mounts one `CodeEditor` per project window, keyed
+    /// to `selectedTab`). Its `vm.text = newText` assignment republishes through
+    /// `EditorPane`'s `text` binding into `CodeEditor.updateNSView`, which already schedules
+    /// `onDocumentChanged` → `notifyLSPDocumentChanged` off the existing 150ms highlight
+    /// debounce (`CodeEditor.Coordinator.scheduleHighlight`) — same as any other programmatic
+    /// whole-buffer replace (reload, external-change accept). Traced, not assumed.
+    ///
+    /// Every OTHER successful file is a real gap: no `CodeEditor` is mounted for it (it's
+    /// either a background tab or not open at all), so nothing observes its `vm.text`
+    /// changing. Open ones get an explicit `documentChanged` (reusing `notifyLSPDocumentChanged`
+    /// — it already gates on `lspLanguageID`/`EditorRegistry`, so this is just "call it for
+    /// files other than the one that already gets it for free"). Closed ones went straight to
+    /// disk, never through `documentOpened`, so `LSPProjectManager.documentChanged` wouldn't
+    /// even find them in `openDocuments` — those get `workspace/didChangeWatchedFiles`
+    /// instead, batched into one notification.
+    private func syncLSPAfterRename(_ results: [RenameSymbol.FileResult], originatingFile: URL, languageID: String) {
+        let originating = originatingFile.standardizedFileURL
+        let openURLs = Set(EditorRegistry.shared.allFileViewModels().map { $0.document.url.standardizedFileURL })
+
+        var closedURLs: [URL] = []
+        for result in results where result.success {
+            let url = result.url.standardizedFileURL
+            guard url != originating else { continue }
+            if openURLs.contains(url) {
+                notifyLSPDocumentChanged(result.url)
+            } else {
+                closedURLs.append(result.url)
+            }
+        }
+        lspManager.filesChangedOnDisk(urls: closedURLs, languageID: languageID)
     }
 
     private func presentError(_ error: Error, verb: String, url: URL) {
