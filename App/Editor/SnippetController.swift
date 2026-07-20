@@ -121,7 +121,11 @@ final class SnippetTextView: STTextView {
             MultiCaretController.appendCaret(to: self, keeping: existing)
             return
         }
+        let selBefore = textSelection
         super.mouseDown(with: event)
+        ClickDebug.log("SnippetTextView.mouseDown loc=\(event.locationInWindow)"
+            + " selBefore=\(selBefore) selAfter=\(textSelection)"
+            + " marked=\(hasMarkedText())")
     }
 
     override func keyDown(with event: NSEvent) {

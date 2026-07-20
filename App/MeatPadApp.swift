@@ -562,6 +562,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         #if DEBUG
+        ClickDebug.install()
         installScreenshotWindowSizingIfNeeded()
 
         // Invariant behind the unified Cmd+W: replacing .saveItem must have removed the

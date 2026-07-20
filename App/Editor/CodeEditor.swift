@@ -72,6 +72,17 @@ struct CodeEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = SnippetTextView.scrollableTextView()
         let textView = scrollView.documentView as! SnippetTextView
+        // STTextView's frame only spans its content, so a short document leaves dead
+        // clip-view space below it where clicks land on nothing. A clip-view subclass
+        // owns those clicks (focus editor, caret to end) — mouseDown only ever reaches
+        // the clip view when the click really was in dead space (anything on text hits
+        // the text view subtree instead), so no dead-space-vs-text guard is needed.
+        // Replaces the 8434a01 NSClickGestureRecognizer, whose recognition could
+        // interfere with mouseDown delivery to the text view itself.
+        let clipView = EditorClipView()
+        clipView.drawsBackground = false // match scrollableTextView's drawsBackground = false
+        scrollView.contentView = clipView
+        scrollView.documentView = textView
         let coord = context.coordinator
         coord.textView = textView
         // makeNSView runs inside a SwiftUI render pass just like updateNSView: the
@@ -121,12 +132,6 @@ struct CodeEditor: NSViewRepresentable {
         coord.lspController.setDiagnostics(diagnostics)
         coord.applyReveal(reveal) // first render of a just-opened file consumes here
         coord.observeScroll(of: scrollView)
-
-        // STTextView's frame only spans its content, so a short document leaves dead
-        // clip-view space below it where clicks land on nothing. Catch those and treat
-        // them as "click at end of document" — focus the editor, caret to the end.
-        let click = NSClickGestureRecognizer(target: coord, action: #selector(Coordinator.clickBelowText(_:)))
-        scrollView.contentView.addGestureRecognizer(click)
         return scrollView
     }
 
@@ -221,26 +226,6 @@ struct CodeEditor: NSViewRepresentable {
 
         deinit {
             if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
-        }
-
-        /// Click in the clip view below the text view's frame (short document, dead
-        /// space): focus the editor and put the caret at the end — for an empty note
-        /// that's the first line. Clicks inside the text view pass through untouched.
-        ///
-        /// Dead space is detected by hit-testing, not frame math: "did the click land
-        /// on anything inside the text view subtree?" is the actual question, and
-        /// hitTest answers it regardless of how STTextView sizes its frame. The old
-        /// `textView.frame.contains(location)` guard misfired whenever the frame
-        /// didn't span the full content (then EVERY click read as "dead space" and
-        /// yanked the caret to the end of the document right after STTextView had
-        /// placed it correctly on mouseDown).
-        @objc func clickBelowText(_ gesture: NSClickGestureRecognizer) {
-            guard let textView, let clipView = gesture.view else { return }
-            let location = gesture.location(in: clipView)
-            let hit = clipView.hitTest(clipView.convert(location, to: clipView.superview))
-            guard let hit, !hit.isDescendant(of: textView) else { return }
-            textView.window?.makeFirstResponder(textView)
-            textView.textSelection = NSRange(location: (textView.text as NSString? ?? "").length, length: 0)
         }
 
         func observeScroll(of scrollView: NSScrollView) {
