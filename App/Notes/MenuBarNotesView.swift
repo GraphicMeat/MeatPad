@@ -43,10 +43,16 @@ struct MenuBarNotesView: View {
                     .padding(10)
 
                 if matches.isEmpty {
-                    ContentUnavailableView(
-                        noteStore.notes.isEmpty ? "No notes yet" : "No matches",
-                        systemImage: noteStore.notes.isEmpty ? "note.text.badge.plus" : "magnifyingglass"
-                    )
+                    // ponytail: ContentUnavailableView's title2 headline dwarfs a 320pt popover; compact hand-rolled state instead.
+                    VStack(spacing: 8) {
+                        Image(systemName: noteStore.notes.isEmpty ? "note.text.badge.plus" : "magnifyingglass")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.tertiary)
+                        Text(noteStore.notes.isEmpty ? "No notes yet" : "No matches")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List(matches, id: \.noteID) { match in
                         if let note = note(for: match.noteID) {
@@ -88,7 +94,7 @@ struct MenuBarNotesView: View {
                 .padding(10)
             }
         }
-        .frame(width: 320, height: 400)
+        .frame(width: 320, height: noteStore.notes.isEmpty ? 250 : 400)
     }
 
     private func open(_ id: UUID) {
