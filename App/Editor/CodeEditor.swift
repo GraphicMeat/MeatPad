@@ -226,9 +226,19 @@ struct CodeEditor: NSViewRepresentable {
         /// Click in the clip view below the text view's frame (short document, dead
         /// space): focus the editor and put the caret at the end — for an empty note
         /// that's the first line. Clicks inside the text view pass through untouched.
+        ///
+        /// Dead space is detected by hit-testing, not frame math: "did the click land
+        /// on anything inside the text view subtree?" is the actual question, and
+        /// hitTest answers it regardless of how STTextView sizes its frame. The old
+        /// `textView.frame.contains(location)` guard misfired whenever the frame
+        /// didn't span the full content (then EVERY click read as "dead space" and
+        /// yanked the caret to the end of the document right after STTextView had
+        /// placed it correctly on mouseDown).
         @objc func clickBelowText(_ gesture: NSClickGestureRecognizer) {
             guard let textView, let clipView = gesture.view else { return }
-            guard !textView.frame.contains(gesture.location(in: clipView)) else { return }
+            let location = gesture.location(in: clipView)
+            let hit = clipView.hitTest(clipView.convert(location, to: clipView.superview))
+            guard let hit, !hit.isDescendant(of: textView) else { return }
             textView.window?.makeFirstResponder(textView)
             textView.textSelection = NSRange(location: (textView.text as NSString? ?? "").length, length: 0)
         }
