@@ -13,6 +13,7 @@ struct MenuBarNotesView: View {
     // AppModel's @EnvironmentObject, so the list would go stale on create/trash/save.
     @ObservedObject private var noteStore = AppModel.shared.noteStore
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     @State private var query = ""
 
     private var matches: [NoteSearchMatch] {
@@ -90,6 +91,14 @@ struct MenuBarNotesView: View {
                     Spacer()
                     Button(action: openBrowser) { Label("All Notes", systemImage: "rectangle.stack") }
                         .buttonStyle(.borderless)
+                    // In menu-bar-only mode the app menu is gone, so this popover is the
+                    // only path to Settings.
+                    Button { openSettings(); NSApp.activate(ignoringOtherApps: true) } label: {
+                        Label("Settings", systemImage: "gearshape")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(String(localized: "Settings"))
                 }
                 .padding(10)
             }

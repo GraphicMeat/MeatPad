@@ -105,11 +105,10 @@ private struct GeneralSettingsView: View {
                         Label("Menu bar only (hide Dock icon)", systemImage: "menubar.rectangle")
                     }
                     .padding(14)
-                    .onChange(of: menuBarOnly) { _, hidden in
-                        NSApp.setActivationPolicy(hidden ? .accessory : .regular)
-                        // Switching policy deactivates the app; reactivate so the
-                        // Settings window (and its key status) survives the flip.
-                        NSApp.activate(ignoringOtherApps: true)
+                    .onChange(of: menuBarOnly) { _, _ in
+                        // Window-aware: with the Settings window still open this stays
+                        // .regular; the accessory flip happens when the last window closes.
+                        AppDelegate.applyActivationPolicy()
                     }
                 }
                 .glassPanel(cornerRadius: 14, shadow: false)

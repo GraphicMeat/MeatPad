@@ -544,17 +544,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     #if DEBUG
     private var screenshotWindowObserver: NSObjectProtocol?
     #endif
+    private var activationPolicyObservers: [NSObjectProtocol] = []
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true])
         // Menu-bar-only mode (Settings ▸ General). Applied here, before the Dock icon
-        // would first appear; the toggle also flips it live via setActivationPolicy.
+        // would first appear. An accessory app has no menu bar and can't properly take
+        // focus, so the policy is only .accessory while NO real window is visible —
+        // opening any titled window (note, project, browser, Settings) flips back to
+        // .regular via the observers below, and closing the last one flips to .accessory
+        // again. The Settings toggle routes through the same reevaluation.
         if UserDefaults.standard.bool(forKey: "menuBarOnly") {
             NSApp.setActivationPolicy(.accessory)
         }
     }
 
+    /// Reevaluate dock/menu-bar visibility: menu-bar-only mode hides them only while no
+    /// titled window is visible. NSPanels (the MenuBarExtra popover, find bars) never count.
+    static func applyActivationPolicy() {
+        let menuBarOnly = UserDefaults.standard.bool(forKey: "menuBarOnly")
+        let hasRealWindow = NSApp.windows.contains {
+            $0.isVisible && $0.styleMask.contains(.titled) && !($0 is NSPanel) && $0.level == .normal
+        }
+        let target: NSApplication.ActivationPolicy = (menuBarOnly && !hasRealWindow) ? .accessory : .regular
+        guard NSApp.activationPolicy() != target else { return }
+        NSApp.setActivationPolicy(target)
+        // Policy switches deactivate the app; reactivate so the window that triggered
+        // the flip actually gets focus and the menu bar shows up.
+        if target == .regular { NSApp.activate(ignoringOtherApps: true) }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let center = NotificationCenter.default
+        activationPolicyObservers = [
+            center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { _ in
+                AppDelegate.applyActivationPolicy()
+            },
+            // The closing window is still visible when willClose fires — recheck a beat later.
+            center.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { _ in
+                DispatchQueue.main.async { AppDelegate.applyActivationPolicy() }
+            },
+        ]
+
         AppModel.shared.restoreSession()
 
         if !UserDefaults.standard.bool(forKey: FirstRunView.hasSeenDefaultsKey) {
