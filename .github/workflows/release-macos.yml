@@ -21,7 +21,10 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-15
+    # macos-26: Xcode 26's AssetCatalogAgent crashes on macos-15 hosts when
+    # compiling the .icon (Icon Composer) app icon — host dyld lacks the newer
+    # CoreMedia symbols the asset runtime links against.
+    runs-on: macos-26
     env:
       SCHEME: "MeatPad"
       TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
