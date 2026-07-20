@@ -303,7 +303,9 @@ struct NotesBrowserWindow: View {
                 .id(id)
         } else if selection.count > 1 {
             placeholderPanel(
-                title: String(localized: "^[\(selection.count) note](inflect: true) selected"),
+                // Inflection markup is only processed via AttributedString(localized:),
+                // not String(localized:) — the latter shows the ^[…] markup literally.
+                title: String(AttributedString(localized: "^[\(selection.count) note](inflect: true) selected").characters),
                 subtitle: String(localized: "Select a single note to edit it here.")
             )
         } else {
@@ -371,7 +373,8 @@ struct NotesBrowserWindow: View {
            let title = noteStore.trashedNotes.first(where: { $0.id == id })?.title {
             return String(localized: "Delete “\(title)” permanently?")
         }
-        return String(localized: "Delete ^[\(ids.count) note](inflect: true) permanently?")
+        // AttributedString(localized:) so the inflection markup actually inflects.
+        return String(AttributedString(localized: "Delete ^[\(ids.count) note](inflect: true) permanently?").characters)
     }
 
     /// Opens a standalone note window for `id`. Safe to do while the same note is still
