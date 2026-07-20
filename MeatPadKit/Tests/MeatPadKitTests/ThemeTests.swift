@@ -110,6 +110,14 @@ final class ThemeTests: XCTestCase {
         }
     }
 
+    func testBuiltinThemesTextURIDiffersPerTheme() {
+        XCTAssertNotEqual(
+            BuiltinThemes.defaultDark.tokenColors["text.uri"],
+            BuiltinThemes.defaultLight.tokenColors["text.uri"],
+            "text.uri should be theme-distinct, not a shared hex"
+        )
+    }
+
     func testBuiltinThemesResolvePunctuationSpecialViaPrefixFallback() {
         for theme in BuiltinThemes.all {
             XCTAssertEqual(

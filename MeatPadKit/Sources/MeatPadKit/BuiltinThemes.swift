@@ -29,7 +29,7 @@ public enum BuiltinThemes {
             "text.strong": RGBAColor(hex: "#F97583")!,
             "text.literal": RGBAColor(hex: "#9ECBFF")!,
             "text.reference": RGBAColor(hex: "#85E89D")!,
-            "text.uri": RGBAColor(hex: "#6A737D")!,
+            "text.uri": RGBAColor(hex: "#8B98A8")!,
         ]
     )
 
@@ -60,7 +60,7 @@ public enum BuiltinThemes {
             "text.strong": RGBAColor(hex: "#D73A49")!,
             "text.literal": RGBAColor(hex: "#032F62")!,
             "text.reference": RGBAColor(hex: "#22863A")!,
-            "text.uri": RGBAColor(hex: "#6A737D")!,
+            "text.uri": RGBAColor(hex: "#57606A")!,
         ]
     )
 
