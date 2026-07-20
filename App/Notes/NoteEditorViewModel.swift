@@ -5,7 +5,8 @@ import MeatPadKit
 /// Owns one open note's editing state: loads contents on appear, debounces autosave
 /// (1s) on every edit, and flushes immediately on window close / app resign-active /
 /// app termination so nothing is lost. No dirty markers, no save dialogs — the file on
-/// disk is always the source of truth.
+/// disk is always the source of truth. Closing a window whose note is empty discards
+/// the note entirely instead of flushing (see `flushOrDiscardOnClose`).
 @MainActor
 final class NoteEditorViewModel: ObservableObject {
     let noteID: UUID
@@ -144,7 +145,7 @@ final class NoteEditorViewModel: ObservableObject {
             forName: NSWindow.willCloseNotification, object: window, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.flush()
+                self?.flushOrDiscardOnClose()
                 // The window is gone; drop its observers now instead of letting them
                 // linger while the VM lives on in another surface.
                 self?.detachWindowObservers()
@@ -159,6 +160,22 @@ final class NoteEditorViewModel: ObservableObject {
                 MainActor.assumeIsolated { self?.windowFrameDidChange(window) }
             })
         }
+    }
+
+    /// Window close: a note closed with nothing in it is junk — discard it outright
+    /// (trash + permanent delete; there's no content to lose) instead of keeping an
+    /// untitled empty note around. Anything non-empty flushes the pending autosave as
+    /// before. Empty is literal `isEmpty`: typed whitespace counts as content.
+    private func flushOrDiscardOnClose() {
+        guard exists, text.isEmpty else {
+            flush()
+            return
+        }
+        debouncer.cancel()
+        frameDebouncer.cancel()
+        try? store.trash(id: noteID)
+        try? store.delete(id: noteID)
+        exists = false
     }
 
     /// Same cleanup deinit performs, callable while the VM is still alive (deinit keeps
