@@ -58,10 +58,10 @@ struct PrivacySettingsView: View {
     /// by a concurrent reviewer this task) for a handful of lines of text.
     private var claimsPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
-            claim("Notes and settings live on this Mac at \(appModel.storageRootPath) — nothing is uploaded.")
-            claim("Commands are real shell scripts. They run only when you invoke them; imported commands ask for confirmation first.")
-            claim("Network use is limited to update checks (Sparkle). See below for where your data lives.")
-            claim("Code intelligence uses language-server programs already installed on your Mac, running as local processes.")
+            claim(String(localized: "Notes and settings live on this Mac at \(appModel.storageRootPath) — nothing is uploaded."))
+            claim(String(localized: "Commands are real shell scripts. They run only when you invoke them; imported commands ask for confirmation first."))
+            claim(String(localized: "Network use is limited to update checks (Sparkle). See below for where your data lives."))
+            claim(String(localized: "Code intelligence uses language-server programs already installed on your Mac, running as local processes."))
 
             Button("Show Welcome Again") {
                 UserDefaults.standard.removeObject(forKey: FirstRunView.hasSeenDefaultsKey)
@@ -126,18 +126,18 @@ struct PrivacySettingsView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "Choose"
+        panel.prompt = String(localized: "Choose")
         panel.begin { response in
             guard response == .OK, let destination = panel.url else { return }
             do {
                 try PrivacyDataManager.copyManagedArtifacts(from: storageBaseURL, to: destination)
                 UserDefaults.standard.set(destination.path, forKey: NoteStore.storageRootOverrideKey)
                 infoAlert = (
-                    "Storage Relocated",
-                    "Restart MeatPad to finish switching to \(destination.path). Your old data is untouched at \(storageBaseURL.path)."
+                    String(localized: "Storage Relocated"),
+                    String(localized: "Restart MeatPad to finish switching to \(destination.path). Your old data is untouched at \(storageBaseURL.path).")
                 )
             } catch {
-                infoAlert = ("Couldn't Relocate Storage", error.localizedDescription)
+                infoAlert = (String(localized: "Couldn't Relocate Storage"), error.localizedDescription)
             }
         }
     }
@@ -166,16 +166,16 @@ struct PrivacySettingsView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "Export"
+        panel.prompt = String(localized: "Export")
         panel.begin { response in
             guard response == .OK, let destinationParent = panel.url else { return }
             let stamp = Self.exportDateFormatter.string(from: Date())
-            let exportDir = destinationParent.appendingPathComponent("MeatPad Export \(stamp)", isDirectory: true)
+            let exportDir = destinationParent.appendingPathComponent(String(localized: "MeatPad Export \(stamp)"), isDirectory: true)
             do {
                 try PrivacyDataManager.copyManagedArtifacts(from: storageBaseURL, to: exportDir)
                 NSWorkspace.shared.activateFileViewerSelecting([exportDir])
             } catch {
-                infoAlert = ("Couldn't Export Data", error.localizedDescription)
+                infoAlert = (String(localized: "Couldn't Export Data"), error.localizedDescription)
             }
         }
     }
@@ -208,27 +208,27 @@ struct PrivacySettingsView: View {
     private func confirmDeleteAll() {
         let artifacts = PrivacyDataManager.existingArtifacts(at: storageBaseURL)
         guard !artifacts.isEmpty else {
-            infoAlert = ("Nothing to Delete", "No MeatPad data was found at \(storageBaseURL.path).")
+            infoAlert = (String(localized: "Nothing to Delete"), String(localized: "No MeatPad data was found at \(storageBaseURL.path)."))
             return
         }
 
         let warning = NSAlert()
         warning.alertStyle = .critical
-        warning.messageText = "Delete All MeatPad Data?"
-        warning.informativeText = "This moves the following to the Trash, then quits MeatPad:\n\n"
-            + artifacts.map(\.path).joined(separator: "\n")
-        warning.addButton(withTitle: "Continue…")
-        warning.addButton(withTitle: "Cancel")
+        warning.messageText = String(localized: "Delete All MeatPad Data?")
+        warning.informativeText = String(localized: "This moves the following to the Trash, then quits MeatPad:")
+            + "\n\n" + artifacts.map(\.path).joined(separator: "\n")
+        warning.addButton(withTitle: String(localized: "Continue…"))
+        warning.addButton(withTitle: String(localized: "Cancel"))
         guard warning.runModal() == .alertFirstButtonReturn else { return }
 
         let confirm = NSAlert()
         confirm.alertStyle = .critical
-        confirm.messageText = "Type DELETE to Confirm"
-        confirm.informativeText = "This can't be undone once you empty the Trash."
-        confirm.addButton(withTitle: "Delete")
-        confirm.addButton(withTitle: "Cancel")
+        confirm.messageText = String(localized: "Type DELETE to Confirm")
+        confirm.informativeText = String(localized: "This can't be undone once you empty the Trash.")
+        confirm.addButton(withTitle: String(localized: "Delete"))
+        confirm.addButton(withTitle: String(localized: "Cancel"))
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        field.placeholderString = "DELETE"
+        field.placeholderString = "DELETE" // deliberately not localized: fixed confirmation token
         confirm.accessoryView = field
         confirm.window.initialFirstResponder = field
         guard confirm.runModal() == .alertFirstButtonReturn, field.stringValue == "DELETE" else { return }

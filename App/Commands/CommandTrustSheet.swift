@@ -40,10 +40,10 @@ struct CommandTrustSheet: View {
             .border(.quaternary)
 
             VStack(alignment: .leading, spacing: 4) {
-                detailRow("Working directory", workingDirectoryText)
-                detailRow("Input", inputText)
-                detailRow("Environment", environmentText)
-                detailRow("Timeout", "\(Int(command.timeoutSeconds ?? 30))s")
+                detailRow(String(localized: "Working directory"), workingDirectoryText)
+                detailRow(String(localized: "Input"), inputText)
+                detailRow(String(localized: "Environment"), environmentText)
+                detailRow(String(localized: "Timeout"), "\(Int(command.timeoutSeconds ?? 30))s")
             }
             .font(.caption)
 
@@ -84,15 +84,15 @@ struct CommandTrustSheet: View {
 
     private var inputText: String {
         switch command.input {
-        case .none: return "None"
-        case .selection: return "Selection (falls back to whole document if nothing is selected)"
-        case .document: return "Whole document"
+        case .none: return String(localized: "None")
+        case .selection: return String(localized: "Selection (falls back to whole document if nothing is selected)")
+        case .document: return String(localized: "Whole document")
         }
     }
 
     private var environmentText: String {
         command.restrictedEnvironment
-            ? "Restricted \u{2014} only TM_* variables plus PATH/HOME/SHELL/LANG/TMPDIR"
-            : "Full \u{2014} inherits the app\u{2019}s entire process environment"
+            ? String(localized: "Restricted \u{2014} only TM_* variables plus PATH/HOME/SHELL/LANG/TMPDIR")
+            : String(localized: "Full \u{2014} inherits the app\u{2019}s entire process environment")
     }
 }

@@ -21,10 +21,10 @@ struct FirstRunView: View {
             Text("Welcome to MeatPad")
                 .font(.title2.weight(.semibold))
 
-            claim("Notes and settings live on this Mac at \(appModel.storageRootPath) — nothing is uploaded.")
-            claim("Commands are real shell scripts. They run only when you invoke them; imported commands ask for confirmation first.")
-            claim("Network use is limited to update checks (Sparkle). See Settings → Privacy for details.")
-            claim("Code intelligence uses language-server programs already installed on your Mac, running as local processes.")
+            claim(String(localized: "Notes and settings live on this Mac at \(appModel.storageRootPath) — nothing is uploaded."))
+            claim(String(localized: "Commands are real shell scripts. They run only when you invoke them; imported commands ask for confirmation first."))
+            claim(String(localized: "Network use is limited to update checks (Sparkle). See Settings → Privacy for details."))
+            claim(String(localized: "Code intelligence uses language-server programs already installed on your Mac, running as local processes."))
 
             HStack {
                 Spacer()
