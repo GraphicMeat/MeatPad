@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import SwiftUI
@@ -153,6 +154,33 @@ final class AppModel: ObservableObject {
         guard let note = try? noteStore.createNote() else { return }
         try? noteStore.save(id: note.id, contents: contents, cursor: 0)
         openWindowAction?(value: note.id)
+    }
+
+    // MARK: - Open project
+
+    /// File ▸ Open… (and the Dock menu). Directory → open as a project. File → open the
+    /// file's parent folder as the project and pre-open the file as a tab (via
+    /// `pendingFileOpen`, consumed by the new `ProjectViewModel`). Shared by the File menu
+    /// and the Dock menu so both take the identical path.
+    func openProjectPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            if url.hasDirectoryPath {
+                self.openProject(url)
+            } else {
+                self.pendingFileOpen = url
+                self.openProject(url.deletingLastPathComponent())
+            }
+        }
+    }
+
+    func openProject(_ url: URL) {
+        openWindowAction?(value: url)
+        recordRecentProject(url)
     }
 
     // MARK: - Recent projects

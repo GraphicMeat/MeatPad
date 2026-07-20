@@ -29,11 +29,16 @@ struct MeatPadApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New Note") { createNote() }
                     .keyboardShortcut("n", modifiers: .command)
-                Button("Open…") { openProjectPanel() }
+                Button("Open…") { AppModel.shared.openProjectPanel() }
                     .keyboardShortcut("o", modifiers: .command)
                 Button("All Notes") { openWindow(id: "all-notes") }
                     .keyboardShortcut("l", modifiers: [.command, .shift])
-                OpenRecentCommands(openProject: openProject)
+                NewFolderCommand()
+                OpenRecentCommands(openProject: AppModel.shared.openProject)
+                // Notes-browser selection actions (trash/restore, open-in-window). Folded
+                // into this group rather than a separate one because `.commands` is at its
+                // 10-block builder limit. Disabled unless the browser is focused.
+                NotesBrowserCommands()
             }
             // Replacing .saveItem removes the system Close (Cmd+W) along with Save et al,
             // so the ONE Cmd+W in the app is our unified item below — it routes to
@@ -125,30 +130,6 @@ struct MeatPadApp: App {
         openWindow(value: note.id)
     }
 
-    /// Directory → open as a project. File → open the file's parent folder as the project
-    /// and pre-open the file as a tab (via `AppModel.pendingFileOpen`, consumed by the new
-    /// `ProjectViewModel`).
-    private func openProjectPanel() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            if url.hasDirectoryPath {
-                openProject(url)
-            } else {
-                AppModel.shared.pendingFileOpen = url
-                openProject(url.deletingLastPathComponent())
-            }
-        }
-    }
-
-    private func openProject(_ url: URL) {
-        openWindow(value: url)
-        AppModel.shared.recordRecentProject(url)
-    }
-
     static func finder(_ action: NSTextFinder.Action) {
         let item = NSMenuItem()
         item.tag = action.rawValue
@@ -174,6 +155,47 @@ private struct OpenRecentCommands: View {
                 Button("Clear Menu") { appModel.clearRecentProjects() }
             }
         }
+    }
+}
+
+/// ⌘⇧N: New Folder in the focused notes browser. Grepped every `.keyboardShortcut` first —
+/// Cmd+Shift+N isn't taken. Disabled when no browser window is focused.
+private struct NewFolderCommand: View {
+    @FocusedValue(\.notesBrowser) private var browser
+
+    var body: some View {
+        Button("New Folder") { browser?.newFolder() }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+            .disabled(browser == nil)
+    }
+}
+
+/// Notes-browser selection commands: Move to Trash (⌘⌫) — relabeled Restore when the
+/// browser is showing Trash — and Open in New Window (⌘↩). Both act on the browser's
+/// selection and are disabled when no browser is focused or the selection is empty. ⌘⌫ and
+/// ⌘↩ are both free (grepped every `.keyboardShortcut` first).
+private struct NotesBrowserCommands: View {
+    @FocusedValue(\.notesBrowser) private var browser
+
+    var body: some View {
+        Button(browser?.isTrash == true ? "Restore" : "Move to Trash") {
+            // ⌘⌫ is also the standard "delete to beginning of line" while typing. Menu key
+            // equivalents fire before the responder chain, so with text focused (detail
+            // editor, search field) forward the standard edit action instead of trashing
+            // the note under the caret. Menu enablement can't observe first responder,
+            // hence a guard in the action rather than `.disabled`.
+            if let responder = NSApp.keyWindow?.firstResponder, responder is NSTextInputClient {
+                responder.tryToPerform(#selector(NSStandardKeyBindingResponding.deleteToBeginningOfLine(_:)), with: nil)
+                return
+            }
+            if browser?.isTrash == true { browser?.restoreSelection() } else { browser?.trashSelection() }
+        }
+        .keyboardShortcut(.delete, modifiers: .command)
+        .disabled(browser?.hasSelection != true)
+
+        Button("Open in New Window") { browser?.openSelectionInNewWindow() }
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(browser?.hasSelection != true)
     }
 }
 
@@ -519,6 +541,10 @@ private struct LanguageCommands: View {
 /// `ApplePersistenceIgnoreState` disables AppKit-level restoration entirely so
 /// `AppModel`'s session.json is the sole source of restored windows.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    #if DEBUG
+    private var screenshotWindowObserver: NSObjectProtocol?
+    #endif
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true])
     }
@@ -531,6 +557,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         #if DEBUG
+        installScreenshotWindowSizingIfNeeded()
+
         // Invariant behind the unified Cmd+W: replacing .saveItem must have removed the
         // system Close item, leaving exactly one plain-Cmd+W binding in the whole menu
         // bar (Close All is Option+Cmd+W and doesn't count). Delayed a beat so SwiftUI
@@ -550,6 +578,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
     }
+
+    #if DEBUG
+    /// Deterministic marketing-capture window sizing, enabled only by the external
+    /// XCUITest runner. Normal debug and release launches never enter this path.
+    private func installScreenshotWindowSizingIfNeeded() {
+        guard UserDefaults.standard.bool(forKey: "ScreenshotMode") else { return }
+
+        let defaults = UserDefaults.standard
+        let width = max(720, defaults.double(forKey: "ScreenshotWindowWidth"))
+        let height = max(480, defaults.double(forKey: "ScreenshotWindowHeight"))
+        let target = NSSize(width: width, height: height)
+
+        func resize(_ window: NSWindow) {
+            guard window.isVisible, window.styleMask.contains(.resizable) else { return }
+            var frame = window.frame
+            frame.size = target
+            if let visible = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame {
+                frame.origin.x = visible.midX - target.width / 2
+                frame.origin.y = visible.midY - target.height / 2
+            }
+            window.setFrame(frame, display: true, animate: false)
+        }
+
+        screenshotWindowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: nil,
+            queue: .main
+        ) { note in
+            guard let window = note.object as? NSWindow else { return }
+            DispatchQueue.main.async { resize(window) }
+        }
+
+        DispatchQueue.main.async {
+            NSApp.windows.forEach(resize)
+        }
+    }
+    #endif
 
     /// Guard quit against unsaved *file* documents (notes autosave and flush on their own
     /// `willTerminate` path, untouched). One summary alert covers all dirty files.
@@ -595,5 +660,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         AppModel.shared.saveSessionNow()
+    }
+
+    /// Right-click / long-press Dock icon menu. Items retain `self` as target (the delegate
+    /// lives for the app's lifetime), mirroring the File-menu New Note / All Notes / Open…
+    /// entries.
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        for (title, action) in [
+            (String(localized: "New Note"), #selector(dockNewNote)),
+            (String(localized: "All Notes"), #selector(dockAllNotes)),
+            (String(localized: "Open…"), #selector(dockOpen)),
+        ] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @MainActor @objc private func dockNewNote() {
+        guard let note = try? AppModel.shared.noteStore.createNote() else { return }
+        AppModel.shared.openWindowAction?(value: note.id)
+    }
+
+    @MainActor @objc private func dockAllNotes() {
+        AppModel.shared.openWindowAction?(id: "all-notes")
+    }
+
+    @MainActor @objc private func dockOpen() {
+        AppModel.shared.openProjectPanel()
     }
 }

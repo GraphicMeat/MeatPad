@@ -45,7 +45,7 @@ struct NotesBrowserWindow: View {
     @ObservedObject private var noteStore = AppModel.shared.noteStore
     @Environment(\.openWindow) private var openWindow
     @State private var query = ""
-    @State private var selection: UUID?
+    @State private var selection: Set<UUID> = []
     @SceneStorage("notesBrowser.folder") private var folderSelection: FolderSelection = .all
 
     // New Folder / Rename alerts.
@@ -53,7 +53,7 @@ struct NotesBrowserWindow: View {
     @State private var newFolderShown = false
     @State private var renameTarget: String?
     @State private var deleteTarget: String?
-    @State private var permanentDeleteTarget: UUID?
+    @State private var permanentDeleteTarget: Set<UUID>?
     @State private var folderError: String?
 
     private var folderFilteredNotes: [Note] {
@@ -105,8 +105,20 @@ struct NotesBrowserWindow: View {
         .frame(minWidth: 860, minHeight: 480)
         .onAppear { AppModel.shared.browserWindowDidAppear() }
         .onDisappear { AppModel.shared.browserWindowDidDisappear() }
-        .onChange(of: folderSelection) { _, _ in selection = nil }
-        .onChange(of: selection) { _, newValue in revealMatch(for: newValue) }
+        .onChange(of: folderSelection) { _, _ in selection = [] }
+        // Search-hit reveal only makes sense for a single note — a multi-selection has no
+        // one editor to scroll.
+        .onChange(of: selection) { _, newValue in
+            if newValue.count == 1, let id = newValue.first { revealMatch(for: id) }
+        }
+        .focusedSceneValue(\.notesBrowser, NotesBrowserActions(
+            newFolder: { folderNameDraft = ""; newFolderShown = true },
+            trashSelection: trashSelection,
+            restoreSelection: restoreSelection,
+            openSelectionInNewWindow: openSelectionInNewWindow,
+            hasSelection: !selection.isEmpty,
+            isTrash: folderSelection == .trash
+        ))
         .alert("New Folder", isPresented: $newFolderShown) {
             TextField("Name", text: $folderNameDraft)
             Button("Create") { runFolderOp { try noteStore.createFolder(folderNameDraft) } }
@@ -140,14 +152,14 @@ struct NotesBrowserWindow: View {
             }
         }
         .confirmationDialog(
-            "Delete “\(noteStore.trashedNotes.first(where: { $0.id == permanentDeleteTarget })?.title ?? "")” permanently?",
+            permanentDeleteTitle,
             isPresented: Binding(get: { permanentDeleteTarget != nil }, set: { if !$0 { permanentDeleteTarget = nil } }),
             titleVisibility: .visible
         ) {
             Button("Delete Permanently", role: .destructive) {
-                if let id = permanentDeleteTarget {
-                    try? noteStore.delete(id: id)
-                    if selection == id { selection = nil }
+                if let ids = permanentDeleteTarget {
+                    for id in ids { try? noteStore.delete(id: id) }
+                    selection.subtract(ids)
                 }
             }
         } message: {
@@ -230,17 +242,22 @@ struct NotesBrowserWindow: View {
                     }
                 }
             }
+            .accessibilityIdentifier("note-row-\(note.id.uuidString)")
             .contextMenu {
+                // Right-clicking a row inside a multi-selection acts on the whole selection;
+                // right-clicking outside it acts on just that row (Finder behavior).
+                let ids = contextTargets(for: note.id)
                 if case .trash = folderSelection {
-                    Button("Restore") { restore(note.id) }
-                    Button("Delete Permanently…", role: .destructive) { permanentDeleteTarget = note.id }
+                    Button("Restore") { ids.forEach(restore) }
+                    Button("Delete Permanently…", role: .destructive) { permanentDeleteTarget = Set(ids) }
                 } else {
-                    Button("Open in New Window") { openInNewWindow(note.id) }
-                    moveMenu(for: note)
-                    Button("Move to Trash", role: .destructive) { trash(note.id) }
+                    Button("Open in New Window") { ids.forEach(openInNewWindow) }
+                    moveMenu(for: ids)
+                    Button("Move to Trash", role: .destructive) { ids.forEach(trash) }
                 }
             }
         }
+        .onDeleteCommand(perform: deleteKeyPressed)
         .scrollContentBackground(.hidden)
         .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         .overlay {
@@ -264,40 +281,56 @@ struct NotesBrowserWindow: View {
     }
 
     @ViewBuilder
-    private func moveMenu(for note: Note) -> some View {
+    private func moveMenu(for ids: [UUID]) -> some View {
+        // Disable the note's current folder only for a single-note move; a bulk move spans
+        // folders, so every destination stays enabled (moving to a note's own folder is a
+        // harmless no-op).
+        let single = ids.count == 1 ? noteStore.notes.first(where: { $0.id == ids[0] }) : nil
         Menu("Move to") {
-            Button("Notes") { runFolderOp { try noteStore.move(id: note.id, to: nil) } }
-                .disabled(note.folder == nil)
+            Button("Notes") { ids.forEach { id in runFolderOp { try noteStore.move(id: id, to: nil) } } }
+                .disabled(single != nil && single?.folder == nil)
             ForEach(noteStore.folders, id: \.self) { name in
-                Button(name) { runFolderOp { try noteStore.move(id: note.id, to: name) } }
-                    .disabled(note.folder == name)
+                Button(name) { ids.forEach { id in runFolderOp { try noteStore.move(id: id, to: name) } } }
+                    .disabled(single != nil && single?.folder == name)
             }
         }
     }
 
     @ViewBuilder
     private var detail: some View {
-        if let selection, noteStore.notes.contains(where: { $0.id == selection }) {
-            NoteDetailEditor(noteID: selection) { openInNewWindow(selection) }
-                .id(selection)
+        if selection.count == 1, let id = selection.first, noteStore.notes.contains(where: { $0.id == id }) {
+            NoteDetailEditor(noteID: id) { openInNewWindow(id) }
+                .id(id)
+        } else if selection.count > 1 {
+            placeholderPanel(
+                title: String(localized: "^[\(selection.count) note](inflect: true) selected"),
+                subtitle: String(localized: "Select a single note to edit it here.")
+            )
         } else {
-            ZStack {
-                AmbientGlassBackground()
-                VStack(spacing: 12) {
-                    Image(systemName: "note.text")
-                        .font(.system(size: 30, weight: .light))
-                        .foregroundStyle(MeatPadGlass.tint.gradient)
-                    Text("Select a note")
-                        .font(.title3.weight(.medium))
-                    Text("Your notes stay ready when inspiration strikes.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(26)
-                .glassPanel()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            placeholderPanel(
+                title: String(localized: "Select a note"),
+                subtitle: String(localized: "Your notes stay ready when inspiration strikes.")
+            )
         }
+    }
+
+    private func placeholderPanel(title: String, subtitle: String) -> some View {
+        ZStack {
+            AmbientGlassBackground()
+            VStack(spacing: 12) {
+                Image(systemName: "note.text")
+                    .font(.system(size: 30, weight: .light))
+                    .foregroundStyle(MeatPadGlass.tint.gradient)
+                Text(title)
+                    .font(.title3.weight(.medium))
+                Text(subtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(26)
+            .glassPanel()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Actions
@@ -306,7 +339,39 @@ struct NotesBrowserWindow: View {
     /// gets selected, and the detail editor takes over — no separate window (Apple Notes behavior).
     private func newNote() {
         guard let note = try? noteStore.createNote(in: folderSelection.noteFolder) else { return }
-        selection = note.id
+        selection = [note.id]
+    }
+
+    /// Ids a row's context-menu actions apply to: the whole selection when the row is part
+    /// of a multi-selection, otherwise just the row itself.
+    private func contextTargets(for id: UUID) -> [UUID] {
+        (selection.contains(id) && selection.count > 1) ? Array(selection) : [id]
+    }
+
+    private func trashSelection() { Array(selection).forEach(trash) }
+    private func restoreSelection() { Array(selection).forEach(restore) }
+    private func openSelectionInNewWindow() { selection.forEach(openInNewWindow) }
+
+    /// Plain ⌫/forward-delete on the list: trash the selection, or (in Trash) open the
+    /// permanent-delete confirmation for it.
+    private func deleteKeyPressed() {
+        guard !selection.isEmpty else { return }
+        if case .trash = folderSelection {
+            permanentDeleteTarget = selection
+        } else {
+            trashSelection()
+        }
+    }
+
+    /// Confirmation title for permanent delete: keep the note's own title for a single
+    /// note, fall back to a pluralized count for a bulk delete.
+    private var permanentDeleteTitle: String {
+        guard let ids = permanentDeleteTarget else { return "" }
+        if ids.count == 1, let id = ids.first,
+           let title = noteStore.trashedNotes.first(where: { $0.id == id })?.title {
+            return String(localized: "Delete “\(title)” permanently?")
+        }
+        return String(localized: "Delete ^[\(ids.count) note](inflect: true) permanently?")
     }
 
     /// Opens a standalone note window for `id`. Safe to do while the same note is still
@@ -319,21 +384,21 @@ struct NotesBrowserWindow: View {
 
     private func trash(_ id: UUID) {
         try? noteStore.trash(id: id)
-        if selection == id { selection = nil }
+        selection.remove(id)
     }
 
-    /// Restores a trashed note; clears selection since it leaves the trash list.
+    /// Restores a trashed note; drops it from the selection since it leaves the trash list.
     private func restore(_ id: UUID) {
         try? noteStore.restore(id: id)
-        if selection == id { selection = nil }
+        selection.remove(id)
     }
 
     /// Jumps the newly-selected note's editor to its search hit, if any. The registry VM
     /// loads its text synchronously (see `NoteEditorViewModel.init`), and `reveal` is a
     /// one-shot target that survives until a not-yet-rendered `CodeEditor` consumes it —
     /// so this can fire immediately, before `NoteDetailEditor` itself has appeared.
-    private func revealMatch(for noteID: UUID?) {
-        guard let noteID, let range = matchByID[noteID]?.rangeInContents else { return }
+    private func revealMatch(for noteID: UUID) {
+        guard let range = matchByID[noteID]?.rangeInContents else { return }
         let vm = EditorRegistry.shared.noteViewModel(for: noteID)
         vm.reveal(range: Self.clamp(range, to: (vm.text as NSString).length))
     }
@@ -375,6 +440,30 @@ struct NotesBrowserWindow: View {
         case .folderNotFound(let name): return String(localized: "Folder “\(name)” no longer exists.")
         default: return String(localized: "Something went wrong: \(error.localizedDescription)")
         }
+    }
+}
+
+/// Actions the App-level menu commands (New Folder, Move to Trash/Restore, Open in New
+/// Window) drive on the frontmost notes browser, published via `focusedSceneValue` — same
+/// pattern as `\.projectViewModel`. `hasSelection`/`isTrash` gate the menu items' enabled
+/// state and label.
+struct NotesBrowserActions {
+    var newFolder: () -> Void
+    var trashSelection: () -> Void
+    var restoreSelection: () -> Void
+    var openSelectionInNewWindow: () -> Void
+    var hasSelection: Bool
+    var isTrash: Bool
+}
+
+private struct FocusedNotesBrowserKey: FocusedValueKey {
+    typealias Value = NotesBrowserActions
+}
+
+extension FocusedValues {
+    var notesBrowser: NotesBrowserActions? {
+        get { self[FocusedNotesBrowserKey.self] }
+        set { self[FocusedNotesBrowserKey.self] = newValue }
     }
 }
 
