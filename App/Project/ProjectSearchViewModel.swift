@@ -3,13 +3,6 @@ import AppKit
 import LanguageServerProtocol
 import MeatPadKit
 
-/// One file's matches for the grouped results list.
-struct FileMatchGroup: Identifiable {
-    let file: URL
-    var matches: [SearchMatch]
-    var id: URL { file }
-}
-
 /// Backs the sidebar's "Search" mode (Cmd+Shift+F): debounced project-wide search over
 /// `NativeSearch`, grouped results, and Replace All. One instance per `ProjectWindow`,
 /// independent of `ProjectViewModel` — it only needs `root` to search and the shared

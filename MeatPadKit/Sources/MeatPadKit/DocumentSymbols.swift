@@ -6,22 +6,30 @@ import LanguageServerProtocol
 /// (modern servers) or flat `[SymbolInformation]` (older ones) — `flatten` collapses both
 /// into one ordered list `DocumentSymbolsView` can filter/display without caring which shape
 /// the server sent. Pure/reusable, same split rationale as `GoToDefinition`/`FindReferences`.
-enum DocumentSymbols {
+public enum DocumentSymbols {
     /// One flattened row. `depth` is 0 for a top-level symbol, 1 for its direct children,
     /// etc. — `DocumentSymbolsView` turns this into an indentation marker rather than a real
     /// tree control (a flat, fuzzy-filterable list is the quick-open precedent this reuses;
     /// see that view's doc comment). Always empty (depth 0) for the flat `SymbolInformation`
     /// shape, which carries no parent/child structure.
-    struct Item: Identifiable {
-        let id = UUID()
-        let name: String
-        let detail: String?
-        let kind: SymbolKind
-        let range: LSPRange
-        let depth: Int
+    public struct Item: Identifiable {
+        public let id = UUID()
+        public let name: String
+        public let detail: String?
+        public let kind: SymbolKind
+        public let range: LSPRange
+        public let depth: Int
+
+        public init(name: String, detail: String?, kind: SymbolKind, range: LSPRange, depth: Int) {
+            self.name = name
+            self.detail = detail
+            self.kind = kind
+            self.range = range
+            self.depth = depth
+        }
     }
 
-    static func flatten(_ response: DocumentSymbolResponse) -> [Item] {
+    public static func flatten(_ response: DocumentSymbolResponse) -> [Item] {
         guard let response else { return [] }
         switch response {
         case .optionA(let symbols):

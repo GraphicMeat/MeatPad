@@ -32,6 +32,18 @@ public struct SearchMatch: Equatable, Sendable {
     }
 }
 
+/// One file's matches for a grouped results list (project search, find references).
+public struct FileMatchGroup: Identifiable {
+    public let file: URL
+    public var matches: [SearchMatch]
+    public var id: URL { file }
+
+    public init(file: URL, matches: [SearchMatch]) {
+        self.file = file
+        self.matches = matches
+    }
+}
+
 public protocol SearchEngine: Sendable {
     func search(_ query: SearchQuery, in root: URL) async throws -> [SearchMatch]
     // ponytail: NativeSearch now; RipgrepSearch conforming impl arrives with P4 packaging (vendored universal rg)

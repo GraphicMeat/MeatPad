@@ -1,30 +1,17 @@
 import AppKit
 import Foundation
 import LanguageServerProtocol
+import MeatPadKit
 
-/// Go to Definition (0.7 LSP plan Task 4): response normalization + the multiple-locations
-/// picker. Deliberately NOT folded into `LSPController` — that type is scoped to one
-/// editor instance's diagnostics/hover state (`attach(to:)` binds it to a single
-/// `STTextView`), while navigating a definition result can open a *different* editor tab
-/// or even a new project window. That's `ProjectViewModel.goToDefinition` territory, so
-/// this file only holds the pure/reusable pieces both the picker and the caller share.
-enum GoToDefinition {
-    /// `textDocument/definition` collapses three possible response shapes into one flat
-    /// list of jump targets. `LocationLink.targetSelectionRange` (the identifier's own
-    /// range) is the `LocationLink` analogue of `Location.range` — `targetRange` (the
-    /// enclosing declaration, e.g. the whole function body) is intentionally unused here.
-    static func locations(from response: DefinitionResponse) -> [Location] {
-        guard let response else { return [] }
-        switch response {
-        case .optionA(let location):
-            return [location]
-        case .optionB(let locations):
-            return locations
-        case .optionC(let links):
-            return links.map { Location(uri: $0.targetUri, range: $0.targetSelectionRange) }
-        }
-    }
-
+/// Go to Definition (0.7 LSP plan Task 4): the multiple-locations picker. Response
+/// normalization (`GoToDefinition.locations(from:)`) lives in MeatPadKit — pure, no AppKit
+/// needed; this extension adds the AppKit-dependent picker onto that same type. Deliberately
+/// NOT folded into `LSPController` — that type is scoped to one editor instance's
+/// diagnostics/hover state (`attach(to:)` binds it to a single `STTextView`), while
+/// navigating a definition result can open a *different* editor tab or even a new project
+/// window. That's `ProjectViewModel.goToDefinition` territory, so this file only holds the
+/// UI glue both the picker and the caller share.
+extension GoToDefinition {
     /// Multiple-locations popup per the plan ("Multiple locations → NSMenu popup at
     /// caret/click point listing file:line entries, pick → navigate"). `screenPoint` is
     /// screen coordinates — `NSMenu.popUp(in:)` reads `at:` that way when `in:` is `nil`.
