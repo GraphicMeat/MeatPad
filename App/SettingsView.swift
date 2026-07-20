@@ -49,6 +49,8 @@ struct SettingsView: View {
 /// apply live to every open editor. Theme selection lives in the Themes tab now.
 private struct GeneralSettingsView: View {
     @EnvironmentObject private var appModel: AppModel
+    // Read by AppDelegate.applicationShouldHandleReopen via UserDefaults — same key.
+    @AppStorage("dockClickAction") private var dockClickAction = "allNotes"
 
     var body: some View {
         ZStack {
@@ -77,6 +79,20 @@ private struct GeneralSettingsView: View {
 
                     Toggle(isOn: $appModel.softWrap) {
                         Label("Soft wrap", systemImage: "arrow.turn.down.right")
+                    }
+                    .padding(14)
+
+                    Divider().opacity(0.45).padding(.leading, 44)
+
+                    HStack {
+                        Label("Dock icon click", systemImage: "dock.rectangle")
+                        Spacer()
+                        Picker("Dock icon click", selection: $dockClickAction) {
+                            Text("Open All Notes").tag("allNotes")
+                            Text("New Note").tag("newNote")
+                        }
+                        .labelsHidden()
+                        .fixedSize()
                     }
                     .padding(14)
                 }

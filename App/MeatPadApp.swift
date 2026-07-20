@@ -662,6 +662,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppModel.shared.saveSessionNow()
     }
 
+    /// Dock icon click with no visible windows: General settings picks what opens —
+    /// the All Notes browser (default) or a fresh note. Returning false suppresses
+    /// SwiftUI's default reopen (a blank parameterized WindowGroup window).
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag else { return true }
+        if UserDefaults.standard.string(forKey: "dockClickAction") == "newNote" {
+            dockNewNote()
+        } else {
+            dockAllNotes()
+        }
+        return false
+    }
+
     /// Right-click / long-press Dock icon menu. Items retain `self` as target (the delegate
     /// lives for the app's lifetime), mirroring the File-menu New Note / All Notes / Open…
     /// entries.
