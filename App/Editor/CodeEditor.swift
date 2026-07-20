@@ -74,6 +74,12 @@ struct CodeEditor: NSViewRepresentable {
         let textView = scrollView.documentView as! SnippetTextView
         let coord = context.coordinator
         coord.textView = textView
+        // makeNSView runs inside a SwiftUI render pass just like updateNSView: the
+        // programmatic text/selection setup below fires delegate callbacks synchronously,
+        // and publishing those into the view model would be "Publishing changes from
+        // within view updates". Same suppression as updateNSView.
+        coord.isUpdatingView = true
+        defer { coord.isUpdatingView = false }
 
         snippetController?.textView = textView
         textView.onInsertTab = { [weak coord] in MainActor.assumeIsolated { coord?.snippetTab() ?? false } }
