@@ -592,8 +592,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             AppModel.shared.openWindowAction?(id: FirstRunView.windowID)
         }
 
-        #if DEBUG
+        // No-op unless DEBUG or the hidden `clickDebug` default is set — see ClickDebug.
         ClickDebug.install()
+
+        #if DEBUG
         installScreenshotWindowSizingIfNeeded()
 
         // Invariant behind the unified Cmd+W: replacing .saveItem must have removed the

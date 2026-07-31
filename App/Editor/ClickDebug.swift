@@ -16,13 +16,26 @@ import AppKit
 ///                                → window hit-testing resolved text to the clip
 ///                                  view (text view frame doesn't cover the text)
 enum ClickDebug {
-    #if DEBUG
+    /// Always on in DEBUG; in release builds only when the hidden default is set:
+    ///   defaults write com.thecoldzero.MeatPad clickDebug -bool YES
+    /// The round-4 report (2026-08-01) was a release build whose caret died only after
+    /// days of uptime — with no way to instrument it, that cost a full debugging round.
+    /// Now the same evidence is one `defaults write` + relaunch away.
+    private static let enabled: Bool = {
+        #if DEBUG
+        true
+        #else
+        UserDefaults.standard.bool(forKey: "clickDebug")
+        #endif
+    }()
+
     private static let logURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("meatpad-clickdebug.log")
 
     /// Installed once from applicationDidFinishLaunching. The monitor observes and
     /// always returns the event unmodified — zero behavior change.
     static func install() {
+        guard enabled else { return }
         NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { event in
             let window = event.window
             let app = NSApplication.shared
@@ -43,8 +56,9 @@ enum ClickDebug {
         log("=== ClickDebug installed \(Date()) — log at \(logURL.path) ===")
     }
 
-    static func log(_ message: String) {
-        let line = "[clickdebug \(String(format: "%.3f", Date().timeIntervalSince1970))] \(message)\n"
+    static func log(_ message: @autoclosure () -> String) {
+        guard enabled else { return }
+        let line = "[clickdebug \(String(format: "%.3f", Date().timeIntervalSince1970))] \(message())\n"
         FileHandle.standardError.write(Data(line.utf8))
         if let handle = try? FileHandle(forWritingTo: logURL) {
             handle.seekToEndOfFile()
@@ -54,8 +68,4 @@ enum ClickDebug {
             try? Data(line.utf8).write(to: logURL)
         }
     }
-    #else
-    @inline(__always) static func install() {}
-    @inline(__always) static func log(_ message: @autoclosure () -> String) {}
-    #endif
 }

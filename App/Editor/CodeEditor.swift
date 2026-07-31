@@ -79,6 +79,15 @@ struct CodeEditor: NSViewRepresentable {
         // the text view subtree instead), so no dead-space-vs-text guard is needed.
         // Replaces the 8434a01 NSClickGestureRecognizer, whose recognition could
         // interfere with mouseDown delivery to the text view itself.
+        // STTextView installs a DragSelectedTextGestureRecognizer (drag-move of selected
+        // text) on itself. It's the last of the click-eating gesture machinery: its
+        // "let the click through" path calls caretLocation(interactingAt:), and when that
+        // returns nil (TextKit2 viewport layout unavailable) the recognizer stays live
+        // instead of failing, so it swallows mouseDown and the caret never moves —
+        // exactly the 8434a01/5ab709c symptom, reproduced by a long-lived process.
+        // MeatPad doesn't need drag-move of selected text; removing it kills the whole
+        // failure class. This is the text view's only recognizer.
+        textView.gestureRecognizers.forEach(textView.removeGestureRecognizer)
         let clipView = EditorClipView()
         clipView.drawsBackground = false // match scrollableTextView's drawsBackground = false
         scrollView.contentView = clipView
