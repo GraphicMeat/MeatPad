@@ -239,6 +239,8 @@ struct PrivacySettingsView: View {
         // queued between here and the completion handler can slip out either — see
         // `AppModel.isDeletingAllData`.
         appModel.isDeletingAllData = true
+        // Pending card reminders are board data too — they must not outlive an erase.
+        DueNotifier.shared.cancelAll()
 
         // The completion handler's queue isn't documented as guaranteed-main, so hop
         // explicitly before touching @State or calling into AppKit.

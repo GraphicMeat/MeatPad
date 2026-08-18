@@ -159,6 +159,8 @@ final class AppModel: ObservableObject {
         softWrap = savedSoftWrap ?? true
 
         recentProjectPaths = UserDefaults.standard.stringArray(forKey: Self.recentProjectsDefaultsKey) ?? []
+
+        DueNotifier.shared.start(store: boardStore)
     }
 
     /// Shell-command "New Note" output mode: create a note holding `contents` and open

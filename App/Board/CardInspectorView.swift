@@ -35,7 +35,11 @@ struct CardInspectorView: View {
                 .accessibilityIdentifier("card.body")
 
             Toggle("Due Date", isOn: $hasDue)
-                .onChange(of: hasDue) { _, _ in commit() }
+                .onChange(of: hasDue) { _, isOn in
+                    commit()
+                    // Only ever prompted here — the first time a card actually gets a date.
+                    if isOn { Task { await DueNotifier.shared.requestAuthorizationIfNeeded() } }
+                }
             if hasDue {
                 DatePicker("", selection: $due, displayedComponents: [.date, .hourAndMinute])
                     .labelsHidden()
