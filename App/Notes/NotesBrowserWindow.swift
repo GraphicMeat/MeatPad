@@ -253,6 +253,7 @@ struct NotesBrowserWindow: View {
                 } else {
                     Button("Open in New Window") { ids.forEach(openInNewWindow) }
                     moveMenu(for: ids)
+                    boardMenu(for: ids)
                     Button("Move to Trash", role: .destructive) { ids.forEach(trash) }
                 }
             }
@@ -294,6 +295,37 @@ struct NotesBrowserWindow: View {
                     .disabled(single != nil && single?.folder == name)
             }
         }
+    }
+
+    /// Notes → board. A note that already has a card reveals it instead of making a second
+    /// one: `card.noteID` is the only stored link, so one note has at most one card.
+    @ViewBuilder
+    private func boardMenu(for ids: [UUID]) -> some View {
+        let boardStore = AppModel.shared.boardStore
+        let existing = ids.count == 1 ? boardStore.card(forNote: ids[0]) : nil
+        if let existing {
+            Button("Reveal in Board") {
+                AppModel.shared.pendingBoardReveal = BoardReveal(boardID: existing.board.id, cardID: existing.card.id)
+                openWindow(id: BoardWindow.windowID)
+            }
+        } else if !boardStore.boards.isEmpty {
+            Menu("Send to Board") {
+                ForEach(boardStore.boards) { board in
+                    Button(board.name) { ids.forEach { sendToBoard($0, board: board) } }
+                }
+            }
+        }
+    }
+
+    /// Creates a card in the board's first column, titled with the note and linked to it.
+    private func sendToBoard(_ noteID: UUID, board: Board) {
+        let boardStore = AppModel.shared.boardStore
+        guard boardStore.card(forNote: noteID) == nil,
+              let column = boardStore.columns(for: board).first,
+              let note = noteStore.notes.first(where: { $0.id == noteID }),
+              var card = try? boardStore.addCard(boardID: board.id, columnID: column.id, title: note.title) else { return }
+        card.noteID = noteID
+        try? boardStore.updateCard(boardID: board.id, card: card)
     }
 
     @ViewBuilder

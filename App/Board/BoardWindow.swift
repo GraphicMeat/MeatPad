@@ -33,6 +33,7 @@ struct BoardWindow: View {
     // Observed directly: nested ObservableObject changes don't propagate through AppModel's
     // @EnvironmentObject, so the sidebar would go stale on create/rename/delete.
     @ObservedObject private var store = AppModel.shared.boardStore
+    @ObservedObject private var appModel = AppModel.shared
 
     @SceneStorage("board.selection") private var selection: BoardSelection = .allBoards
     @State private var selectedCard: UUID?
@@ -55,9 +56,13 @@ struct BoardWindow: View {
         }
         .background { AmbientGlassBackground() }
         .frame(minWidth: 900, minHeight: 520)
-        .onAppear { AppModel.shared.boardWindowDidAppear() }
+        .onAppear { AppModel.shared.boardWindowDidAppear(); consumeReveal() }
+        .onChange(of: appModel.pendingBoardReveal) { _, _ in consumeReveal() }
         .onDisappear { AppModel.shared.boardWindowDidDisappear() }
-        .onChange(of: selection) { _, _ in selectedCard = nil }
+        .onChange(of: selection) { _, _ in
+            // A reveal sets board and card together; clearing here would undo it.
+            if appModel.pendingBoardReveal == nil { selectedCard = nil }
+        }
         .alert("New Board", isPresented: $newBoardShown) {
             TextField("Name", text: $nameDraft)
             Button("Create") {
@@ -154,6 +159,15 @@ struct BoardWindow: View {
         } else {
             BoardColumnsView(store: store, board: selectedBoard, selectedCard: $selectedCard)
         }
+    }
+
+    /// "Reveal in Board" from a note: select its board and card, then clear the request so
+    /// re-opening the window later doesn't jump again.
+    private func consumeReveal() {
+        guard let reveal = appModel.pendingBoardReveal else { return }
+        selection = .board(reveal.boardID)
+        selectedCard = reveal.cardID
+        appModel.pendingBoardReveal = nil
     }
 
     /// Board ops all fail the same way (name taken, disk trouble) — one alert for the lot,

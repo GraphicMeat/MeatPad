@@ -7,6 +7,12 @@ import Sparkle
 
 /// App-wide state: the note store and the active theme (persisted across launches as a
 /// theme id string in UserDefaults).
+/// A board + card to jump to, set by "Reveal in Board" and consumed by `BoardWindow`.
+struct BoardReveal: Equatable {
+    let boardID: UUID
+    let cardID: UUID
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     static let shared = AppModel()
@@ -64,6 +70,11 @@ final class AppModel: ObservableObject {
     /// `ProjectViewModel` can jump straight to the line instead of just opening the file.
     /// `nil` (the Cmd+O path never sets it) means "just open the tab, no reveal."
     var pendingFileOpenReveal: NSRange?
+
+    /// Set just before opening the Boards window from a note's "Reveal in Board": the board
+    /// to select and the card to highlight. Published rather than a plain one-shot var
+    /// because the window is often already open, so `onAppear` alone would never fire.
+    @Published var pendingBoardReveal: BoardReveal?
 
     /// Saved tabs/selection for a project window about to be reopened by session
     /// restore, keyed by standardized root URL. `ProjectViewModel.init` consumes (and

@@ -15,6 +15,7 @@ struct CardInspectorView: View {
     @State private var due: Date = Date()
     @State private var hasDue = false
     @State private var bodyDebouncer = Debouncer(delay: 0.5)
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -46,6 +47,8 @@ struct CardInspectorView: View {
                     .onChange(of: due) { _, _ in commit() }
             }
 
+            linkedNote
+
             Spacer()
 
             Button(role: .destructive) {
@@ -62,6 +65,34 @@ struct CardInspectorView: View {
         .onAppear { load() }
         // Switching cards must not carry the previous card's drafts across.
         .onChange(of: card.id) { _, _ in bodyDebouncer.cancel(); load() }
+    }
+
+    /// The note side of the link, resolved live. A trashed or deleted note keeps the link
+    /// and reads as unavailable — restoring the note makes it whole again.
+    @ViewBuilder
+    private var linkedNote: some View {
+        if let noteID = card.noteID {
+            Divider().opacity(0.4)
+            HStack(spacing: 6) {
+                Image(systemName: "link").foregroundStyle(.secondary)
+                if let note = AppModel.shared.noteStore.notes.first(where: { $0.id == noteID }) {
+                    Button(note.title) { openWindow(value: noteID) }
+                        .buttonStyle(.link)
+                        .lineLimit(1)
+                        .help(String(localized: "Open Note"))
+                } else {
+                    Text("Note unavailable").foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Unlink") {
+                    var updated = card
+                    updated.noteID = nil
+                    try? store.updateCard(boardID: boardID, card: updated)
+                }
+                .buttonStyle(.borderless)
+            }
+            .font(.callout)
+        }
     }
 
     private func load() {
