@@ -33,9 +33,12 @@ struct MeatPadApp: App {
                     .keyboardShortcut("o", modifiers: .command)
                 Button("All Notes") { openWindow(id: "all-notes") }
                     .keyboardShortcut("l", modifiers: [.command, .shift])
-                // ⌘⇧B: Boards. Grepped every `.keyboardShortcut` in this file first — free.
-                Button("Boards") { openWindow(id: BoardWindow.windowID) }
-                    .keyboardShortcut("b", modifiers: [.command, .shift])
+                // ⌘⇧B: Boards — the same All Notes window, switched to the board overview.
+                Button("Boards") {
+                    AppModel.shared.pendingBoardReveal = BoardReveal(boardID: nil, cardID: nil)
+                    openWindow(id: "all-notes")
+                }
+                .keyboardShortcut("b", modifiers: [.command, .shift])
                 NewFolderCommand()
                 OpenRecentCommands(openProject: AppModel.shared.openProject)
                 // Notes-browser selection actions (trash/restore, open-in-window). Folded
@@ -101,12 +104,6 @@ struct MeatPadApp: App {
 
         Window("All Notes", id: "all-notes") {
             NotesBrowserWindow()
-                .environmentObject(AppModel.shared)
-                .keyboardFocusRingOnly()
-        }
-
-        Window("Boards", id: BoardWindow.windowID) {
-            BoardWindow()
                 .environmentObject(AppModel.shared)
                 .keyboardFocusRingOnly()
         }

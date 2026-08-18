@@ -69,19 +69,4 @@ final class SessionStateTests: XCTestCase {
 
         XCTAssertEqual(SessionState.load(from: url), state)
     }
-
-    // MARK: - boardsOpen
-
-    func testDecodesLegacySessionWithoutBoardsOpen() throws {
-        let json = Data(#"{"openNoteIDs":[],"browserOpen":true,"openProjects":[]}"#.utf8)
-        let state = try JSONDecoder().decode(SessionState.self, from: json)
-        XCTAssertFalse(state.boardsOpen)
-        XCTAssertTrue(state.browserOpen)
-    }
-
-    func testBoardsOpenRoundTrips() throws {
-        let state = SessionState(openNoteIDs: [], browserOpen: false, openProjects: [], boardsOpen: true)
-        let decoded = try JSONDecoder().decode(SessionState.self, from: JSONEncoder().encode(state))
-        XCTAssertTrue(decoded.boardsOpen)
-    }
 }

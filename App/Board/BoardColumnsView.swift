@@ -48,34 +48,18 @@ struct BoardColumnsView: View {
         board.map { store.columns(for: $0) } ?? store.globalColumns
     }
 
-    private var selection: CardRef? {
-        guard let selectedCard else { return nil }
-        for board in store.boards where board.cards.contains(where: { $0.id == selectedCard }) {
-            if let card = board.cards.first(where: { $0.id == selectedCard }) { return CardRef(board: board, card: card) }
-        }
-        return nil
-    }
-
     var body: some View {
-        HStack(spacing: 0) {
-            ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: 14) {
-                    ForEach(renderedColumns) { column in
-                        columnView(column)
-                    }
-                    if board == nil, !otherCards.isEmpty {
-                        otherColumn
-                    }
-                    addColumnTile
+        ScrollView(.horizontal) {
+            HStack(alignment: .top, spacing: 14) {
+                ForEach(renderedColumns) { column in
+                    columnView(column)
                 }
-                .padding(16)
-            }
-            if let selection {
-                Divider()
-                CardInspectorView(store: store, boardID: selection.board.id, card: selection.card) {
-                    selectedCard = nil
+                if board == nil, !otherCards.isEmpty {
+                    otherColumn
                 }
+                addColumnTile
             }
+            .padding(16)
         }
         .alert("Rename Column", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
             TextField("Name", text: $nameDraft)

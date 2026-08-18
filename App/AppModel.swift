@@ -8,7 +8,7 @@ import Sparkle
 /// App-wide state: the note store and the active theme (persisted across launches as a
 /// theme id string in UserDefaults).
 /// Where the Boards window should land, set by the notes browser's board rows and by
-/// "Reveal in Board", consumed by `BoardWindow`. `boardID` nil = the All Boards overview;
+/// "Reveal in Board", consumed by `NotesBrowserWindow`. `boardID` nil = the All Boards overview;
 /// `cardID` nil = select the board without highlighting a card.
 struct BoardReveal: Equatable {
     let boardID: UUID?
@@ -92,7 +92,6 @@ final class AppModel: ObservableObject {
 
     private var openNoteIDs: [UUID] = []
     private var browserOpen = false
-    private var boardsOpen = false
     /// Open project windows, keyed by instance identity (not root — the same folder can
     /// be open in two windows, and each needs its own tabs/selection tracked). Combine
     /// sinks re-schedule the session write whenever a tracked VM's tabs/selection change.
@@ -247,15 +246,6 @@ final class AppModel: ObservableObject {
         scheduleSessionSave()
     }
 
-    func boardWindowDidAppear() {
-        boardsOpen = true
-        scheduleSessionSave()
-    }
-
-    func boardWindowDidDisappear() {
-        boardsOpen = false
-        scheduleSessionSave()
-    }
 
     /// Registers a project window so its tabs/selection are captured on every session
     /// write. Sinks the VM's `objectWillChange` so tab open/close/select changes
@@ -317,8 +307,7 @@ final class AppModel: ObservableObject {
             return FileManager.default.fileExists(atPath: session.root, isDirectory: &isDirectory) && isDirectory.boolValue
         }
 
-        guard !idsToRestore.isEmpty || state?.browserOpen == true || !projectsToRestore.isEmpty
-                || state?.boardsOpen == true else {
+        guard !idsToRestore.isEmpty || state?.browserOpen == true || !projectsToRestore.isEmpty else {
             if let note = try? noteStore.createNote() {
                 openWindowAction(value: note.id)
             }
@@ -327,7 +316,6 @@ final class AppModel: ObservableObject {
 
         for id in idsToRestore { openWindowAction(value: id) }
         if state?.browserOpen == true { openWindowAction(id: "all-notes") }
-        if state?.boardsOpen == true { openWindowAction(id: BoardWindow.windowID) }
         for session in projectsToRestore {
             let rootURL = URL(fileURLWithPath: session.root).standardizedFileURL
             pendingProjectSessions[rootURL] = session
@@ -343,7 +331,7 @@ final class AppModel: ObservableObject {
         let openProjects = projectViewModels.values.map { vm in
             ProjectSession(root: vm.root.path, openTabs: vm.tabs.map(\.path), selectedTab: vm.selectedTab?.path)
         }
-        try? SessionState(openNoteIDs: openNoteIDs, browserOpen: browserOpen, openProjects: openProjects, boardsOpen: boardsOpen)
+        try? SessionState(openNoteIDs: openNoteIDs, browserOpen: browserOpen, openProjects: openProjects)
             .save(to: sessionURL)
     }
 

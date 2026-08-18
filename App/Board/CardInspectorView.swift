@@ -61,7 +61,7 @@ struct CardInspectorView: View {
             .accessibilityIdentifier("card.delete")
         }
         .padding(14)
-        .frame(width: 300)
+        .frame(minWidth: 260, maxWidth: .infinity, alignment: .leading)
         .onAppear { load() }
         // Switching cards must not carry the previous card's drafts across.
         .onChange(of: card.id) { _, _ in bodyDebouncer.cancel(); load() }

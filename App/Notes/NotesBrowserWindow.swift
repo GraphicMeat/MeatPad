@@ -8,6 +8,8 @@ enum FolderSelection: Hashable, RawRepresentable {
     case defaultFolder          // the implicit "Notes" folder (Note.folder == nil)
     case folder(String)
     case trash
+    case allBoards
+    case board(UUID)
 
     var rawValue: String {
         switch self {
@@ -15,6 +17,8 @@ enum FolderSelection: Hashable, RawRepresentable {
         case .defaultFolder: return "default"
         case .folder(let name): return "f:\(name)"
         case .trash: return "trash"
+        case .allBoards: return "boards"
+        case .board(let id): return "b:\(id.uuidString)"
         }
     }
 
@@ -23,15 +27,35 @@ enum FolderSelection: Hashable, RawRepresentable {
         case "all": self = .all
         case "default": self = .defaultFolder
         case "trash": self = .trash
+        case "boards": self = .allBoards
         default:
-            guard rawValue.hasPrefix("f:") else { return nil }
-            self = .folder(String(rawValue.dropFirst(2)))
+            if rawValue.hasPrefix("f:") {
+                self = .folder(String(rawValue.dropFirst(2)))
+            } else if rawValue.hasPrefix("b:"), let id = UUID(uuidString: String(rawValue.dropFirst(2))) {
+                self = .board(id)
+            } else {
+                return nil
+            }
         }
     }
 
     /// The value new/moved notes get in this context: "All Notes" creates into the default folder.
     var noteFolder: String? {
         if case .folder(let name) = self { return name }
+        return nil
+    }
+
+    /// True while the window is showing a board rather than notes.
+    var isBoard: Bool {
+        switch self {
+        case .allBoards, .board: return true
+        default: return false
+        }
+    }
+
+    /// The selected board's id; nil for the All Boards overview and for any note selection.
+    var boardID: UUID? {
+        if case .board(let id) = self { return id }
         return nil
     }
 }
@@ -43,9 +67,10 @@ struct NotesBrowserWindow: View {
     // Observed directly: nested ObservableObject changes don't propagate through
     // AppModel's @EnvironmentObject, so the list would go stale on create/trash/save.
     @ObservedObject private var noteStore = AppModel.shared.noteStore
-    // Boards live in their own window; the sidebar lists them so they're reachable from
-    // here too. Observed directly for the same reason noteStore is.
+    // Boards share this window with notes — same sidebar, same three columns. Observed
+    // directly for the same reason noteStore is.
     @ObservedObject private var boardStore = AppModel.shared.boardStore
+    @ObservedObject private var appModel = AppModel.shared
     @Environment(\.openWindow) private var openWindow
     @State private var query = ""
     @State private var selection: Set<UUID> = []
@@ -60,12 +85,17 @@ struct NotesBrowserWindow: View {
     @State private var folderError: String?
     @State private var newBoardShown = false
     @State private var boardNameDraft = ""
+    @State private var boardRenameTarget: UUID?
+    @State private var boardDeleteTarget: UUID?
+    /// The card whose inspector fills the detail column while a board is selected.
+    @State private var selectedCard: UUID?
 
     private var folderFilteredNotes: [Note] {
         if case .trash = folderSelection { return noteStore.trashedNotes }
         var notes = noteStore.notes
         switch folderSelection {
-        case .all, .trash: break
+        // Board selections don't list notes at all — the middle column shows the board.
+        case .all, .trash, .allBoards, .board: break
         case .defaultFolder:
             // Unknown-folder notes (folder name absent from folders.json) fall back here.
             notes = notes.filter { $0.folder == nil || !noteStore.folders.contains($0.folder!) }
@@ -102,15 +132,31 @@ struct NotesBrowserWindow: View {
         NavigationSplitView {
             folderSidebar
         } content: {
-            noteList
+            // Same three columns serve both modes: board columns take the wide middle, the
+            // card inspector takes the detail column the note editor otherwise fills.
+            if folderSelection.isBoard {
+                boardColumns
+            } else {
+                noteList
+            }
         } detail: {
-            detail
+            if folderSelection.isBoard {
+                boardDetail
+            } else {
+                detail
+            }
         }
         .background { AmbientGlassBackground() }
         .frame(minWidth: 860, minHeight: 480)
         .onAppear { AppModel.shared.browserWindowDidAppear() }
         .onDisappear { AppModel.shared.browserWindowDidDisappear() }
-        .onChange(of: folderSelection) { _, _ in selection = [] }
+        .onChange(of: folderSelection) { _, _ in
+            selection = []
+            // A reveal sets board and card together; clearing here would undo it.
+            if appModel.pendingBoardReveal == nil { selectedCard = nil }
+        }
+        .onAppear { consumeBoardReveal() }
+        .onChange(of: appModel.pendingBoardReveal) { _, _ in consumeBoardReveal() }
         // Search-hit reveal only makes sense for a single note — a multi-selection has no
         // one editor to scroll.
         .onChange(of: selection) { _, newValue in
@@ -134,8 +180,7 @@ struct NotesBrowserWindow: View {
             Button("Create") {
                 runFolderOp {
                     let board = try boardStore.createBoard(name: boardNameDraft)
-                    AppModel.shared.pendingBoardReveal = BoardReveal(boardID: board.id, cardID: nil)
-                    openWindow(id: BoardWindow.windowID)
+                    folderSelection = .board(board.id)
                 }
             }
             Button("Cancel", role: .cancel) {}
@@ -152,6 +197,32 @@ struct NotesBrowserWindow: View {
                 }
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .alert("Rename Board", isPresented: boardRenamePresented) {
+            TextField("Name", text: $boardNameDraft)
+            Button("Rename") {
+                if let id = boardRenameTarget {
+                    let name = boardNameDraft
+                    runFolderOp { try boardStore.renameBoard(id: id, to: name) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
+            boardDeleteTitle,
+            isPresented: boardDeletePresented,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Board", role: .destructive) {
+                if let id = boardDeleteTarget {
+                    runFolderOp {
+                        try boardStore.deleteBoard(id: id)
+                        if folderSelection == .board(id) { folderSelection = .allBoards }
+                    }
+                }
+            }
+        } message: {
+            Text("This can’t be undone.")
         }
         .confirmationDialog(
             "Delete “\(deleteTarget ?? "")”? Its notes move to the trash.",
@@ -210,10 +281,14 @@ struct NotesBrowserWindow: View {
 
             Divider()
 
-            boardRow(nil, name: String(localized: "All Boards"), icon: "square.grid.2x2",
-                     count: boardStore.boards.reduce(0) { $0 + $1.cards.count })
+            folderRow(.allBoards, name: String(localized: "All Boards"), icon: "square.grid.2x2",
+                      count: boardStore.boards.reduce(0) { $0 + $1.cards.count })
             ForEach(boardStore.boards) { board in
-                boardRow(board.id, name: board.name, icon: "rectangle.split.3x1", count: board.cards.count)
+                folderRow(.board(board.id), name: board.name, icon: "rectangle.split.3x1", count: board.cards.count)
+                    .contextMenu {
+                        Button("Rename…") { boardNameDraft = board.name; boardRenameTarget = board.id }
+                        Button("Delete…", role: .destructive) { boardDeleteTarget = board.id }
+                    }
             }
             actionRow(title: String(localized: "New Board"), icon: "plus.rectangle.on.folder") {
                 boardNameDraft = ""
@@ -224,29 +299,13 @@ struct NotesBrowserWindow: View {
         .navigationSplitViewColumnWidth(min: 150, ideal: 180)
     }
 
-    /// A board is shown in the Boards window, not inside this one — a kanban needs the full
-    /// width, and this window's middle column is a note list. The row is a launcher, so it
-    /// stays out of `List(selection:)` and never disturbs the folder selection.
-    private func boardRow(_ id: UUID?, name: String, icon: String, count: Int) -> some View {
-        Button {
-            AppModel.shared.pendingBoardReveal = BoardReveal(boardID: id, cardID: nil)
-            openWindow(id: BoardWindow.windowID)
-        } label: {
-            HStack {
-                Label {
-                    Text(name).lineLimit(1)
-                } icon: {
-                    Image(systemName: icon).foregroundStyle(MeatPadGlass.tint.gradient)
-                }
-                Spacer()
-                Text("\(count)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+    /// "Boards" in the File menu, the menu-bar popover, and "Reveal in Board" all land here:
+    /// they park a target on AppModel and open this window, which then selects it.
+    private func consumeBoardReveal() {
+        guard let reveal = appModel.pendingBoardReveal else { return }
+        folderSelection = reveal.boardID.map { .board($0) } ?? .allBoards
+        selectedCard = reveal.cardID
+        appModel.pendingBoardReveal = nil
     }
 
     /// Sidebar row that performs an action instead of selecting something.
@@ -280,6 +339,55 @@ struct NotesBrowserWindow: View {
                 .monospacedDigit()
         }
         .tag(value)
+    }
+
+    // Bindings hoisted out of the modifier chain: this body carries enough chained alerts
+    // that inline `Binding(get:set:)` closures push the type-checker past its budget.
+    private var boardRenamePresented: Binding<Bool> {
+        Binding(get: { boardRenameTarget != nil }, set: { if !$0 { boardRenameTarget = nil } })
+    }
+
+    private var boardDeletePresented: Binding<Bool> {
+        Binding(get: { boardDeleteTarget != nil }, set: { if !$0 { boardDeleteTarget = nil } })
+    }
+
+    /// Pulled out of the `confirmationDialog` call: a trailing closure inside string
+    /// interpolation blows past the type-checker's budget in that position.
+    private var boardDeleteTitle: String {
+        let name = boardStore.boards.first(where: { $0.id == boardDeleteTarget })?.name ?? ""
+        return String(localized: "Delete “\(name)”? Its cards are deleted with it.")
+    }
+
+    private var selectedBoard: Board? {
+        folderSelection.boardID.flatMap { id in boardStore.boards.first { $0.id == id } }
+    }
+
+    /// The selected card plus its owning board — the inspector needs both, and in the All
+    /// Boards overview the card can come from any board.
+    private var selectedCardRef: (board: Board, card: Card)? {
+        guard let selectedCard else { return nil }
+        for board in boardStore.boards {
+            if let card = board.cards.first(where: { $0.id == selectedCard }) { return (board, card) }
+        }
+        return nil
+    }
+
+    private var boardColumns: some View {
+        BoardColumnsView(store: boardStore, board: selectedBoard, selectedCard: $selectedCard)
+            .navigationSplitViewColumnWidth(min: 420, ideal: 780)
+    }
+
+    @ViewBuilder
+    private var boardDetail: some View {
+        if let ref = selectedCardRef {
+            CardInspectorView(store: boardStore, boardID: ref.board.id, card: ref.card) {
+                selectedCard = nil
+            }
+        } else {
+            Text("Select a card")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     @ViewBuilder
@@ -365,8 +473,8 @@ struct NotesBrowserWindow: View {
         let existing = ids.count == 1 ? boardStore.card(forNote: ids[0]) : nil
         if let existing {
             Button("Reveal in Board") {
-                AppModel.shared.pendingBoardReveal = BoardReveal(boardID: existing.board.id, cardID: existing.card.id)
-                openWindow(id: BoardWindow.windowID)
+                folderSelection = .board(existing.board.id)
+                selectedCard = existing.card.id
             }
         } else if !boardStore.boards.isEmpty {
             Menu("Send to Board") {

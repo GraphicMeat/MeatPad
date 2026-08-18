@@ -128,7 +128,8 @@ struct MenuBarNotesView: View {
     }
 
     private func openBoards() {
-        openWindow(id: BoardWindow.windowID)
+        AppModel.shared.pendingBoardReveal = BoardReveal(boardID: nil, cardID: nil)
+        openWindow(id: "all-notes")
         NSApp.activate(ignoringOtherApps: true)
     }
 }
