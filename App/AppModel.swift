@@ -19,6 +19,8 @@ final class AppModel: ObservableObject {
     let commandStore: CommandStore
     /// Saved keystroke macros, backed by the sibling `Macros` directory.
     let macroStore: MacroStore
+    /// Kanban boards, backed by the sibling `Boards` directory. One board per project.
+    let boardStore: BoardStore
     /// User themes, backed by the sibling `Themes` directory. `BuiltinThemes.all` is
     /// always available through it too (see `ThemeStore.allThemes`).
     let themeStore: ThemeStore
@@ -77,6 +79,7 @@ final class AppModel: ObservableObject {
 
     private var openNoteIDs: [UUID] = []
     private var browserOpen = false
+    private var boardsOpen = false
     /// Open project windows, keyed by instance identity (not root — the same folder can
     /// be open in two windows, and each needs its own tabs/selection tracked). Combine
     /// sinks re-schedule the session write whenever a tracked VM's tabs/selection change.
@@ -133,6 +136,16 @@ final class AppModel: ObservableObject {
         commandStore = CommandStore(directory: commandsDir)
         let macrosDir = base.appendingPathComponent("Macros", isDirectory: true)
         macroStore = MacroStore(directory: macrosDir)
+        let boardsDir = base.appendingPathComponent("Boards", isDirectory: true)
+        do {
+            // Default column names are seeded localized here — MeatPadKit ships no catalog.
+            boardStore = try BoardStore(
+                rootURL: boardsDir,
+                defaultColumnNames: (String(localized: "Todo"), String(localized: "In Progress"), String(localized: "Done"))
+            )
+        } catch {
+            fatalError("MeatPad couldn't set up its boards folder at \(boardsDir.path): \(error)")
+        }
         let themesDir = base.appendingPathComponent("Themes", isDirectory: true)
         let themeStore = ThemeStore(directory: themesDir)
         self.themeStore = themeStore
@@ -219,6 +232,16 @@ final class AppModel: ObservableObject {
         scheduleSessionSave()
     }
 
+    func boardWindowDidAppear() {
+        boardsOpen = true
+        scheduleSessionSave()
+    }
+
+    func boardWindowDidDisappear() {
+        boardsOpen = false
+        scheduleSessionSave()
+    }
+
     /// Registers a project window so its tabs/selection are captured on every session
     /// write. Sinks the VM's `objectWillChange` so tab open/close/select changes
     /// schedule a debounced save without any per-action wiring at the call sites.
@@ -279,7 +302,8 @@ final class AppModel: ObservableObject {
             return FileManager.default.fileExists(atPath: session.root, isDirectory: &isDirectory) && isDirectory.boolValue
         }
 
-        guard !idsToRestore.isEmpty || state?.browserOpen == true || !projectsToRestore.isEmpty else {
+        guard !idsToRestore.isEmpty || state?.browserOpen == true || !projectsToRestore.isEmpty
+                || state?.boardsOpen == true else {
             if let note = try? noteStore.createNote() {
                 openWindowAction(value: note.id)
             }
@@ -288,6 +312,7 @@ final class AppModel: ObservableObject {
 
         for id in idsToRestore { openWindowAction(value: id) }
         if state?.browserOpen == true { openWindowAction(id: "all-notes") }
+        if state?.boardsOpen == true { openWindowAction(id: BoardWindow.windowID) }
         for session in projectsToRestore {
             let rootURL = URL(fileURLWithPath: session.root).standardizedFileURL
             pendingProjectSessions[rootURL] = session
@@ -303,7 +328,7 @@ final class AppModel: ObservableObject {
         let openProjects = projectViewModels.values.map { vm in
             ProjectSession(root: vm.root.path, openTabs: vm.tabs.map(\.path), selectedTab: vm.selectedTab?.path)
         }
-        try? SessionState(openNoteIDs: openNoteIDs, browserOpen: browserOpen, openProjects: openProjects)
+        try? SessionState(openNoteIDs: openNoteIDs, browserOpen: browserOpen, openProjects: openProjects, boardsOpen: boardsOpen)
             .save(to: sessionURL)
     }
 

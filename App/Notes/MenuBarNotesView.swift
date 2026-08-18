@@ -91,6 +91,12 @@ struct MenuBarNotesView: View {
                     Spacer()
                     Button(action: openBrowser) { Label("All Notes", systemImage: "rectangle.stack") }
                         .buttonStyle(.borderless)
+                    Button(action: openBoards) {
+                        Label("Boards", systemImage: "square.grid.3x1.below.line.grid.1x2")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(String(localized: "Boards"))
                     // In menu-bar-only mode the app menu is gone, so this popover is the
                     // only path to Settings.
                     Button { openSettings(); NSApp.activate(ignoringOtherApps: true) } label: {
@@ -118,6 +124,11 @@ struct MenuBarNotesView: View {
 
     private func openBrowser() {
         openWindow(id: "all-notes")
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func openBoards() {
+        openWindow(id: BoardWindow.windowID)
         NSApp.activate(ignoringOtherApps: true)
     }
 }
