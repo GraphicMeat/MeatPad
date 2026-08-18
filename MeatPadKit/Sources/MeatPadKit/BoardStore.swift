@@ -153,6 +153,76 @@ public final class BoardStore: ObservableObject {
         try persist(at: idx)
     }
 
+    // MARK: - Column editing
+
+    public func addGlobalColumn(name: String) throws {
+        globalColumns.append(BoardColumn(name: try validated(name)))
+        try saveIndex()
+    }
+
+    public func addExtraColumn(boardID: UUID, name: String) throws {
+        let idx = try boardIndex(boardID)
+        boards[idx].extraColumns.append(BoardColumn(name: try validated(name)))
+        try persist(at: idx)
+    }
+
+    /// `boardID` nil = a global column; otherwise that board's own extra column.
+    public func renameColumn(id: UUID, to name: String, boardID: UUID?) throws {
+        let trimmed = try validated(name)
+        try mutateColumn(id: id, boardID: boardID) { $0.name = trimmed }
+    }
+
+    public func setColumnDone(id: UUID, _ isDone: Bool, boardID: UUID?) throws {
+        try mutateColumn(id: id, boardID: boardID) { $0.isDone = isDone }
+    }
+
+    /// Deleting a column never deletes work: its cards move to the first global column.
+    /// That last global column is the fallback, so it cannot itself be removed.
+    public func deleteColumn(id: UUID, boardID: UUID?) throws {
+        if let boardID {
+            let idx = try boardIndex(boardID)
+            guard boards[idx].extraColumns.contains(where: { $0.id == id }) else {
+                throw BoardStoreError.columnNotFound(id)
+            }
+            boards[idx].extraColumns.removeAll { $0.id == id }
+            reassignCards(from: id, boardIndex: idx)
+            try persist(at: idx)
+            return
+        }
+        guard globalColumns.contains(where: { $0.id == id }) else { throw BoardStoreError.columnNotFound(id) }
+        guard globalColumns.count > 1 else { throw BoardStoreError.lastColumn }
+        globalColumns.removeAll { $0.id == id }
+        try saveIndex()
+        for idx in boards.indices {
+            reassignCards(from: id, boardIndex: idx)
+            try persist(at: idx)
+        }
+    }
+
+    private func reassignCards(from columnID: UUID, boardIndex idx: Int) {
+        guard let fallback = globalColumns.first?.id else { return }
+        for cardIdx in boards[idx].cards.indices where boards[idx].cards[cardIdx].columnID == columnID {
+            boards[idx].cards[cardIdx].columnID = fallback
+        }
+    }
+
+    private func mutateColumn(id: UUID, boardID: UUID?, _ change: (inout BoardColumn) -> Void) throws {
+        if let boardID {
+            let idx = try boardIndex(boardID)
+            guard let colIdx = boards[idx].extraColumns.firstIndex(where: { $0.id == id }) else {
+                throw BoardStoreError.columnNotFound(id)
+            }
+            change(&boards[idx].extraColumns[colIdx])
+            try persist(at: idx)
+        } else {
+            guard let colIdx = globalColumns.firstIndex(where: { $0.id == id }) else {
+                throw BoardStoreError.columnNotFound(id)
+            }
+            change(&globalColumns[colIdx])
+            try saveIndex()
+        }
+    }
+
     // MARK: - Storage
 
     /// `<storage base>/Boards`, resolved through the same override key NoteStore reads so

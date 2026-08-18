@@ -230,4 +230,84 @@ final class BoardStoreTests: XCTestCase {
             XCTAssertEqual($0 as? BoardStoreError, .cardNotFound(unknownCard))
         }
     }
+
+    // MARK: - column editing
+
+    func testAddGlobalColumnAppearsOnEveryBoardAndPersists() throws {
+        let store = try makeStore()
+        _ = try store.createBoard(name: "a")
+        _ = try store.createBoard(name: "b")
+        try store.addGlobalColumn(name: "Review")
+
+        XCTAssertEqual(store.columns(for: store.boards[0]).map(\.name).last, "Review")
+        XCTAssertEqual(store.columns(for: store.boards[1]).map(\.name).last, "Review")
+        XCTAssertEqual(try makeStore().globalColumns.map(\.name), ["Todo", "In Progress", "Done", "Review"])
+    }
+
+    func testAddExtraColumnIsBoardLocalAndRendersAfterGlobals() throws {
+        let store = try makeStore()
+        let a = try store.createBoard(name: "a")
+        _ = try store.createBoard(name: "b")
+        try store.addExtraColumn(boardID: a.id, name: "Blocked")
+
+        XCTAssertEqual(store.columns(for: store.boards[0]).map(\.name), ["Todo", "In Progress", "Done", "Blocked"])
+        XCTAssertEqual(store.columns(for: store.boards[1]).map(\.name), ["Todo", "In Progress", "Done"])
+        XCTAssertEqual(try makeStore().boards[0].extraColumns.map(\.name), ["Blocked"])
+    }
+
+    func testRenameColumnKeepsCardMembership() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        let todo = store.globalColumns[0].id
+        let card = try store.addCard(boardID: board.id, columnID: todo, title: "x")
+        try store.renameColumn(id: todo, to: "Backlog", boardID: nil)
+
+        XCTAssertEqual(store.globalColumns[0].name, "Backlog")
+        XCTAssertEqual(store.cards(in: store.boards[0], column: todo).map(\.id), [card.id])
+        XCTAssertEqual(try makeStore().globalColumns[0].name, "Backlog")
+    }
+
+    func testSetColumnDoneFlagsAndPersists() throws {
+        let store = try makeStore()
+        let todo = store.globalColumns[0].id
+        try store.setColumnDone(id: todo, true, boardID: nil)
+
+        XCTAssertTrue(store.globalColumns[0].isDone)
+        XCTAssertTrue(try makeStore().globalColumns[0].isDone)
+    }
+
+    func testDeleteColumnReassignsItsCardsToFirstGlobalColumn() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        let todo = store.globalColumns[0].id
+        let doing = store.globalColumns[1].id
+        let card = try store.addCard(boardID: board.id, columnID: doing, title: "x")
+        try store.deleteColumn(id: doing, boardID: nil)
+
+        XCTAssertEqual(store.globalColumns.map(\.name), ["Todo", "Done"])
+        XCTAssertEqual(store.cards(in: store.boards[0], column: todo).map(\.id), [card.id])
+        XCTAssertEqual(try makeStore().boards[0].cards[0].columnID, todo)
+    }
+
+    func testDeleteExtraColumnReassignsToFirstGlobalColumn() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        try store.addExtraColumn(boardID: board.id, name: "Blocked")
+        let blocked = store.boards[0].extraColumns[0].id
+        let card = try store.addCard(boardID: board.id, columnID: blocked, title: "x")
+        try store.deleteColumn(id: blocked, boardID: board.id)
+
+        XCTAssertTrue(store.boards[0].extraColumns.isEmpty)
+        XCTAssertEqual(store.boards[0].cards.first(where: { $0.id == card.id })?.columnID, store.globalColumns[0].id)
+    }
+
+    func testCannotDeleteLastGlobalColumn() throws {
+        let store = try makeStore()
+        try store.deleteColumn(id: store.globalColumns[2].id, boardID: nil)
+        try store.deleteColumn(id: store.globalColumns[1].id, boardID: nil)
+
+        XCTAssertThrowsError(try store.deleteColumn(id: store.globalColumns[0].id, boardID: nil)) {
+            XCTAssertEqual($0 as? BoardStoreError, .lastColumn)
+        }
+    }
 }
