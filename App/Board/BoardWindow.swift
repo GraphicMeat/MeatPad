@@ -165,7 +165,7 @@ struct BoardWindow: View {
     /// re-opening the window later doesn't jump again.
     private func consumeReveal() {
         guard let reveal = appModel.pendingBoardReveal else { return }
-        selection = .board(reveal.boardID)
+        selection = reveal.boardID.map { .board($0) } ?? .allBoards
         selectedCard = reveal.cardID
         appModel.pendingBoardReveal = nil
     }

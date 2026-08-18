@@ -7,10 +7,12 @@ import Sparkle
 
 /// App-wide state: the note store and the active theme (persisted across launches as a
 /// theme id string in UserDefaults).
-/// A board + card to jump to, set by "Reveal in Board" and consumed by `BoardWindow`.
+/// Where the Boards window should land, set by the notes browser's board rows and by
+/// "Reveal in Board", consumed by `BoardWindow`. `boardID` nil = the All Boards overview;
+/// `cardID` nil = select the board without highlighting a card.
 struct BoardReveal: Equatable {
-    let boardID: UUID
-    let cardID: UUID
+    let boardID: UUID?
+    let cardID: UUID?
 }
 
 @MainActor

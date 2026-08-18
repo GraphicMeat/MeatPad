@@ -43,6 +43,9 @@ struct NotesBrowserWindow: View {
     // Observed directly: nested ObservableObject changes don't propagate through
     // AppModel's @EnvironmentObject, so the list would go stale on create/trash/save.
     @ObservedObject private var noteStore = AppModel.shared.noteStore
+    // Boards live in their own window; the sidebar lists them so they're reachable from
+    // here too. Observed directly for the same reason noteStore is.
+    @ObservedObject private var boardStore = AppModel.shared.boardStore
     @Environment(\.openWindow) private var openWindow
     @State private var query = ""
     @State private var selection: Set<UUID> = []
@@ -55,6 +58,8 @@ struct NotesBrowserWindow: View {
     @State private var deleteTarget: String?
     @State private var permanentDeleteTarget: Set<UUID>?
     @State private var folderError: String?
+    @State private var newBoardShown = false
+    @State private var boardNameDraft = ""
 
     private var folderFilteredNotes: [Note] {
         if case .trash = folderSelection { return noteStore.trashedNotes }
@@ -124,6 +129,17 @@ struct NotesBrowserWindow: View {
             Button("Create") { runFolderOp { try noteStore.createFolder(folderNameDraft) } }
             Button("Cancel", role: .cancel) {}
         }
+        .alert("New Board", isPresented: $newBoardShown) {
+            TextField("Name", text: $boardNameDraft)
+            Button("Create") {
+                runFolderOp {
+                    let board = try boardStore.createBoard(name: boardNameDraft)
+                    AppModel.shared.pendingBoardReveal = BoardReveal(boardID: board.id, cardID: nil)
+                    openWindow(id: BoardWindow.windowID)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
         .alert("Rename Folder", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
             TextField("Name", text: $folderNameDraft)
             Button("Rename") {
@@ -187,23 +203,67 @@ struct NotesBrowserWindow: View {
                     }
             }
             folderRow(.trash, name: String(localized: "Trash"), icon: "trash", count: noteStore.trashedNotes.count)
+            actionRow(title: String(localized: "New Folder"), icon: "folder.badge.plus") {
+                folderNameDraft = ""
+                newFolderShown = true
+            }
+
+            Divider()
+
+            boardRow(nil, name: String(localized: "All Boards"), icon: "square.grid.2x2",
+                     count: boardStore.boards.reduce(0) { $0 + $1.cards.count })
+            ForEach(boardStore.boards) { board in
+                boardRow(board.id, name: board.name, icon: "rectangle.split.3x1", count: board.cards.count)
+            }
+            actionRow(title: String(localized: "New Board"), icon: "plus.rectangle.on.folder") {
+                boardNameDraft = ""
+                newBoardShown = true
+            }
         }
         .scrollContentBackground(.hidden)
         .navigationSplitViewColumnWidth(min: 150, ideal: 180)
-        .safeAreaInset(edge: .bottom) {
+    }
+
+    /// A board is shown in the Boards window, not inside this one — a kanban needs the full
+    /// width, and this window's middle column is a note list. The row is a launcher, so it
+    /// stays out of `List(selection:)` and never disturbs the folder selection.
+    private func boardRow(_ id: UUID?, name: String, icon: String, count: Int) -> some View {
+        Button {
+            AppModel.shared.pendingBoardReveal = BoardReveal(boardID: id, cardID: nil)
+            openWindow(id: BoardWindow.windowID)
+        } label: {
             HStack {
-                Button {
-                    folderNameDraft = ""
-                    newFolderShown = true
-                } label: {
-                    Label("New Folder", systemImage: "folder.badge.plus")
+                Label {
+                    Text(name).lineLimit(1)
+                } icon: {
+                    Image(systemName: icon).foregroundStyle(MeatPadGlass.tint.gradient)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Sidebar row that performs an action instead of selecting something.
+    private func actionRow(title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Label {
+                    Text(title).lineLimit(1)
+                } icon: {
+                    Image(systemName: icon)
+                }
                 Spacer()
             }
-            .padding(10)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
     }
 
     private func folderRow(_ value: FolderSelection, name: String, icon: String, count: Int) -> some View {
