@@ -128,4 +128,106 @@ final class BoardStoreTests: XCTestCase {
 
         XCTAssertEqual(BoardStore.defaultRoot(defaults: defaults), tempDir.appendingPathComponent("Boards", isDirectory: true))
     }
+
+    // MARK: - cards
+
+    private func makeBoard(_ store: BoardStore) throws -> Board {
+        try store.createBoard(name: "project1")
+    }
+
+    func testAddCardLandsInColumnAndPersists() throws {
+        let store = try makeStore()
+        let board = try makeBoard(store)
+        let todo = store.globalColumns[0]
+        let card = try store.addCard(boardID: board.id, columnID: todo.id, title: "ship it")
+
+        XCTAssertEqual(card.title, "ship it")
+        XCTAssertEqual(card.columnID, todo.id)
+        XCTAssertEqual(store.cards(in: store.boards[0], column: todo.id).map(\.id), [card.id])
+        XCTAssertEqual(try makeStore().boards[0].cards.map(\.title), ["ship it"])
+    }
+
+    func testAddCardRejectsEmptyTitleAndUnknownColumn() throws {
+        let store = try makeStore()
+        let board = try makeBoard(store)
+        XCTAssertThrowsError(try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: " ")) {
+            XCTAssertEqual($0 as? BoardStoreError, .invalidName)
+        }
+        let unknown = UUID()
+        XCTAssertThrowsError(try store.addCard(boardID: board.id, columnID: unknown, title: "x")) {
+            XCTAssertEqual($0 as? BoardStoreError, .columnNotFound(unknown))
+        }
+    }
+
+    func testUpdateCardBumpsModifiedAndPersists() throws {
+        let store = try makeStore()
+        let board = try makeBoard(store)
+        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "a")
+        let before = card.modified
+        card.title = "b"
+        card.body = "detail"
+        card.due = Date(timeIntervalSince1970: 1_800_000_000)
+        try store.updateCard(boardID: board.id, card: card)
+
+        let stored = store.boards[0].cards[0]
+        XCTAssertEqual(stored.title, "b")
+        XCTAssertEqual(stored.body, "detail")
+        XCTAssertEqual(stored.due, Date(timeIntervalSince1970: 1_800_000_000))
+        XCTAssertGreaterThanOrEqual(stored.modified, before)
+        XCTAssertEqual(try makeStore().boards[0].cards[0].body, "detail")
+    }
+
+    func testDeleteCardRemovesItEverywhere() throws {
+        let store = try makeStore()
+        let board = try makeBoard(store)
+        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "a")
+        try store.deleteCard(boardID: board.id, cardID: card.id)
+
+        XCTAssertTrue(store.boards[0].cards.isEmpty)
+        XCTAssertTrue(try makeStore().boards[0].cards.isEmpty)
+    }
+
+    func testMoveCardChangesColumnAndPosition() throws {
+        let store = try makeStore()
+        let board = try makeBoard(store)
+        let todo = store.globalColumns[0].id
+        let doing = store.globalColumns[1].id
+        let a = try store.addCard(boardID: board.id, columnID: todo, title: "a")
+        _ = try store.addCard(boardID: board.id, columnID: todo, title: "b")
+        _ = try store.addCard(boardID: board.id, columnID: doing, title: "c")
+
+        try store.moveCard(id: a.id, boardID: board.id, toColumn: doing, index: 0)
+        XCTAssertEqual(store.cards(in: store.boards[0], column: doing).map(\.title), ["a", "c"])
+        XCTAssertEqual(store.cards(in: store.boards[0], column: todo).map(\.title), ["b"])
+
+        try store.moveCard(id: a.id, boardID: board.id, toColumn: doing, index: 99)
+        XCTAssertEqual(store.cards(in: store.boards[0], column: doing).map(\.title), ["c", "a"])
+        XCTAssertEqual(try makeStore().boards[0].cards.count, 3)
+    }
+
+    func testMoveCardWithinSameColumnReorders() throws {
+        let store = try makeStore()
+        let board = try makeBoard(store)
+        let todo = store.globalColumns[0].id
+        let a = try store.addCard(boardID: board.id, columnID: todo, title: "a")
+        _ = try store.addCard(boardID: board.id, columnID: todo, title: "b")
+        _ = try store.addCard(boardID: board.id, columnID: todo, title: "c")
+
+        try store.moveCard(id: a.id, boardID: board.id, toColumn: todo, index: 2)
+        XCTAssertEqual(store.cards(in: store.boards[0], column: todo).map(\.title), ["b", "c", "a"])
+    }
+
+    func testMoveCardRejectsUnknownColumnAndCard() throws {
+        let store = try makeStore()
+        let board = try makeBoard(store)
+        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "a")
+        let unknownColumn = UUID()
+        XCTAssertThrowsError(try store.moveCard(id: card.id, boardID: board.id, toColumn: unknownColumn, index: 0)) {
+            XCTAssertEqual($0 as? BoardStoreError, .columnNotFound(unknownColumn))
+        }
+        let unknownCard = UUID()
+        XCTAssertThrowsError(try store.moveCard(id: unknownCard, boardID: board.id, toColumn: store.globalColumns[1].id, index: 0)) {
+            XCTAssertEqual($0 as? BoardStoreError, .cardNotFound(unknownCard))
+        }
+    }
 }

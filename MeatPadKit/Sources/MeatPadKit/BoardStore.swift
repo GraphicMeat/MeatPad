@@ -84,6 +84,75 @@ public final class BoardStore: ObservableObject {
         try saveIndex()
     }
 
+    // MARK: - Columns (composition)
+
+    /// Rendered order for a board: the global columns first, then that board's extras.
+    public func columns(for board: Board) -> [BoardColumn] {
+        globalColumns + board.extraColumns
+    }
+
+    /// A column's cards, already in display order — `board.cards` order IS column order.
+    public func cards(in board: Board, column: UUID) -> [Card] {
+        board.cards.filter { $0.columnID == column }
+    }
+
+    // MARK: - Cards
+
+    @discardableResult
+    public func addCard(boardID: UUID, columnID: UUID, title: String) throws -> Card {
+        let idx = try boardIndex(boardID)
+        guard columns(for: boards[idx]).contains(where: { $0.id == columnID }) else {
+            throw BoardStoreError.columnNotFound(columnID)
+        }
+        let card = Card(title: try validated(title), columnID: columnID)
+        boards[idx].cards.append(card)
+        try persist(at: idx)
+        return card
+    }
+
+    /// Replaces a card wholesale and stamps `modified`. Callers edit a copy and hand it back.
+    public func updateCard(boardID: UUID, card: Card) throws {
+        let idx = try boardIndex(boardID)
+        guard let cardIdx = boards[idx].cards.firstIndex(where: { $0.id == card.id }) else {
+            throw BoardStoreError.cardNotFound(card.id)
+        }
+        var updated = card
+        updated.title = try validated(card.title)
+        updated.modified = Date()
+        boards[idx].cards[cardIdx] = updated
+        try persist(at: idx)
+    }
+
+    public func deleteCard(boardID: UUID, cardID: UUID) throws {
+        let idx = try boardIndex(boardID)
+        guard boards[idx].cards.contains(where: { $0.id == cardID }) else {
+            throw BoardStoreError.cardNotFound(cardID)
+        }
+        boards[idx].cards.removeAll { $0.id == cardID }
+        try persist(at: idx)
+    }
+
+    /// Moves a card to `index` within `toColumn` (clamped). The position is expressed in the
+    /// destination column's own coordinates, which is all a drop target knows.
+    public func moveCard(id: UUID, boardID: UUID, toColumn: UUID, index: Int) throws {
+        let idx = try boardIndex(boardID)
+        guard columns(for: boards[idx]).contains(where: { $0.id == toColumn }) else {
+            throw BoardStoreError.columnNotFound(toColumn)
+        }
+        guard let cardIdx = boards[idx].cards.firstIndex(where: { $0.id == id }) else {
+            throw BoardStoreError.cardNotFound(id)
+        }
+        var card = boards[idx].cards.remove(at: cardIdx)
+        card.columnID = toColumn
+
+        // Translate the column-local index into an index in the flat `cards` array.
+        let siblings = boards[idx].cards.enumerated().filter { $0.element.columnID == toColumn }
+        let clamped = max(0, min(index, siblings.count))
+        let insertAt = clamped < siblings.count ? siblings[clamped].offset : boards[idx].cards.count
+        boards[idx].cards.insert(card, at: insertAt)
+        try persist(at: idx)
+    }
+
     // MARK: - Storage
 
     /// `<storage base>/Boards`, resolved through the same override key NoteStore reads so
