@@ -11,6 +11,30 @@ struct BoardColumnsView: View {
     @Binding var selectedCard: UUID?
 
     @State private var drafts: [UUID: String] = [:]
+    @State private var nameDraft = ""
+    @State private var renameTarget: ColumnRef?
+    @State private var deleteTarget: ColumnRef?
+    @State private var addColumnTarget: AddColumnScope?
+
+    /// A column plus the board that owns it — `boardID` nil means a global column, which is
+    /// exactly the shape `BoardStore`'s column API takes.
+    private struct ColumnRef: Identifiable, Equatable {
+        let id: UUID
+        let boardID: UUID?
+        let name: String
+        let isDone: Bool
+    }
+
+    private enum AddColumnScope: Identifiable {
+        case global
+        case board(UUID)
+        var id: String {
+            switch self {
+            case .global: return "global"
+            case .board(let id): return id.uuidString
+            }
+        }
+    }
 
     /// A card plus the board that owns it — the all-boards view needs both to move a card
     /// (a move is always within the card's own board) and to badge it.
@@ -42,6 +66,7 @@ struct BoardColumnsView: View {
                     if board == nil, !otherCards.isEmpty {
                         otherColumn
                     }
+                    addColumnTile
                 }
                 .padding(16)
             }
@@ -52,6 +77,50 @@ struct BoardColumnsView: View {
                 }
             }
         }
+        .alert("Rename Column", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
+            TextField("Name", text: $nameDraft)
+            Button("Rename") {
+                if let target = renameTarget {
+                    try? store.renameColumn(id: target.id, to: nameDraft, boardID: target.boardID)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert(addColumnTitle, isPresented: Binding(get: { addColumnTarget != nil }, set: { if !$0 { addColumnTarget = nil } })) {
+            TextField("Name", text: $nameDraft)
+            Button("Add") {
+                switch addColumnTarget {
+                case .global: try? store.addGlobalColumn(name: nameDraft)
+                case .board(let id): try? store.addExtraColumn(boardID: id, name: nameDraft)
+                case nil: break
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Delete “\(deleteTarget?.name ?? "")”?",
+            isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Column", role: .destructive) {
+                if let target = deleteTarget {
+                    try? store.deleteColumn(id: target.id, boardID: target.boardID)
+                }
+            }
+        } message: {
+            Text("Its cards move to \(store.globalColumns.first?.name ?? "").")
+        }
+    }
+
+    private var addColumnTitle: String {
+        if case .board = addColumnTarget { return String(localized: "New Board Column") }
+        return String(localized: "New Column")
+    }
+
+    /// nil `boardID` = a global column; otherwise the column belongs to this board alone.
+    private func ref(for column: BoardColumn) -> ColumnRef {
+        let owner = board.flatMap { b in b.extraColumns.contains { $0.id == column.id } ? b.id : nil }
+        return ColumnRef(id: column.id, boardID: owner, name: column.name, isDone: column.isDone)
     }
 
     // MARK: - Columns
@@ -85,6 +154,20 @@ struct BoardColumnsView: View {
                 }
                 Spacer()
                 Text("\(items.count)").font(.caption).foregroundStyle(.secondary)
+                Menu {
+                    Button("Rename…") { nameDraft = column.name; renameTarget = ref(for: column) }
+                    Button(column.isDone ? "Not a Done Column" : "Mark as Done Column") {
+                        try? store.setColumnDone(id: column.id, !column.isDone, boardID: ref(for: column).boardID)
+                    }
+                    Divider()
+                    Button("Delete…", role: .destructive) { deleteTarget = ref(for: column) }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help(String(localized: "Column Actions"))
             }
 
             if let board {
@@ -103,6 +186,37 @@ struct BoardColumnsView: View {
             Spacer(minLength: 0)
         }
         .frame(width: 280, alignment: .leading)
+        // Column-level drop appends; the per-card drop below inserts above that card.
+        .dropDestination(for: String.self) { ids, _ in
+            move(ids, to: column.id, index: items.count)
+        }
+    }
+
+    /// Trailing pseudo-column: the only place columns get created, so the header menu stays
+    /// about the column you clicked.
+    private var addColumnTile: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                nameDraft = ""
+                addColumnTarget = .global
+            } label: {
+                Label("Add Column", systemImage: "plus")
+            }
+            .buttonStyle(.borderless)
+            if let board {
+                Button {
+                    nameDraft = ""
+                    addColumnTarget = .board(board.id)
+                } label: {
+                    Label("Add Board Column", systemImage: "plus.rectangle.on.rectangle")
+                }
+                .buttonStyle(.borderless)
+                .help(String(localized: "A column only this board shows"))
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(width: 200, alignment: .leading)
+        .padding(.top, 2)
     }
 
     private var otherColumn: some View {
@@ -170,6 +284,14 @@ struct BoardColumnsView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { selectedCard = card.id }
+        .draggable(card.id.uuidString)
+        // Only real columns accept drops — "Other" has no single target column to move into.
+        .dropDestination(for: String.self) { ids, _ in
+            guard let column else { return false }
+            let siblings = cards(in: column)
+            let index = siblings.firstIndex { $0.card.id == card.id } ?? siblings.count
+            return move(ids, to: column.id, index: index)
+        }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
     }
@@ -185,6 +307,19 @@ struct BoardColumnsView: View {
 
     private func columnIsDone(_ ref: CardRef) -> Bool {
         store.columns(for: ref.board).first { $0.id == ref.card.columnID }?.isDone ?? false
+    }
+
+    /// A card always moves within its own board — in the all-boards view the destination
+    /// column is a global one, which every board shares.
+    @discardableResult
+    private func move(_ ids: [String], to columnID: UUID, index: Int) -> Bool {
+        var moved = false
+        for id in ids.compactMap({ UUID(uuidString: $0) }) {
+            guard let owner = store.boards.first(where: { $0.cards.contains { $0.id == id } }) else { continue }
+            try? store.moveCard(id: id, boardID: owner.id, toColumn: columnID, index: index)
+            moved = true
+        }
+        return moved
     }
 
     private func addCard(to column: BoardColumn, in board: Board) {
