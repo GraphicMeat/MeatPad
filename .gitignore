@@ -12,3 +12,4 @@ release/
 App/Info.plist
 tmp/
 MeatPadKit/Package.resolved
+.xcodegen-stamp

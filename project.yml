@@ -43,21 +43,35 @@ targets:
       - package: ProcessEnv
         product: ProcessEnv
     preBuildScripts:
-      - name: Ensure Info.plist (xcodegen output)
+      # Keeps the generated project in step with the folder on disk. Xcode resolves the
+      # target's file list from the project it loaded BEFORE any build phase runs, so a
+      # regeneration here cannot rescue the build in flight — it can only prepare the next
+      # one. Hence the deliberate hard stop: a loud "press Run again" beats silently
+      # compiling a stale file list and reporting missing symbols for code that exists.
+      # Only the file *set* and project.yml are fingerprinted, so ordinary edits never trip it.
+      - name: Regenerate project when the file set changes (xcodegen)
         basedOnDependencyAnalysis: false
         outputFiles:
           - $(SRCROOT)/App/Info.plist
         script: |
-          if [ ! -f "$SRCROOT/App/Info.plist" ]; then
-            XCODEGEN="$(command -v xcodegen || echo /opt/homebrew/bin/xcodegen)"
-            if [ -x "$XCODEGEN" ]; then
-              echo "warning: App/Info.plist missing — regenerating via xcodegen"
-              (cd "$SRCROOT" && "$XCODEGEN" generate)
-            else
-              echo "error: App/Info.plist missing and xcodegen not found. Run: xcodegen generate"
-              exit 1
-            fi
+          set -eu
+          cd "$SRCROOT"
+          STAMP=".xcodegen-stamp"
+          FINGERPRINT="$(find App Tests -type f ! -name '.DS_Store' | sort | shasum; shasum project.yml)"
+          if [ -f "$STAMP" ] && [ "$FINGERPRINT" = "$(cat "$STAMP")" ] && [ -f App/Info.plist ]; then
+            exit 0
           fi
+          XCODEGEN="$(command -v xcodegen || echo /opt/homebrew/bin/xcodegen)"
+          if [ ! -x "$XCODEGEN" ]; then
+            echo "error: project needs regenerating and xcodegen isn't installed. Run: brew install xcodegen"
+            exit 1
+          fi
+          "$XCODEGEN" generate
+          # Re-read: generate writes App/Info.plist, which is itself part of the fingerprint.
+          find App Tests -type f ! -name '.DS_Store' | sort | shasum > "$STAMP"
+          shasum project.yml >> "$STAMP"
+          echo "error: project regenerated (files added, removed, or project.yml changed) — press Run again"
+          exit 1
     info:
       path: App/Info.plist
       properties:
