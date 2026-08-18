@@ -310,4 +310,75 @@ final class BoardStoreTests: XCTestCase {
             XCTAssertEqual($0 as? BoardStoreError, .lastColumn)
         }
     }
+
+    // MARK: - note link + due reminders
+
+    func testCardForNoteFindsAndMisses() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "x")
+        let noteID = UUID()
+        card.noteID = noteID
+        try store.updateCard(boardID: board.id, card: card)
+
+        XCTAssertEqual(store.card(forNote: noteID)?.card.id, card.id)
+        XCTAssertEqual(store.card(forNote: noteID)?.board.id, board.id)
+        XCTAssertNil(store.card(forNote: UUID()))
+    }
+
+    func testPendingDueRemindersSkipsPastDoneAndUndated() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        let todo = store.globalColumns[0].id
+        let done = store.globalColumns[2].id
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        var future = try store.addCard(boardID: board.id, columnID: todo, title: "future")
+        future.due = now.addingTimeInterval(3600)
+        try store.updateCard(boardID: board.id, card: future)
+
+        var past = try store.addCard(boardID: board.id, columnID: todo, title: "past")
+        past.due = now.addingTimeInterval(-3600)
+        try store.updateCard(boardID: board.id, card: past)
+
+        var finished = try store.addCard(boardID: board.id, columnID: done, title: "finished")
+        finished.due = now.addingTimeInterval(7200)
+        try store.updateCard(boardID: board.id, card: finished)
+
+        _ = try store.addCard(boardID: board.id, columnID: todo, title: "undated")
+
+        let reminders = store.pendingDueReminders(now: now)
+        XCTAssertEqual(reminders.map(\.title), ["future"])
+        XCTAssertEqual(reminders.first?.cardID, future.id)
+        XCTAssertEqual(reminders.first?.boardID, board.id)
+        XCTAssertEqual(reminders.first?.due, now.addingTimeInterval(3600))
+    }
+
+    func testPendingDueRemindersHonoursExtraColumnDoneFlag() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        try store.addExtraColumn(boardID: board.id, name: "Shipped")
+        let shipped = store.boards[0].extraColumns[0].id
+        try store.setColumnDone(id: shipped, true, boardID: board.id)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var card = try store.addCard(boardID: board.id, columnID: shipped, title: "x")
+        card.due = now.addingTimeInterval(3600)
+        try store.updateCard(boardID: board.id, card: card)
+
+        XCTAssertTrue(store.pendingDueReminders(now: now).isEmpty)
+    }
+
+    func testPendingDueRemindersSpanEveryBoard() throws {
+        let store = try makeStore()
+        let a = try store.createBoard(name: "a")
+        let b = try store.createBoard(name: "b")
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        for board in [a, b] {
+            var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: board.name)
+            card.due = now.addingTimeInterval(60)
+            try store.updateCard(boardID: board.id, card: card)
+        }
+
+        XCTAssertEqual(store.pendingDueReminders(now: now).map(\.title).sorted(), ["a", "b"])
+    }
 }

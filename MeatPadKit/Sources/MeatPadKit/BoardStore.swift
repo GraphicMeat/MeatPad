@@ -8,6 +8,21 @@ public enum BoardStoreError: Error, Equatable {
     case lastColumn
 }
 
+/// One card that deserves a scheduled local notification.
+public struct DueReminder: Equatable, Sendable {
+    public let cardID: UUID
+    public let boardID: UUID
+    public let title: String
+    public let due: Date
+
+    public init(cardID: UUID, boardID: UUID, title: String, due: Date) {
+        self.cardID = cardID
+        self.boardID = boardID
+        self.title = title
+        self.due = due
+    }
+}
+
 /// Owns the on-disk board collection: `boards.json` (board order + global columns) plus one
 /// `<board-uuid>.json` per board, cards inline. A sibling of `Notes`, never inside it —
 /// kanban state has no business in NoteStore's note-loss-prevention logic.
@@ -220,6 +235,32 @@ public final class BoardStore: ObservableObject {
             }
             change(&globalColumns[colIdx])
             try saveIndex()
+        }
+    }
+
+    // MARK: - Note link
+
+    /// The derived half of the note↔card link. `card.noteID` is the only stored pointer, so
+    /// this can never disagree with it — no cleanup needed when either side is trashed.
+    public func card(forNote noteID: UUID) -> (board: Board, card: Card)? {
+        for board in boards {
+            if let card = board.cards.first(where: { $0.noteID == noteID }) { return (board, card) }
+        }
+        return nil
+    }
+
+    // MARK: - Due reminders
+
+    /// Every card that should hold a pending notification: dated, still in the future, and
+    /// not sitting in a done column. Pure, so the App-layer notifier is a dumb replayer and
+    /// the scheduling *decision* stays unit-testable.
+    public func pendingDueReminders(now: Date = Date()) -> [DueReminder] {
+        boards.flatMap { board -> [DueReminder] in
+            let doneColumns = Set(columns(for: board).filter(\.isDone).map(\.id))
+            return board.cards.compactMap { card in
+                guard let due = card.due, due > now, !doneColumns.contains(card.columnID) else { return nil }
+                return DueReminder(cardID: card.id, boardID: board.id, title: card.title, due: due)
+            }
         }
     }
 
