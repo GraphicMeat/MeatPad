@@ -224,69 +224,24 @@ struct BoardColumnsView: View {
     // MARK: - Cards
 
     private func cardRow(_ ref: CardRef, in column: BoardColumn?) -> some View {
-        let card = ref.card
-        let isDone = column?.isDone ?? columnIsDone(ref)
-        return VStack(alignment: .leading, spacing: 5) {
-            Text(card.title).lineLimit(2).font(.body)
-            if let body = card.body, !body.isEmpty {
-                Text(body).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-            }
-            HStack(spacing: 6) {
-                if let due = card.due {
-                    Label {
-                        Text(due, format: .dateTime.month().day().hour().minute())
-                    } icon: {
-                        Image(systemName: "calendar")
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(dueColor(due, isDone: isDone))
-                    .strikethrough(isDone)
-                }
-                if card.noteID != nil {
-                    Image(systemName: "link").font(.caption2).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if board == nil {
-                    Text(ref.board.name)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(.quaternary))
-                }
-            }
-        }
-        .padding(9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(.thinMaterial)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(selectedCard == card.id ? AnyShapeStyle(MeatPadGlass.tint) : AnyShapeStyle(.white.opacity(0.12)), lineWidth: 1)
-                }
-        }
+        CardView(
+            store: store,
+            boardID: ref.board.id,
+            card: ref.card,
+            boardBadge: board == nil ? ref.board.name : nil,
+            isDone: column?.isDone ?? columnIsDone(ref),
+            isSelected: selectedCard == ref.card.id
+        )
         .contentShape(Rectangle())
-        .onTapGesture { selectedCard = card.id }
-        .draggable(card.id.uuidString)
+        .onTapGesture { selectedCard = ref.card.id }
+        .draggable(ref.card.id.uuidString)
         // Only real columns accept drops — "Other" has no single target column to move into.
         .dropDestination(for: String.self) { ids, _ in
             guard let column else { return false }
             let siblings = cards(in: column)
-            let index = siblings.firstIndex { $0.card.id == card.id } ?? siblings.count
+            let index = siblings.firstIndex { $0.card.id == ref.card.id } ?? siblings.count
             return move(ids, to: column.id, index: index)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-    }
-
-    /// Overdue reads red, due today orange, everything else secondary — and a finished card
-    /// is never "late".
-    private func dueColor(_ due: Date, isDone: Bool) -> Color {
-        if isDone { return .secondary }
-        if due < Date() { return .red }
-        if Calendar.current.isDateInToday(due) { return .orange }
-        return .secondary
     }
 
     private func columnIsDone(_ ref: CardRef) -> Bool {

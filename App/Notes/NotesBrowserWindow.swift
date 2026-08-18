@@ -129,21 +129,23 @@ struct NotesBrowserWindow: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            folderSidebar
-        } content: {
-            // Same three columns serve both modes: board columns take the wide middle, the
-            // card inspector takes the detail column the note editor otherwise fills.
+        // Two shapes, not one: notes need list + editor, a board needs every pixel after the
+        // sidebar for its columns. Cards carry their own editing, so there is no third pane.
+        Group {
             if folderSelection.isBoard {
-                boardColumns
+                NavigationSplitView {
+                    folderSidebar
+                } detail: {
+                    boardColumns
+                }
             } else {
-                noteList
-            }
-        } detail: {
-            if folderSelection.isBoard {
-                boardDetail
-            } else {
-                detail
+                NavigationSplitView {
+                    folderSidebar
+                } content: {
+                    noteList
+                } detail: {
+                    detail
+                }
             }
         }
         .background { AmbientGlassBackground() }
@@ -362,32 +364,8 @@ struct NotesBrowserWindow: View {
         folderSelection.boardID.flatMap { id in boardStore.boards.first { $0.id == id } }
     }
 
-    /// The selected card plus its owning board — the inspector needs both, and in the All
-    /// Boards overview the card can come from any board.
-    private var selectedCardRef: (board: Board, card: Card)? {
-        guard let selectedCard else { return nil }
-        for board in boardStore.boards {
-            if let card = board.cards.first(where: { $0.id == selectedCard }) { return (board, card) }
-        }
-        return nil
-    }
-
     private var boardColumns: some View {
         BoardColumnsView(store: boardStore, board: selectedBoard, selectedCard: $selectedCard)
-            .navigationSplitViewColumnWidth(min: 420, ideal: 780)
-    }
-
-    @ViewBuilder
-    private var boardDetail: some View {
-        if let ref = selectedCardRef {
-            CardInspectorView(store: boardStore, boardID: ref.board.id, card: ref.card) {
-                selectedCard = nil
-            }
-        } else {
-            Text("Select a card")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
     }
 
     @ViewBuilder
