@@ -63,12 +63,19 @@ extension View {
 }
 
 extension View {
-    /// SwiftUI draws a blue focus ring on plain/borderless controls even when the user
-    /// never navigates by keyboard. Show focus rings only when Full Keyboard Access is on.
-    // ponytail: setting is read per scene build, not observed — toggling Full Keyboard
-    // Access mid-run needs new windows to take effect.
+    /// SwiftUI draws a blue focus ring on plain/borderless controls even when the user never
+    /// navigates by keyboard. Rings appear only for someone actually running assistive tech.
+    ///
+    /// Deliberately NOT gated on `NSApplication.isFullKeyboardAccessEnabled`: that setting
+    /// (System Settings ▸ Keyboard ▸ Keyboard navigation) is switched on for plenty of people
+    /// who never navigate by keyboard, and it made a ring stick to whatever took focus after
+    /// collapsing the sidebar. Focusability is untouched either way — Tab still reaches every
+    /// control, the effect just isn't drawn.
+    // ponytail: read per scene build, not observed — turning VoiceOver on mid-run needs new
+    // windows to take effect.
     func keyboardFocusRingOnly() -> some View {
-        focusEffectDisabled(!NSApplication.shared.isFullKeyboardAccessEnabled)
+        let assistiveTechRunning = NSWorkspace.shared.isVoiceOverEnabled || NSWorkspace.shared.isSwitchControlEnabled
+        return focusEffectDisabled(!assistiveTechRunning)
     }
 }
 
