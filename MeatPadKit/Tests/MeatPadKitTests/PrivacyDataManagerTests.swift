@@ -152,4 +152,10 @@ final class PrivacyDataManagerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: destBase.appendingPathComponent("Notes/a.txt"), encoding: .utf8), "v2")
         XCTAssertTrue(fm.fileExists(atPath: destBase.appendingPathComponent("Notes/b.txt").path))
     }
+
+    // MARK: - managed artifacts
+
+    func testManagedArtifactsIncludeBoards() {
+        XCTAssertTrue(PrivacyDataManager.managedArtifactNames.contains("Boards"))
+    }
 }

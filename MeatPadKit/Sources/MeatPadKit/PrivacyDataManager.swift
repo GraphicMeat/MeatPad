@@ -6,11 +6,11 @@ import Foundation
 /// `NSOpenPanel`/alert UI and the final `NSWorkspace.recycle` call (AppKit-only, stays
 /// app-side).
 public enum PrivacyDataManager {
-    /// The top-level entries a MeatPad storage root may contain: the five sibling
+    /// The top-level entries a MeatPad storage root may contain: the six sibling
     /// directories plus `session.json`. Copy/verify/recycle only ever touch entries from
     /// this list that actually exist — a fresh install with no saved Macros, say, just
     /// skips that one, and anything else a user dropped into the folder is left alone.
-    public static let managedArtifactNames = ["Notes", "Snippets", "Commands", "Macros", "Themes", "session.json"]
+    public static let managedArtifactNames = ["Notes", "Snippets", "Commands", "Macros", "Themes", "Boards", "session.json"]
 
     /// Recursive file (not directory) count at `url`. A single file counts as 1; a
     /// missing path counts as 0 (a sibling that doesn't exist yet isn't a copy failure).

@@ -97,7 +97,7 @@ struct BoardWindow: View {
                 }
             }
         } message: {
-            Text("This can't be undone.")
+            Text("This can’t be undone.")
         }
         .alert("Board Error", isPresented: Binding(get: { boardError != nil }, set: { if !$0 { boardError = nil } })) {
             Button("OK", role: .cancel) {}
