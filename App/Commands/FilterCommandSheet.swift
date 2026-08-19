@@ -16,6 +16,7 @@ struct FilterCommandSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Filter Through Command").font(.headline)
             TextField("Shell command (e.g. sort -u)", text: $script)
+                .ringlessField()
                 .font(.system(.body, design: .monospaced))
                 .onSubmit(run)
 

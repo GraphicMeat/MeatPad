@@ -121,7 +121,9 @@ private struct SnippetEditorSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             TextField("Name", text: $snippet.name)
+                .ringlessField()
             TextField("Trigger", text: $snippet.trigger)
+                .ringlessField()
 
             DisclosureGroup("Languages: \(snippet.languageIDs.isEmpty ? String(localized: "All") : snippet.languageIDs.joined(separator: ", "))") {
                 ScrollView {

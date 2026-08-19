@@ -73,6 +73,24 @@ extension View {
     /// control, the effect just isn't drawn.
     // ponytail: read per scene build, not observed — turning VoiceOver on mid-run needs new
     // windows to take effect.
+    /// A text field with no AppKit bezel. A bezeled field (`.roundedBorder`, or the default
+    /// style) is an NSTextField, and AppKit draws its own focus ring on first responder —
+    /// `focusEffectDisabled` governs SwiftUI's focus effects only and never reaches it. Plain
+    /// field inside our own container is the app's answer everywhere, same as GlassSearchField.
+    func ringlessField(cornerRadius: CGFloat = 7) -> some View {
+        textFieldStyle(.plain)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(.quaternary.opacity(0.4))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .strokeBorder(.white.opacity(0.08), lineWidth: 1)
+                    }
+            }
+    }
+
     func keyboardFocusRingOnly() -> some View {
         let assistiveTechRunning = NSWorkspace.shared.isVoiceOverEnabled || NSWorkspace.shared.isSwitchControlEnabled
         return focusEffectDisabled(!assistiveTechRunning)

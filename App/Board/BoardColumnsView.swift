@@ -71,6 +71,7 @@ struct BoardColumnsView: View {
         }
         .alert("Rename Column", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
             TextField("Name", text: $nameDraft)
+                .ringlessField()
             Button("Rename") {
                 if let target = renameTarget {
                     try? store.renameColumn(id: target.id, to: nameDraft, boardID: target.boardID)
@@ -80,6 +81,7 @@ struct BoardColumnsView: View {
         }
         .alert(addColumnTitle, isPresented: Binding(get: { addColumnTarget != nil }, set: { if !$0 { addColumnTarget = nil } })) {
             TextField("Name", text: $nameDraft)
+                .ringlessField()
             Button("Add") {
                 switch addColumnTarget {
                 case .global: try? store.addGlobalColumn(name: nameDraft)
@@ -179,16 +181,7 @@ struct BoardColumnsView: View {
                     .onSubmit { addCard(to: column, in: board) }
                     .accessibilityIdentifier("column.addCard")
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(.quaternary.opacity(0.4))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .strokeBorder(.white.opacity(0.08), lineWidth: 1)
-                        }
-                }
+                .ringlessField()
             }
 
             ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in

@@ -142,6 +142,7 @@ private struct CommandEditorSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             TextField("Name", text: $command.name)
+                .ringlessField()
 
             Text("Script").font(.caption).foregroundStyle(.secondary)
             TextEditor(text: $command.script)
@@ -162,6 +163,7 @@ private struct CommandEditorSheet: View {
             }
 
             TextField("Key Equivalent (e.g. cmd+shift+r)", text: keyEquivalentBinding)
+                .ringlessField()
             if let key = command.keyEquivalent, !key.isEmpty, ShortcutParser.parse(key) == nil {
                 Label("Not a valid shortcut — the command will have no key.", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange).font(.caption)
@@ -169,6 +171,7 @@ private struct CommandEditorSheet: View {
 
             HStack {
                 TextField("Timeout (seconds, default 30)", text: timeoutBinding)
+                    .ringlessField()
                     .frame(width: 200)
                 Toggle("Restricted environment", isOn: $command.restrictedEnvironment)
                     .help("Only TM_* variables plus PATH/HOME/SHELL/LANG/TMPDIR — not the app's full environment.")

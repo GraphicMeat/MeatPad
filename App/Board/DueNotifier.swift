@@ -54,6 +54,9 @@ final class DueNotifier {
             let content = UNMutableNotificationContent()
             content.title = String(localized: "Card due")
             content.body = reminder.title
+            // Formatted through the user's locale (en_LT renders "22 Aug 2026 at 15:00",
+            // en_US "Aug 22, 2026 at 3:00 PM") — never a hardcoded field order.
+            content.subtitle = reminder.due.formatted(date: .abbreviated, time: .shortened)
             let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: reminder.due)
             let request = UNNotificationRequest(
                 identifier: reminder.cardID.uuidString,

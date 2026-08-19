@@ -27,6 +27,7 @@ struct RenameSymbolSheet: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             TextField("New name", text: $name)
+                .ringlessField()
                 .font(.system(.body, design: .monospaced))
                 .onSubmit(run)
 

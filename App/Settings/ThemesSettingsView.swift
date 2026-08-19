@@ -170,6 +170,7 @@ struct ThemesSettingsView: View {
             }
             HStack {
                 TextField("+ capture (e.g. keyword.control)", text: $newCaptureName)
+                    .ringlessField()
                     .onSubmit { addCapture(theme) }
                 Button("Add") { addCapture(theme) }
                     .disabled(newCaptureName.trimmingCharacters(in: .whitespaces).isEmpty)
