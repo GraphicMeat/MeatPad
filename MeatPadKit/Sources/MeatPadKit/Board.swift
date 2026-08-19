@@ -7,11 +7,15 @@ public struct BoardColumn: Identifiable, Codable, Equatable, Sendable {
     public var name: String
     /// Cards here are finished: due dates render struck through and never notify.
     public var isDone: Bool
+    /// Shown before the name in the column header. Seeded for the default columns; nil for
+    /// columns the user adds. Optional so older board files decode unchanged.
+    public var emoji: String?
 
-    public init(id: UUID = UUID(), name: String, isDone: Bool = false) {
+    public init(id: UUID = UUID(), name: String, isDone: Bool = false, emoji: String? = nil) {
         self.id = id
         self.name = name
         self.isDone = isDone
+        self.emoji = emoji
     }
 }
 

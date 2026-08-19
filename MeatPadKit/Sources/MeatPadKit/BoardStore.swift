@@ -63,10 +63,17 @@ public final class BoardStore: ObservableObject {
 
         let index = Self.loadIndex(from: rootURL.appendingPathComponent("boards.json"))
         globalColumns = index?.globalColumns ?? [
-            BoardColumn(name: defaultColumnNames.todo),
-            BoardColumn(name: defaultColumnNames.inProgress),
-            BoardColumn(name: defaultColumnNames.done, isDone: true),
+            BoardColumn(name: defaultColumnNames.todo, emoji: "📋"),
+            BoardColumn(name: defaultColumnNames.inProgress, emoji: "🚧"),
+            BoardColumn(name: defaultColumnNames.done, isDone: true, emoji: "✅"),
         ]
+        // One-time heal for a store seeded before columns carried emoji: assign by role, and
+        // never again — any emoji present means the user's choices are already in play.
+        if globalColumns.allSatisfy({ $0.emoji == nil }) {
+            for i in globalColumns.indices {
+                globalColumns[i].emoji = globalColumns[i].isDone ? "✅" : (i == 0 ? "📋" : "🚧")
+            }
+        }
         boards = Self.loadBoards(from: rootURL, order: index?.boardOrder ?? [])
         // Seeds a fresh install, and re-persists a healed order after a skipped/adopted file.
         try? saveIndex()

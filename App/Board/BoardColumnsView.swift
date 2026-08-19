@@ -15,6 +15,14 @@ struct BoardColumnsView: View {
     @State private var renameTarget: ColumnRef?
     @State private var deleteTarget: ColumnRef?
     @State private var addColumnTarget: AddColumnScope?
+    /// Where a dragged card would land right now — drives the insertion bar and the column
+    /// highlight, so a drag shows its destination instead of guessing.
+    @State private var dropTarget: DropTarget?
+
+    private struct DropTarget: Equatable {
+        let column: UUID
+        let index: Int
+    }
 
     /// A column plus the board that owns it — `boardID` nil means a global column, which is
     /// exactly the shape `BoardStore`'s column API takes.
@@ -132,6 +140,7 @@ struct BoardColumnsView: View {
         let items = cards(in: column)
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
+                if let emoji = column.emoji { Text(emoji) }
                 Text(column.name).font(.headline).lineLimit(1)
                 if column.isDone {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.caption)
@@ -164,16 +173,47 @@ struct BoardColumnsView: View {
                 .accessibilityIdentifier("column.addCard")
             }
 
-            ForEach(items) { ref in
-                cardRow(ref, in: column)
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in
+                insertionBar(for: column, at: index)
+                cardRow(ref, in: column, at: index)
             }
+            insertionBar(for: column, at: items.count)
             Spacer(minLength: 0)
         }
         .frame(width: 280, alignment: .leading)
-        // Column-level drop appends; the per-card drop below inserts above that card.
-        .dropDestination(for: String.self) { ids, _ in
-            move(ids, to: column.id, index: items.count)
+        .padding(.vertical, 4)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(MeatPadGlass.violet.opacity(isTargeting(column) ? 0.10 : 0))
         }
+        .animation(.snappy(duration: 0.18), value: dropTarget)
+        // Column-level drop appends; the per-card drop inserts above the card it lands on.
+        .dropDestination(for: String.self) { ids, _ in
+            defer { dropTarget = nil }
+            return move(ids, to: column.id, index: items.count)
+        } isTargeted: { targeted in
+            if targeted {
+                if dropTarget?.column != column.id { dropTarget = DropTarget(column: column.id, index: items.count) }
+            } else if dropTarget?.column == column.id {
+                dropTarget = nil
+            }
+        }
+    }
+
+    private func isTargeting(_ column: BoardColumn) -> Bool {
+        dropTarget?.column == column.id
+    }
+
+    /// The gap a dropped card would slot into. Zero height until it is the live target, so
+    /// the stack doesn't shift around while nothing is being dragged.
+    @ViewBuilder
+    private func insertionBar(for column: BoardColumn, at index: Int) -> some View {
+        let active = dropTarget == DropTarget(column: column.id, index: index)
+        Capsule(style: .continuous)
+            .fill(MeatPadGlass.violet)
+            .frame(height: active ? 3 : 0)
+            .opacity(active ? 1 : 0)
+            .padding(.vertical, active ? 2 : 0)
     }
 
     /// Trailing pseudo-column: the only place columns get created, so the header menu stays
@@ -223,7 +263,7 @@ struct BoardColumnsView: View {
 
     // MARK: - Cards
 
-    private func cardRow(_ ref: CardRef, in column: BoardColumn?) -> some View {
+    private func cardRow(_ ref: CardRef, in column: BoardColumn?, at index: Int = 0) -> some View {
         CardView(
             store: store,
             boardID: ref.board.id,
@@ -234,13 +274,27 @@ struct BoardColumnsView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture { selectedCard = ref.card.id }
-        .draggable(ref.card.id.uuidString)
+        .draggable(ref.card.id.uuidString) {
+            // A compact chip drags better than a full-card snapshot, and shows what's moving.
+            Text(ref.card.title)
+                .font(.callout.weight(.medium))
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(.thinMaterial))
+        }
         // Only real columns accept drops — "Other" has no single target column to move into.
         .dropDestination(for: String.self) { ids, _ in
             guard let column else { return false }
-            let siblings = cards(in: column)
-            let index = siblings.firstIndex { $0.card.id == ref.card.id } ?? siblings.count
+            defer { dropTarget = nil }
             return move(ids, to: column.id, index: index)
+        } isTargeted: { targeted in
+            guard let column else { return }
+            if targeted {
+                dropTarget = DropTarget(column: column.id, index: index)
+            } else if dropTarget == DropTarget(column: column.id, index: index) {
+                dropTarget = nil
+            }
         }
     }
 
@@ -253,10 +307,12 @@ struct BoardColumnsView: View {
     @discardableResult
     private func move(_ ids: [String], to columnID: UUID, index: Int) -> Bool {
         var moved = false
-        for id in ids.compactMap({ UUID(uuidString: $0) }) {
-            guard let owner = store.boards.first(where: { $0.cards.contains { $0.id == id } }) else { continue }
-            try? store.moveCard(id: id, boardID: owner.id, toColumn: columnID, index: index)
-            moved = true
+        withAnimation(.snappy(duration: 0.22)) {
+            for id in ids.compactMap({ UUID(uuidString: $0) }) {
+                guard let owner = store.boards.first(where: { $0.cards.contains { $0.id == id } }) else { continue }
+                try? store.moveCard(id: id, boardID: owner.id, toColumn: columnID, index: index)
+                moved = true
+            }
         }
         return moved
     }

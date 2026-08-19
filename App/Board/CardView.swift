@@ -1,9 +1,9 @@
 import SwiftUI
 import MeatPadKit
 
-/// One card, editable in place: the board is the editor, so there is no inspector pane.
-/// Title and due date are always visible; the notes body folds away and remembers its state
-/// for as long as the board is on screen.
+/// One card, editable in place — the board is the editor, so nothing opens a pane or a
+/// popup. Height follows content: a bare card is two lines tall, and the notes field grows
+/// only as far as the text it holds.
 struct CardView: View {
     @ObservedObject var store: BoardStore
     let boardID: UUID
@@ -16,56 +16,55 @@ struct CardView: View {
     @State private var title = ""
     @State private var body_ = ""
     @State private var expanded = false
-    @State private var duePickerShown = false
-    @State private var due = Date()
     @State private var bodyDebouncer = Debouncer(delay: 0.5)
+    @FocusState private var notesFocused: Bool
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
             TextField("Title", text: $title)
                 .textFieldStyle(.plain)
-                .font(.body.weight(.medium))
+                .font(.body.weight(.semibold))
                 .onSubmit { commit() }
 
-            HStack(spacing: 8) {
-                dueControl
-                if card.noteID != nil { linkChip }
-                Spacer()
-                if let boardBadge {
-                    Text(boardBadge)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(.quaternary))
+            dueRow
+
+            if card.noteID != nil || boardBadge != nil {
+                HStack(spacing: 6) {
+                    if card.noteID != nil { linkChip }
+                    Spacer(minLength: 0)
+                    if let boardBadge {
+                        Text(boardBadge)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(.quaternary))
+                    }
                 }
             }
 
-            DisclosureGroup(isExpanded: $expanded) {
-                TextEditor(text: $body_)
-                    .font(.callout)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 64)
-                    .onChange(of: body_) { _, _ in bodyDebouncer.call { commit() } }
-            } label: {
-                Text("Notes")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            notesSection
         }
-        .padding(9)
+        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(.thinMaterial)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(isSelected ? AnyShapeStyle(MeatPadGlass.tint) : AnyShapeStyle(.white.opacity(0.12)), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(
+                            isSelected ? AnyShapeStyle(MeatPadGlass.violet.opacity(0.9)) : AnyShapeStyle(.white.opacity(0.10)),
+                            lineWidth: isSelected ? 1.5 : 1
+                        )
                 }
+                .shadow(color: .black.opacity(isSelected ? 0.28 : 0.16), radius: isSelected ? 7 : 3, y: 2)
         }
         .contextMenu {
             Button(expanded ? "Hide Notes" : "Show Notes") { expanded.toggle() }
+            if card.due != nil {
+                Button("Remove Due Date") { update { $0.due = nil } }
+            }
             if card.noteID != nil {
                 Button("Unlink") { update { $0.noteID = nil } }
             }
@@ -76,49 +75,61 @@ struct CardView: View {
             }
         }
         .onAppear { load() }
-        // Same view instance is reused when a card moves column; reload so drafts follow it.
+        // The same view instance is reused when a card moves column; reload so drafts follow it.
         .onChange(of: card.id) { _, _ in bodyDebouncer.cancel(); load() }
     }
 
     // MARK: - Due date
 
+    /// Calendar's event fields, not a popup: an editable date/time field that commits as you
+    /// type, plus one button to take the date off again.
     @ViewBuilder
-    private var dueControl: some View {
-        Button {
-            due = card.due ?? Date().addingTimeInterval(3600)
-            duePickerShown = true
-        } label: {
-            Label {
-                Text(card.due.map { $0.formatted(.dateTime.month().day().hour().minute()) } ?? String(localized: "Add Due Date"))
-            } icon: {
+    private var dueRow: some View {
+        if card.due != nil {
+            HStack(spacing: 5) {
                 Image(systemName: "calendar")
-            }
-            .font(.caption2)
-            .foregroundStyle(dueColor)
-            .strikethrough(isDone && card.due != nil)
-        }
-        .buttonStyle(.plain)
-        .popover(isPresented: $duePickerShown) {
-            VStack(alignment: .leading, spacing: 10) {
-                DatePicker("Due Date", selection: $due, displayedComponents: [.date, .hourAndMinute])
+                    .font(.caption)
+                    .foregroundStyle(dueColor)
+                DatePicker("", selection: dueBinding, displayedComponents: [.date, .hourAndMinute])
+                    .datePickerStyle(.field)
                     .labelsHidden()
-                HStack {
-                    Button("Set") {
-                        update { $0.due = due }
-                        // Only ever prompted here — the first time a card actually gets a date.
-                        Task { await DueNotifier.shared.requestAuthorizationIfNeeded() }
-                        duePickerShown = false
-                    }
-                    if card.due != nil {
-                        Button("Clear") {
-                            update { $0.due = nil }
-                            duePickerShown = false
-                        }
-                    }
+                    .font(.caption)
+                    .fixedSize()
+                Button {
+                    update { $0.due = nil }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .help(String(localized: "Remove Due Date"))
+                Spacer(minLength: 0)
             }
-            .padding(12)
+            .foregroundStyle(dueColor)
+        } else {
+            Button {
+                update { $0.due = Self.defaultDue() }
+            } label: {
+                Label("Add Due Date", systemImage: "calendar.badge.plus")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
         }
+    }
+
+    private var dueBinding: Binding<Date> {
+        Binding(
+            get: { card.due ?? Self.defaultDue() },
+            set: { newValue in update { $0.due = newValue } }
+        )
+    }
+
+    /// Next full hour — the same "sensible default" Calendar picks for a new event.
+    private static func defaultDue() -> Date {
+        let calendar = Calendar.current
+        let next = calendar.date(byAdding: .hour, value: 1, to: Date()) ?? Date()
+        return calendar.date(bySetting: .minute, value: 0, of: next) ?? next
     }
 
     /// Overdue reads red, due today orange, everything else secondary — and a finished card
@@ -128,6 +139,46 @@ struct CardView: View {
         if due < Date() { return .red }
         if Calendar.current.isDateInToday(due) { return .orange }
         return .secondary
+    }
+
+    // MARK: - Notes
+
+    /// Collapsed shows one line of what's there (nothing at all if the card has no notes);
+    /// clicking anywhere on the row opens the field AND puts the caret in it.
+    @ViewBuilder
+    private var notesSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                expanded.toggle()
+                if expanded { notesFocused = true }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                    if expanded || body_.isEmpty {
+                        Text("Notes")
+                    } else {
+                        Text(body_).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                // axis: .vertical grows with its content instead of reserving a fixed block,
+                // and unlike TextEditor it takes the caret on a single click.
+                TextField("Notes", text: $body_, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.callout)
+                    .lineLimit(1...12)
+                    .focused($notesFocused)
+                    .onChange(of: body_) { _, _ in bodyDebouncer.call { commit() } }
+            }
+        }
     }
 
     // MARK: - Linked note
@@ -148,8 +199,8 @@ struct CardView: View {
         .help(String(localized: "Open Note"))
     }
 
-    /// Resolved live: a trashed or deleted note reads as unavailable and the link is kept,
-    /// so restoring the note makes it whole again.
+    /// Resolved live: a trashed or deleted note reads as unavailable and the link is kept, so
+    /// restoring the note makes it whole again.
     private var linkedTitle: String {
         guard let noteID = card.noteID,
               let note = AppModel.shared.noteStore.notes.first(where: { $0.id == noteID })
@@ -162,7 +213,6 @@ struct CardView: View {
     private func load() {
         title = card.title
         body_ = card.body ?? ""
-        // Cards open folded unless they carry notes worth reading.
         expanded = !(card.body ?? "").isEmpty
     }
 

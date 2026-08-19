@@ -381,4 +381,35 @@ final class BoardStoreTests: XCTestCase {
 
         XCTAssertEqual(store.pendingDueReminders(now: now).map(\.title).sorted(), ["a", "b"])
     }
+
+    // MARK: - column emoji
+
+    func testSeedsDefaultColumnEmoji() throws {
+        let store = try makeStore()
+        XCTAssertEqual(store.globalColumns.map(\.emoji), ["📋", "🚧", "✅"])
+    }
+
+    func testAssignsEmojiToAPreEmojiStoreOnce() throws {
+        let store = try makeStore()
+        let index = tempDir.appendingPathComponent("boards.json")
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: index)) as? [String: Any])
+        var columns = try XCTUnwrap(json["globalColumns"] as? [[String: Any]])
+        for i in columns.indices { columns[i].removeValue(forKey: "emoji") }
+        json["globalColumns"] = columns
+        try JSONSerialization.data(withJSONObject: json).write(to: index)
+        _ = store
+
+        let healed = try makeStore()
+        XCTAssertEqual(healed.globalColumns.map(\.emoji), ["📋", "🚧", "✅"])
+        // Second load must not re-run the heal over a user's own choices.
+        try healed.renameColumn(id: healed.globalColumns[0].id, to: "Backlog", boardID: nil)
+        XCTAssertEqual(try makeStore().globalColumns.map(\.emoji), ["📋", "🚧", "✅"])
+    }
+
+    func testExtraColumnsHaveNoEmojiByDefault() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        try store.addExtraColumn(boardID: board.id, name: "Blocked")
+        XCTAssertNil(store.boards[0].extraColumns[0].emoji)
+    }
 }
