@@ -164,13 +164,31 @@ struct BoardColumnsView: View {
             }
 
             if let board {
-                TextField("Add card", text: Binding(
-                    get: { drafts[column.id] ?? "" },
-                    set: { drafts[column.id] = $0 }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .onSubmit { addCard(to: column, in: board) }
-                .accessibilityIdentifier("column.addCard")
+                // .plain inside our own container, exactly like GlassSearchField: a bezeled
+                // (.roundedBorder / default) field is an NSTextField, and AppKit draws its own
+                // focus ring on first responder — SwiftUI's focusEffectDisabled can't reach it.
+                HStack(spacing: 6) {
+                    Image(systemName: "plus")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    TextField("Add card", text: Binding(
+                        get: { drafts[column.id] ?? "" },
+                        set: { drafts[column.id] = $0 }
+                    ))
+                    .textFieldStyle(.plain)
+                    .onSubmit { addCard(to: column, in: board) }
+                    .accessibilityIdentifier("column.addCard")
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(.quaternary.opacity(0.4))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .strokeBorder(.white.opacity(0.08), lineWidth: 1)
+                        }
+                }
             }
 
             ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in
