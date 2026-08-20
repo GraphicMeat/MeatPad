@@ -104,6 +104,12 @@ final class AppModel: ObservableObject {
     private static let softWrapDefaultsKey = "softWrap"
     private static let recentProjectsDefaultsKey = "recentProjectPaths"
 
+    /// Launch override, a sibling of `NoteStore.storageRootOverrideKey`: a board UUID (or
+    /// `all` for the overview) opens the notes browser straight onto that board. Set it
+    /// with `open -a MeatPad --args -meatpad.revealBoard <uuid>` so a scripted launch —
+    /// marketing captures, a support repro — lands on a known screen without any clicking.
+    static let revealBoardDefaultsKey = "meatpad.revealBoard"
+
     /// The storage base (`~/Library/Application Support/MeatPad`, or the override root),
     /// resolved once in `init` and reused by every use site — never re-derived from
     /// `NoteStore.defaultRoot()`, which would re-read the override default and could
@@ -173,6 +179,17 @@ final class AppModel: ObservableObject {
         recentProjectPaths = UserDefaults.standard.stringArray(forKey: Self.recentProjectsDefaultsKey) ?? []
 
         DueNotifier.shared.start(store: boardStore)
+
+        // Consumed by NotesBrowserWindow's onAppear, so this survives being set before any
+        // window exists. An unparseable value is ignored rather than falling back to the
+        // overview — a typo'd UUID should not silently show something else.
+        if let raw = UserDefaults.standard.string(forKey: Self.revealBoardDefaultsKey) {
+            if raw == "all" {
+                pendingBoardReveal = BoardReveal(boardID: nil, cardID: nil)
+            } else if let id = UUID(uuidString: raw) {
+                pendingBoardReveal = BoardReveal(boardID: id, cardID: nil)
+            }
+        }
     }
 
     /// Shell-command "New Note" output mode: create a note holding `contents` and open
@@ -307,7 +324,11 @@ final class AppModel: ObservableObject {
             return FileManager.default.fileExists(atPath: session.root, isDirectory: &isDirectory) && isDirectory.boolValue
         }
 
-        guard !idsToRestore.isEmpty || state?.browserOpen == true || !projectsToRestore.isEmpty else {
+        // A revealBoard launch override implies the browser, whatever the session says —
+        // otherwise the fallback below would answer it with a blank note window.
+        let browserWanted = state?.browserOpen == true || pendingBoardReveal != nil
+
+        guard !idsToRestore.isEmpty || browserWanted || !projectsToRestore.isEmpty else {
             if let note = try? noteStore.createNote() {
                 openWindowAction(value: note.id)
             }
@@ -315,7 +336,7 @@ final class AppModel: ObservableObject {
         }
 
         for id in idsToRestore { openWindowAction(value: id) }
-        if state?.browserOpen == true { openWindowAction(id: "all-notes") }
+        if browserWanted { openWindowAction(id: "all-notes") }
         for session in projectsToRestore {
             let rootURL = URL(fileURLWithPath: session.root).standardizedFileURL
             pendingProjectSessions[rootURL] = session
