@@ -71,7 +71,6 @@ struct BoardColumnsView: View {
         }
         .alert("Rename Column", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
             TextField("Name", text: $nameDraft)
-                .ringlessField()
             Button("Rename") {
                 if let target = renameTarget {
                     try? store.renameColumn(id: target.id, to: nameDraft, boardID: target.boardID)
@@ -81,7 +80,6 @@ struct BoardColumnsView: View {
         }
         .alert(addColumnTitle, isPresented: Binding(get: { addColumnTarget != nil }, set: { if !$0 { addColumnTarget = nil } })) {
             TextField("Name", text: $nameDraft)
-                .ringlessField()
             Button("Add") {
                 switch addColumnTarget {
                 case .global: try? store.addGlobalColumn(name: nameDraft)

@@ -174,13 +174,11 @@ struct NotesBrowserWindow: View {
         ))
         .alert("New Folder", isPresented: $newFolderShown) {
             TextField("Name", text: $folderNameDraft)
-                .ringlessField()
             Button("Create") { runFolderOp { try noteStore.createFolder(folderNameDraft) } }
             Button("Cancel", role: .cancel) {}
         }
         .alert("New Board", isPresented: $newBoardShown) {
             TextField("Name", text: $boardNameDraft)
-                .ringlessField()
             Button("Create") {
                 runFolderOp {
                     let board = try boardStore.createBoard(name: boardNameDraft)
@@ -191,7 +189,6 @@ struct NotesBrowserWindow: View {
         }
         .alert("Rename Folder", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
             TextField("Name", text: $folderNameDraft)
-                .ringlessField()
             Button("Rename") {
                 if let old = renameTarget {
                     let new = folderNameDraft
@@ -205,7 +202,6 @@ struct NotesBrowserWindow: View {
         }
         .alert("Rename Board", isPresented: boardRenamePresented) {
             TextField("Name", text: $boardNameDraft)
-                .ringlessField()
             Button("Rename") {
                 if let id = boardRenameTarget {
                     let name = boardNameDraft
