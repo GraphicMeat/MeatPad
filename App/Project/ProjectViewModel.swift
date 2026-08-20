@@ -244,7 +244,7 @@ final class ProjectViewModel: ObservableObject {
             // Double-optional flatten (mirrors LSPController.requestHover): `definition`
             // throws on transport failure, and its own successful result is itself
             // optional (server found nothing).
-            let response = (try? await handle.definition(params: params)) ?? nil
+            let response = (try? await handle.definition(params)) ?? nil
             let locations = GoToDefinition.locations(from: response)
             guard let self, !locations.isEmpty else { return }
             if locations.count == 1 {
@@ -312,7 +312,7 @@ final class ProjectViewModel: ObservableObject {
             let params = ReferenceParams(textDocument: TextDocumentIdentifier(uri: url.absoluteString), position: position, includeDeclaration: true)
             // Double-optional flatten (mirrors goToDefinition/requestHover): `references`
             // throws on transport failure, and its own successful result is itself optional.
-            let locations = (try? await handle.references(params: params)) ?? nil ?? []
+            let locations = (try? await handle.references(params)) ?? nil ?? []
             guard let self else { return }
             let groups = FindReferences.groupedMatches(from: locations)
             guard !groups.isEmpty else {
@@ -336,7 +336,7 @@ final class ProjectViewModel: ObservableObject {
               let handle = lspManager.server(for: languageID) else { return }
         Task { [weak self] in
             let params = DocumentSymbolParams(textDocument: TextDocumentIdentifier(uri: url.absoluteString))
-            let response = (try? await handle.documentSymbol(params: params)) ?? nil
+            let response = (try? await handle.documentSymbol(params)) ?? nil
             guard let self else { return }
             self.documentSymbolResults = DocumentSymbols.flatten(response)
             self.documentSymbolsFile = url
@@ -397,7 +397,7 @@ final class ProjectViewModel: ObservableObject {
             // falls back to the local word range; a clean `nil` response beeps instead.
             let target: (range: NSRange, name: String)?
             do {
-                guard let response = try await handle.prepareRename(params: params) else {
+                guard let response = try await handle.prepareRename(params) else {
                     NSSound.beep()
                     return
                 }
@@ -435,7 +435,7 @@ final class ProjectViewModel: ObservableObject {
             )
             // Double-optional flatten: transport failure, or the server declining to
             // produce an edit for this rename — both are "nothing to apply".
-            guard let edit = (try? await handle.rename(params: params)) ?? nil else {
+            guard let edit = (try? await handle.rename(params)) ?? nil else {
                 NSSound.beep()
                 return
             }

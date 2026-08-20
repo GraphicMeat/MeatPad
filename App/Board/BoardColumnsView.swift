@@ -331,7 +331,7 @@ struct BoardColumnsView: View {
     private func addCard(to column: BoardColumn, in board: Board) {
         let title = drafts[column.id] ?? ""
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        try? store.addCard(boardID: board.id, columnID: column.id, title: title)
+        _ = try? store.addCard(boardID: board.id, columnID: column.id, title: title)
         drafts[column.id] = ""
     }
 }

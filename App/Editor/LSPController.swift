@@ -170,7 +170,7 @@ final class LSPController {
         guard let textView, let text = textView.text,
               let position = LSPPositionBridge.position(of: charIndex, in: text) else { return }
         let params = TextDocumentPositionParams(uri: fileURL.absoluteString, position: position)
-        guard let hover = (try? await handle.hover(params: params)) ?? nil else { return }
+        guard let hover = (try? await handle.hover(params)) ?? nil else { return }
         guard !Task.isCancelled, trackedCharIndex == charIndex, textView.text == text else { return }
         presentHover(hover, anchorCharIndex: charIndex, in: text)
     }
