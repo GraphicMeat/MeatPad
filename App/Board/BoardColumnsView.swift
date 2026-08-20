@@ -182,14 +182,22 @@ struct BoardColumnsView: View {
                 .ringlessField()
             }
 
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in
-                insertionBar(for: column, at: index)
-                cardRow(ref, in: column, at: index)
+            // Only the cards scroll: the header and the add-card field stay put, and a
+            // column taller than the window stops overflowing off both ends of it.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in
+                        insertionBar(for: column, at: index)
+                        cardRow(ref, in: column, at: index)
+                    }
+                    insertionBar(for: column, at: items.count)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            insertionBar(for: column, at: items.count)
-            Spacer(minLength: 0)
+            .scrollBounceBehavior(.basedOnSize)
         }
         .frame(width: 280, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .top)
         .padding(.vertical, 4)
         .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -262,12 +270,18 @@ struct BoardColumnsView: View {
             Text("Cards in board-only columns")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            ForEach(otherCards) { ref in
-                cardRow(ref, in: nil)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(otherCards) { ref in
+                        cardRow(ref, in: nil)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Spacer(minLength: 0)
+            .scrollBounceBehavior(.basedOnSize)
         }
         .frame(width: 280, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - Cards
