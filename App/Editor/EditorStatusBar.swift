@@ -18,8 +18,13 @@ struct EditorStatusBar: View {
     /// hides it, same "the host decides, this view just renders" contract as `lspStatus`.
     var flashMessage: String? = nil
 
+    /// Whole-document counts, refreshed by the `.task` below whenever `text` changes.
+    /// Never computed in `body` — see `DocumentStats`.
+    @State private var stats: DocumentStats?
+
     var body: some View {
         let line = Self.currentLine(of: text, cursor: cursor)
+        let counts = stats ?? .empty
         HStack(spacing: 12) {
             Menu {
                 Button(languageOverride == nil ? "✓ Automatic" : "Automatic") { onSelectLanguage(nil) }
@@ -47,10 +52,10 @@ struct EditorStatusBar: View {
 
             Spacer()
 
-            Text("\(Self.lineCount(of: text)) lines")
-            Text("\(Self.wordCount(of: text)) words")
-            Text("\(text.count) chars")
-            Text("line \(Self.wordCount(of: line)) words \(line.count) chars")
+            Text("\(counts.lines) lines")
+            Text("\(counts.words) words")
+            Text("\(counts.characters) chars")
+            Text("line \(DocumentStats.wordCount(of: line)) words \(line.count) chars")
         }
         .font(.caption)
         .monospacedDigit()
@@ -59,6 +64,17 @@ struct EditorStatusBar: View {
         .padding(.vertical, 4)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
+        .task(id: text) {
+            // First pass runs immediately so the counts are right on open; later passes
+            // debounce, so holding a key down in a large file doesn't queue a full-document
+            // walk per keystroke. Cancellation comes free with `.task(id:)`.
+            if stats != nil {
+                try? await Task.sleep(for: .milliseconds(150))
+                if Task.isCancelled { return }
+            }
+            let snapshot = text
+            stats = await Task.detached(priority: .utility) { DocumentStats.compute(snapshot) }.value
+        }
     }
 
     private var menuLabel: String {
@@ -66,17 +82,9 @@ struct EditorStatusBar: View {
         return languageOverride == nil ? String(localized: "Automatic — \(name)") : name
     }
 
-    // ponytail: O(n) scan per render (newline count + line lookup); fine at note/file
-    // scale, revisit if huge-file perf ever becomes a complaint.
-
-    static func lineCount(of text: String) -> Int {
-        (text as NSString).components(separatedBy: "\n").count
-    }
-
-    static func wordCount(of text: String) -> Int {
-        text.split(whereSeparator: \.isWhitespace).count
-    }
-
+    /// The caret line only — `NSString.lineRange` plus one short substring, so this stays
+    /// cheap enough to run per render even on a multi-megabyte document. Bridging back to
+    /// `NSString` is O(1); it never copies the whole text.
     static func currentLine(of text: String, cursor: Int) -> String {
         let ns = text as NSString
         let clamped = min(max(cursor, 0), ns.length)
