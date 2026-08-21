@@ -137,7 +137,8 @@ struct CodeEditor: NSViewRepresentable {
         coord.rebuildHighlighter(languageID: language?.id)
         coord.applyFontSize(fontSize)
         coord.applySoftWrap(softWrap)
-        coord.applyTheme(theme) // sets colors + immediate first highlight paint
+        coord.applyTheme(theme) // colors + base attributes; no spans to repaint yet
+        coord.applyHighlight()  // kicks off this document's first parse
         coord.lspController.setDiagnostics(diagnostics)
         coord.applyReveal(reveal) // first render of a just-opened file consumes here
         coord.observeScroll(of: scrollView)
@@ -197,7 +198,22 @@ struct CodeEditor: NSViewRepresentable {
         weak var textView: STTextView?
         var lastRevealToken: UUID?
         private(set) var languageID: String?
-        private var highlighter: Highlighter?
+        private var highlightEngine: HighlightEngine?
+        /// The parse pass in flight, so a newer one can supersede it.
+        private var highlightTask: Task<Void, Never>?
+        /// Bumped by every `applyHighlight`; a finished parse only paints if its stamp is
+        /// still the current one.
+        private var highlightGeneration = 0
+        /// Generation whose text is actually loaded in the engine. A scroll can only query
+        /// spans once the current text has been parsed.
+        private var parsedGeneration = -1
+        /// Spans painted so far for the current generation, across every viewport pass.
+        /// Kept so a theme/font change can repaint without a reparse, and so an edit keeps
+        /// the previous pass's colours on screen instead of flashing to plain mid-parse.
+        private var lastSpans: [HighlightSpan] = []
+        /// Character ranges already painted for the current generation. Scrolling paints
+        /// what this doesn't cover yet; a new parse clears it.
+        private var paintedSet = IndexSet()
         private var lastTheme: Theme?
         private var lastFontSize: CGFloat?
         private var lastSoftWrap: Bool?
@@ -235,6 +251,8 @@ struct CodeEditor: NSViewRepresentable {
 
         deinit {
             if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+            // Closing a tab mid-parse shouldn't leave a pass queued behind it.
+            highlightTask?.cancel()
         }
 
         func observeScroll(of scrollView: NSScrollView) {
@@ -246,6 +264,10 @@ struct CodeEditor: NSViewRepresentable {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    // Colours are painted per viewport (see applyHighlight), so scrolling into
+                    // unpainted text is what fetches its spans. Must run before the completion
+                    // guards below, which return early on the common path.
+                    self.highlightVisibleIfNeeded()
                     // Hover is a screen-anchored child window like the completion popup below —
                     // it doesn't track content scrolling either, so any scroll dismisses it.
                     self.lspController.dismissHover()
@@ -310,7 +332,12 @@ struct CodeEditor: NSViewRepresentable {
 
         func rebuildHighlighter(languageID: String?) {
             self.languageID = languageID
-            highlighter = languageID.flatMap { Highlighter(languageID: $0) }
+            highlightTask?.cancel()
+            // Spans from the outgoing grammar mean nothing to the incoming one.
+            lastSpans = []
+            paintedSet = IndexSet()
+            parsedGeneration = -1
+            highlightEngine = languageID.flatMap { HighlightEngine(languageID: $0) }
         }
 
         /// Setting `textColor`/`font` recolors the whole document, so only touch the
@@ -332,7 +359,8 @@ struct CodeEditor: NSViewRepresentable {
             // ponytail: inactive-window selection = active selection at half opacity, no
             // separate Theme field for it.
             textView.unemphasizedSelectedTextBackgroundColor = selectionColor.withAlphaComponent(selectionColor.alphaComponent * 0.5)
-            applyHighlight()
+            // Repaint, don't reparse: the text didn't change, only the colours it maps to.
+            repaintHighlight()
         }
 
         /// Setting `.font` recolors the whole document (same as `applyTheme`), so guard
@@ -342,7 +370,7 @@ struct CodeEditor: NSViewRepresentable {
             guard lastFontSize != size, let textView else { return }
             lastFontSize = size
             textView.font = CodeEditor.font(size: size)
-            applyHighlight()
+            repaintHighlight()
         }
 
         func applySoftWrap(_ wrap: Bool) {
@@ -383,8 +411,19 @@ struct CodeEditor: NSViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
         }
 
-        /// Full-document reparse + reapply. ponytail: whole-doc every time; fine at P1
-        /// scale, swap for a visible-range pass if large files get janky.
+        /// Full-document reparse, then paint the viewport. The parse runs off the main
+        /// thread (see `HighlightEngine`) and paints when it lands; everything else here is
+        /// synchronous, so the document is readable in the theme's plain foreground the
+        /// instant it opens even on a file that takes a second to parse.
+        ///
+        /// Only the viewport is painted, because asking for spans is what resolves a range's
+        /// language injections — and resolving them for a whole large file is the expensive
+        /// thing (16.7s of a 17.4s markdown pass, measured). Scrolling paints the rest, via
+        /// `highlightVisibleIfNeeded`.
+        ///
+        /// ponytail: whole-doc reparse per pass. Incremental reparse via
+        /// `LanguageLayer.didChangeContent` was measured at 0.572s vs 0.626s from scratch —
+        /// 9% — and would reintroduce stale sublayers, so it is deliberately not used.
         func applyHighlight() {
             // Diagnostics gutter markers cleared BEFORE fold's own rebuild — see
             // LSPController.clearGutterMarkersForFoldPass's doc comment (a marker left over
@@ -399,18 +438,138 @@ struct CodeEditor: NSViewRepresentable {
             // full-range reset wipes underline attributes along with everything else, so this
             // must run last regardless of which path through this method is taken.
             defer { lspController.render() }
-            guard let textView, let highlighter else { return }
+            guard let textView, let engine = highlightEngine else { return }
             let source = textView.text ?? ""
             let full = NSRange(location: 0, length: (source as NSString).length)
             guard full.length > 0 else { return }
 
-            highlighter.setText(source)
-            textView.setAttributes(
+            let range = paintRange(in: textView)
+            resetAttributes(over: range)
+            // Carry the previous pass's colours until the new ones land. On a small file the
+            // parse finishes within the frame and this is invisible; on a large one it's the
+            // difference between "colours lag an edit" and "the file flashes plain on every
+            // keystroke".
+            paint(lastSpans, textLength: full.length)
+
+            highlightGeneration += 1
+            let generation = highlightGeneration
+            highlightTask?.cancel()
+            highlightTask = Task { [weak self] in
+                await engine.replace(text: source)
+                guard !Task.isCancelled else { return }
+                self?.parsedGeneration = generation
+                let spans = await engine.spans(in: range)
+                guard !Task.isCancelled else { return }
+                self?.applyParsedSpans(spans, over: range, generation: generation, replacingPaint: true)
+            }
+        }
+
+        /// Paints whatever of the viewport isn't painted yet for this generation. Driven by
+        /// scrolling, and by the tail of every completed pass — the viewport moves while a
+        /// parse runs, and on a freshly opened document TextKit may not have produced a real
+        /// viewport range until after the parse started.
+        func highlightVisibleIfNeeded() {
+            guard let textView, let engine = highlightEngine,
+                  parsedGeneration == highlightGeneration else { return }
+            let range = paintRange(in: textView)
+            guard let integers = Range(range),
+                  let missing = IndexSet(integersIn: integers).subtracting(paintedSet).rangeView.first
+            else { return }
+
+            // One contiguous chunk per pass; the recursive top-up below picks up any
+            // remainder, and scrolling only ever exposes one edge at a time in practice.
+            let chunk = NSRange(location: missing.lowerBound, length: missing.count)
+            let generation = highlightGeneration
+            Task { [weak self] in
+                let spans = await engine.spans(in: chunk)
+                self?.applyParsedSpans(spans, over: chunk, generation: generation, replacingPaint: false)
+            }
+        }
+
+        /// Paints one finished pass's spans over `range`, unless a newer pass has already
+        /// started. `replacingPaint` marks a pass whose text is new, so everything painted
+        /// for the previous generation is stale.
+        private func applyParsedSpans(_ spans: [HighlightSpan], over range: NSRange,
+                                      generation: Int, replacingPaint: Bool) {
+            guard generation == highlightGeneration, let textView else { return }
+            if replacingPaint {
+                paintedSet = IndexSet()
+                lastSpans = []
+            }
+            lastSpans.append(contentsOf: spans)
+
+            let length = (textView.text as NSString? ?? "").length
+            let clipped = NSIntersectionRange(range, NSRange(location: 0, length: length))
+            var painted = false
+            if clipped.length > 0, let integers = Range(clipped) {
+                resetAttributes(over: clipped)
+                paint(spans, textLength: length)
+                paintedSet.insert(integersIn: integers)
+                painted = true
+            }
+            // Same reason as the `defer` in applyHighlight: the reset above wipes the
+            // diagnostic underlines along with everything else.
+            lspController.render()
+            // Only recurse when this pass actually claimed ground, or a range that clips to
+            // nothing would ask for itself forever.
+            if painted { highlightVisibleIfNeeded() }
+        }
+
+        /// Repaints every painted region in the current theme/font — no reparse, for changes
+        /// that move colours around without moving text. Off-screen painted regions are
+        /// included: their attributes persist, so skipping them would leave two themes in one
+        /// document the moment the user scrolls back.
+        private func repaintHighlight() {
+            guard let textView else { return }
+            let length = (textView.text as NSString? ?? "").length
+            guard length > 0, !paintedSet.isEmpty else { return }
+            for region in paintedSet.rangeView {
+                let range = NSIntersectionRange(NSRange(location: region.lowerBound, length: region.count),
+                                                NSRange(location: 0, length: length))
+                guard range.length > 0 else { continue }
+                resetAttributes(over: range)
+            }
+            paint(lastSpans, textLength: length)
+            lspController.render()
+        }
+
+        /// The viewport plus a margin either side, in character offsets.
+        ///
+        /// The margin means a flick doesn't outrun the paint; it is cheap because resolving
+        /// an 8 KB window measured at 6 ms against 16.7s for the whole document.
+        private func paintRange(in textView: STTextView) -> NSRange {
+            let length = (textView.text as NSString? ?? "").length
+            guard length > 0 else { return NSRange(location: 0, length: 0) }
+            guard let viewport = textView.textLayoutManager.textViewportLayoutController.viewportRange else {
+                // Layout hasn't run yet — first paint of a just-opened document. Colour the
+                // head of it; the top-up in applyParsedSpans covers the real viewport once
+                // TextKit has one.
+                return NSRange(location: 0, length: min(Self.paintMargin, length))
+            }
+            let visible = SnippetController.nsRange(viewport, in: textView.textContentManager)
+            let start = max(0, visible.location - Self.paintMargin)
+            let end = min(length, visible.upperBound + Self.paintMargin)
+            return NSRange(location: start, length: max(0, end - start))
+        }
+
+        /// Characters painted beyond each edge of the viewport.
+        private static let paintMargin = 20_000
+
+        private func resetAttributes(over range: NSRange) {
+            textView?.setAttributes(
                 [.foregroundColor: NSColor(parent.theme.editorForeground), .font: CodeEditor.font(size: parent.fontSize)],
-                range: full
+                range: range
             )
-            for span in highlighter.highlights(in: full) {
-                guard let color = parent.theme.color(forCapture: span.capture) else { continue }
+        }
+
+        /// `textLength` is passed in rather than re-read per span: the text can shrink
+        /// between a parse starting and its spans being painted, and an out-of-bounds
+        /// NSRange into the text storage is a crash, not a glitch.
+        private func paint(_ spans: [HighlightSpan], textLength: Int) {
+            guard let textView else { return }
+            for span in spans {
+                guard span.range.upperBound <= textLength,
+                      let color = parent.theme.color(forCapture: span.capture) else { continue }
                 textView.addAttributes([.foregroundColor: NSColor(color)], range: span.range)
             }
         }
