@@ -17,15 +17,37 @@ struct CardView: View {
     @State private var body_ = ""
     @State private var expanded = false
     @State private var bodyDebouncer = Debouncer(delay: 0.5)
+    @State private var editingDue = false
+    @State private var summarizing = false
+    /// Whether the on-device model can handle this card's notes. Cached because answering it
+    /// costs ~2ms (language detection over the whole body) and the menu is rebuilt with the
+    /// card — a board of long cards would pay it on every layout pass.
+    @State private var summarizable = false
     @FocusState private var notesFocused: Bool
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            TextField("Title", text: $title)
-                .textFieldStyle(.plain)
-                .font(.body.weight(.semibold))
-                .onSubmit { commit() }
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                TextField("Title", text: $title)
+                    .textFieldStyle(.plain)
+                    .font(.body.weight(.semibold))
+                    .onSubmit { commit() }
+                if summarizing {
+                    ProgressView().controlSize(.mini)
+                }
+                Menu {
+                    cardMenu
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help(String(localized: "Card Actions"))
+                .accessibilityIdentifier("card.actions")
+            }
 
             dueRow
 
@@ -60,76 +82,120 @@ struct CardView: View {
                 }
                 .shadow(color: .black.opacity(isSelected ? 0.28 : 0.16), radius: isSelected ? 7 : 3, y: 2)
         }
-        .contextMenu {
-            Button(expanded ? "Hide Notes" : "Show Notes") { expanded.toggle() }
-            if card.due != nil {
-                Button("Remove Due Date") { update { $0.due = nil } }
-            }
-            if card.noteID != nil {
-                Button("Unlink") { update { $0.noteID = nil } }
-            }
-            Divider()
-            Button("Delete Card", role: .destructive) {
-                bodyDebouncer.cancel()
-                try? store.deleteCard(boardID: boardID, cardID: card.id)
-            }
+        .contextMenu { cardMenu }
+        // Calendar's own shape for "pick an exact time": a popover, not a field wedged into
+        // the card — the card face carries the date, never the picker.
+        .popover(isPresented: $editingDue) {
+            DatePicker("", selection: dueBinding, displayedComponents: [.date, .hourAndMinute])
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+                .padding(12)
         }
         .onAppear { load() }
         // The same view instance is reused when a card moves column; reload so drafts follow it.
         .onChange(of: card.id) { _, _ in bodyDebouncer.cancel(); load() }
     }
 
+    // MARK: - Menu
+
+    /// One set of card actions, shown both from the ⋯ button and from a right-click — a card
+    /// that only answers to the context menu hides half its features.
+    @ViewBuilder
+    private var cardMenu: some View {
+        Menu("Due Date") {
+            Button("Today") { setDue(Self.today()) }
+            Button("Tomorrow") { setDue(Self.morning(daysFromNow: 1)) }
+            Button("Next Week") { setDue(Self.morning(daysFromNow: 7)) }
+            Button("Custom…") {
+                if card.due == nil { setDue(Self.today()) }
+                editingDue = true
+            }
+            if card.due != nil {
+                Divider()
+                Button("Remove Due Date") { update { $0.due = nil } }
+            }
+        }
+        Button(expanded ? "Hide Notes" : "Show Notes") { expanded.toggle() }
+        if summarizable {
+            Button("Summarize into Title") { summarize() }
+        }
+        if card.noteID != nil {
+            Button("Unlink") { update { $0.noteID = nil } }
+        }
+        Divider()
+        Button("Delete Card", role: .destructive) {
+            bodyDebouncer.cancel()
+            try? store.deleteCard(boardID: boardID, cardID: card.id)
+        }
+    }
+
     // MARK: - Due date
 
-    /// Calendar's event fields, not a popup: an editable date/time field that commits as you
-    /// type, plus one button to take the date off again.
+    /// The card face states the date and opens the picker; it never carries the picker.
     @ViewBuilder
     private var dueRow: some View {
-        if card.due != nil {
-            HStack(spacing: 5) {
-                Image(systemName: "calendar")
-                    .font(.caption)
-                    .foregroundStyle(dueColor)
-                DatePicker("", selection: dueBinding, displayedComponents: [.date, .hourAndMinute])
-                    .datePickerStyle(.field)
-                    .labelsHidden()
-                    .font(.caption)
-                    .fixedSize()
-                Button {
-                    update { $0.due = nil }
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
-                .help(String(localized: "Remove Due Date"))
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(dueColor)
-        } else {
+        if let due = card.due {
             Button {
-                update { $0.due = Self.defaultDue() }
+                editingDue = true
             } label: {
-                Label("Add Due Date", systemImage: "calendar.badge.plus")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    Image(systemName: "calendar")
+                    Text(due.formatted(date: .abbreviated, time: .shortened))
+                        .strikethrough(isDone)
+                    Spacer(minLength: 0)
+                }
+                .font(.caption)
+                .foregroundStyle(dueColor)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help(String(localized: "Change Due Date"))
         }
     }
 
     private var dueBinding: Binding<Date> {
         Binding(
-            get: { card.due ?? Self.defaultDue() },
-            set: { newValue in update { $0.due = newValue } }
+            get: { card.due ?? Self.today() },
+            set: { newValue in setDue(newValue) }
         )
     }
 
-    /// Next full hour — the same "sensible default" Calendar picks for a new event.
-    private static func defaultDue() -> Date {
+    /// Setting a date is the first moment a reminder can matter — and the only honest moment
+    /// to ask for notification permission in an app that has no account and no onboarding.
+    private func setDue(_ date: Date) {
+        update { $0.due = date }
+        Task { await DueNotifier.shared.requestAuthorizationIfNeeded() }
+    }
+
+    /// Today at 17:00, or the next full hour if that has already passed.
+    private static func today() -> Date {
         let calendar = Calendar.current
+        let end = calendar.date(bySettingHour: 17, minute: 0, second: 0, of: Date())
+        if let end, end > Date() { return end }
         let next = calendar.date(byAdding: .hour, value: 1, to: Date()) ?? Date()
         return calendar.date(bySetting: .minute, value: 0, of: next) ?? next
+    }
+
+    private static func morning(daysFromNow days: Int) -> Date {
+        let calendar = Calendar.current
+        let day = calendar.date(byAdding: .day, value: days, to: Date()) ?? Date()
+        return calendar.date(bySettingHour: 9, minute: 0, second: 0, of: day) ?? day
+    }
+
+    // MARK: - Summary
+
+    /// Replaces the title with a short on-device summary of the notes. The notes are never
+    /// touched: a summary that reads badly costs one undo-by-retyping, not the text.
+    private func summarize() {
+        let source = body_
+        summarizing = true
+        Task {
+            let summary = await CardSummarizer.title(for: source)
+            summarizing = false
+            guard let summary, !summary.isEmpty else { return }
+            title = summary
+            commit()
+        }
     }
 
     /// Overdue reads red, due today orange, everything else secondary — and a finished card
@@ -170,11 +236,13 @@ struct CardView: View {
 
             if expanded {
                 // axis: .vertical grows with its content instead of reserving a fixed block,
-                // and unlike TextEditor it takes the caret on a single click.
+                // and unlike TextEditor it takes the caret on a single click. No upper line
+                // limit: a capped field clips the rest of the text AND eats the scroll wheel,
+                // so the column underneath can't be scrolled while the pointer is over it.
                 TextField("Notes", text: $body_, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.callout)
-                    .lineLimit(1...12)
+                    .lineLimit(1...)
                     .focused($notesFocused)
                     .onChange(of: body_) { _, _ in bodyDebouncer.call { commit() } }
             }
@@ -214,6 +282,16 @@ struct CardView: View {
         title = card.title
         body_ = card.body ?? ""
         expanded = !(card.body ?? "").isEmpty
+        refreshSummarizable()
+    }
+
+    /// Off the main thread: this is a menu's enabled-state, never worth a frame.
+    private func refreshSummarizable() {
+        let source = body_
+        Task {
+            let available = await Task.detached { CardSummarizer.canSummarize(source) }.value
+            summarizable = available
+        }
     }
 
     private func commit() {
@@ -222,6 +300,7 @@ struct CardView: View {
             $0.title = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? card.title : title
             $0.body = body_.isEmpty ? nil : body_
         }
+        refreshSummarizable()
     }
 
     private func update(_ change: (inout Card) -> Void) {

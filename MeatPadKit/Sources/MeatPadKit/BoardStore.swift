@@ -121,12 +121,12 @@ public final class BoardStore: ObservableObject {
     // MARK: - Cards
 
     @discardableResult
-    public func addCard(boardID: UUID, columnID: UUID, title: String) throws -> Card {
+    public func addCard(boardID: UUID, columnID: UUID, title: String, body: String? = nil) throws -> Card {
         let idx = try boardIndex(boardID)
         guard columns(for: boards[idx]).contains(where: { $0.id == columnID }) else {
             throw BoardStoreError.columnNotFound(columnID)
         }
-        let card = Card(title: try validated(title), columnID: columnID)
+        let card = Card(title: try validated(title), body: body, columnID: columnID)
         boards[idx].cards.append(card)
         try persist(at: idx)
         return card

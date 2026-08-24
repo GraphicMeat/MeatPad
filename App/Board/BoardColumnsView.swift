@@ -15,9 +15,18 @@ struct BoardColumnsView: View {
     @State private var renameTarget: ColumnRef?
     @State private var deleteTarget: ColumnRef?
     @State private var addColumnTarget: AddColumnScope?
+    /// A multi-item paste waiting on the user's call: split it, or keep it as one card.
+    @State private var splitTarget: SplitTarget?
     /// Where a dragged card would land right now — drives the insertion bar and the column
     /// highlight, so a drag shows its destination instead of guessing.
     @State private var dropTarget: DropTarget?
+
+    private struct SplitTarget {
+        let boardID: UUID
+        let columnID: UUID
+        let text: String
+        let drafts: [CardDraft]
+    }
 
     private struct DropTarget: Equatable {
         let column: UUID
@@ -102,6 +111,17 @@ struct BoardColumnsView: View {
         } message: {
             Text("Its cards move to \(store.globalColumns.first?.name ?? "").")
         }
+        .confirmationDialog(
+            Text("Add \(splitTarget?.drafts.count ?? 0) cards?"),
+            isPresented: Binding(get: { splitTarget != nil }, set: { if !$0 { splitTarget = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Add \(splitTarget?.drafts.count ?? 0) Cards") { commitSplit(asSeparateCards: true) }
+            Button("Keep as One Card") { commitSplit(asSeparateCards: false) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This looks like a list. Each item can become its own card.")
+        }
     }
 
     private var addColumnTitle: String {
@@ -167,15 +187,24 @@ struct BoardColumnsView: View {
                 // .plain inside our own container, exactly like GlassSearchField: a bezeled
                 // (.roundedBorder / default) field is an NSTextField, and AppKit draws its own
                 // focus ring on first responder — SwiftUI's focusEffectDisabled can't reach it.
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                HStack(alignment: .top, spacing: 6) {
+                    Button {
+                        addCard(to: column, in: board)
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Add card"))
+                    // axis: .vertical so a pasted list arrives with its line breaks intact —
+                    // a single-line field folds them into spaces and the items are gone.
                     TextField("Add card", text: Binding(
                         get: { drafts[column.id] ?? "" },
                         set: { drafts[column.id] = $0 }
-                    ))
+                    ), axis: .vertical)
                     .textFieldStyle(.plain)
+                    .lineLimit(1...5)
                     .onSubmit { addCard(to: column, in: board) }
                     .accessibilityIdentifier("column.addCard")
                 }
@@ -340,10 +369,32 @@ struct BoardColumnsView: View {
         return moved
     }
 
+    /// One card for typed text, a question for a pasted list. The split is decided here rather
+    /// than at paste time: AppKit's field editor is what actually receives ⌘V, so the only
+    /// reliable moment to read the text back is when it is submitted.
     private func addCard(to column: BoardColumn, in board: Board) {
-        let title = drafts[column.id] ?? ""
-        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        _ = try? store.addCard(boardID: board.id, columnID: column.id, title: title)
-        drafts[column.id] = ""
+        let text = drafts[column.id] ?? ""
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let items = CardTextSplit.drafts(from: text)
+        guard items.count > 1 else {
+            if let draft = CardTextSplit.single(from: text) {
+                _ = try? store.addCard(boardID: board.id, columnID: column.id, title: draft.title, body: draft.body)
+            }
+            drafts[column.id] = ""
+            return
+        }
+        splitTarget = SplitTarget(boardID: board.id, columnID: column.id, text: text, drafts: items)
+    }
+
+    /// The field is only cleared once the cards exist — cancelling the dialog leaves the paste
+    /// where the user put it.
+    private func commitSplit(asSeparateCards separate: Bool) {
+        guard let target = splitTarget else { return }
+        let items = separate ? target.drafts : [CardTextSplit.single(from: target.text)].compactMap { $0 }
+        for item in items {
+            _ = try? store.addCard(boardID: target.boardID, columnID: target.columnID, title: item.title, body: item.body)
+        }
+        drafts[target.columnID] = ""
+        splitTarget = nil
     }
 }
