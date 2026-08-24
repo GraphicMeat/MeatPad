@@ -9,6 +9,9 @@ struct BoardColumnsView: View {
     /// nil = the All Boards overview.
     let board: Board?
     @Binding var selectedCard: UUID?
+    /// Labels the board is filtered to. Empty = show everything. Owned by the window so the
+    /// sidebar can grey out the boards this filter empties.
+    @Binding var labelFilter: Set<UUID>
 
     @State private var drafts: [UUID: String] = [:]
     @State private var nameDraft = ""
@@ -66,17 +69,23 @@ struct BoardColumnsView: View {
     }
 
     var body: some View {
-        ScrollView(.horizontal) {
-            HStack(alignment: .top, spacing: 14) {
-                ForEach(renderedColumns) { column in
-                    columnView(column)
+        VStack(alignment: .leading, spacing: 0) {
+            LabelFilterField(store: store, selected: $labelFilter)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: 14) {
+                    ForEach(renderedColumns) { column in
+                        columnView(column)
+                    }
+                    if board == nil, !otherCards.isEmpty {
+                        otherColumn
+                    }
+                    addColumnTile
                 }
-                if board == nil, !otherCards.isEmpty {
-                    otherColumn
-                }
-                addColumnTile
+                .padding(16)
             }
-            .padding(16)
         }
         .alert("Rename Column", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
             TextField("Name", text: $nameDraft)
@@ -140,10 +149,14 @@ struct BoardColumnsView: View {
     private func cards(in column: BoardColumn) -> [CardRef] {
         if let board {
             let live = store.boards.first { $0.id == board.id } ?? board
-            return store.cards(in: live, column: column.id).map { CardRef(board: live, card: $0) }
+            return store.cards(in: live, column: column.id)
+                .filter { $0.matches(labels: labelFilter) }
+                .map { CardRef(board: live, card: $0) }
         }
         return store.boards.flatMap { board in
-            store.cards(in: board, column: column.id).map { CardRef(board: board, card: $0) }
+            store.cards(in: board, column: column.id)
+                .filter { $0.matches(labels: labelFilter) }
+                .map { CardRef(board: board, card: $0) }
         }
     }
 
@@ -152,7 +165,9 @@ struct BoardColumnsView: View {
     private var otherCards: [CardRef] {
         let globals = Set(store.globalColumns.map(\.id))
         return store.boards.flatMap { board in
-            board.cards.filter { !globals.contains($0.columnID) }.map { CardRef(board: board, card: $0) }
+            board.cards
+                .filter { !globals.contains($0.columnID) && $0.matches(labels: labelFilter) }
+                .map { CardRef(board: board, card: $0) }
         }
     }
 
@@ -218,7 +233,7 @@ struct BoardColumnsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in
                         insertionBar(for: column, at: index)
-                        cardRow(ref, in: column, at: index)
+                        cardRow(ref, in: column, at: index, visible: items)
                     }
                     insertionBar(for: column, at: items.count)
                 }
@@ -237,7 +252,7 @@ struct BoardColumnsView: View {
         // Column-level drop appends; the per-card drop inserts above the card it lands on.
         .dropDestination(for: String.self) { ids, _ in
             defer { dropTarget = nil }
-            return move(ids, to: column.id, index: items.count)
+            return move(ids, to: column.id, visible: items, at: items.count)
         } isTargeted: { targeted in
             if targeted {
                 if dropTarget?.column != column.id { dropTarget = DropTarget(column: column.id, index: items.count) }
@@ -316,7 +331,7 @@ struct BoardColumnsView: View {
 
     // MARK: - Cards
 
-    private func cardRow(_ ref: CardRef, in column: BoardColumn?, at index: Int = 0) -> some View {
+    private func cardRow(_ ref: CardRef, in column: BoardColumn?, at index: Int = 0, visible: [CardRef] = []) -> some View {
         CardView(
             store: store,
             boardID: ref.board.id,
@@ -340,7 +355,7 @@ struct BoardColumnsView: View {
         .dropDestination(for: String.self) { ids, _ in
             guard let column else { return false }
             defer { dropTarget = nil }
-            return move(ids, to: column.id, index: index)
+            return move(ids, to: column.id, visible: visible, at: index)
         } isTargeted: { targeted in
             guard let column else { return }
             if targeted {
@@ -358,16 +373,29 @@ struct BoardColumnsView: View {
     /// A card always moves within its own board — in the all-boards view the destination
     /// column is a global one, which every board shares.
     @discardableResult
-    private func move(_ ids: [String], to columnID: UUID, index: Int) -> Bool {
+    private func move(_ ids: [String], to columnID: UUID, visible items: [CardRef], at visibleIndex: Int) -> Bool {
         var moved = false
         withAnimation(.snappy(duration: 0.22)) {
             for id in ids.compactMap({ UUID(uuidString: $0) }) {
                 guard let owner = store.boards.first(where: { $0.cards.contains { $0.id == id } }) else { continue }
+                let index = storeIndex(visible: items, at: visibleIndex, column: columnID, board: owner)
                 try? store.moveCard(id: id, boardID: owner.id, toColumn: columnID, index: index)
                 moved = true
             }
         }
         return moved
+    }
+
+    /// A drop index counts the rows the user can SEE. A label filter (and, in the all-boards
+    /// view, the other boards' cards) hides rows, so the same number means something else to
+    /// the store — translate through the card the drop landed above, or the card lands in the
+    /// wrong place. Dropping past the last visible row, or above a card from another board,
+    /// appends.
+    private func storeIndex(visible items: [CardRef], at visibleIndex: Int, column: UUID, board: Board) -> Int {
+        let all = store.cards(in: board, column: column)
+        guard visibleIndex < items.count else { return all.count }
+        let anchor = items[visibleIndex].card.id
+        return all.firstIndex { $0.id == anchor } ?? all.count
     }
 
     /// One card for typed text, a question for a pasted list. The split is decided here rather

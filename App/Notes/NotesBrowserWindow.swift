@@ -89,6 +89,10 @@ struct NotesBrowserWindow: View {
     @State private var boardDeleteTarget: UUID?
     /// The card whose inspector fills the detail column while a board is selected.
     @State private var selectedCard: UUID?
+    /// Board label filter. Lives here, not in `BoardColumnsView`, because the sidebar counts
+    /// answer to it too. Session-only on purpose: a filter you forgot you left on is worse
+    /// than retyping it.
+    @State private var labelFilter: Set<UUID> = []
 
     private var folderFilteredNotes: [Note] {
         if case .trash = folderSelection { return noteStore.trashedNotes }
@@ -284,9 +288,9 @@ struct NotesBrowserWindow: View {
             Divider()
 
             folderRow(.allBoards, name: String(localized: "All Boards"), icon: "square.grid.2x2",
-                      count: boardStore.boards.reduce(0) { $0 + $1.cards.count })
+                      count: boardStore.boards.reduce(0) { $0 + matchingCards($1) })
             ForEach(boardStore.boards) { board in
-                folderRow(.board(board.id), name: board.name, icon: "rectangle.split.3x1", count: board.cards.count)
+                boardRow(board)
                     .contextMenu {
                         Button("Rename…") { boardNameDraft = board.name; boardRenameTarget = board.id }
                         Button("Delete…", role: .destructive) { boardDeleteTarget = board.id }
@@ -327,7 +331,21 @@ struct NotesBrowserWindow: View {
         .foregroundStyle(.secondary)
     }
 
-    private func folderRow(_ value: FolderSelection, name: String, icon: String, count: Int) -> some View {
+    /// Sidebar counts answer the question the board is currently asking: with a label filter
+    /// on, a board reports how many of its cards survive it.
+    private func matchingCards(_ board: Board) -> Int {
+        board.cards.filter { $0.matches(labels: labelFilter) }.count
+    }
+
+    /// Dimmed, never hidden: hiding the board you are looking at would pull it out from under
+    /// the pointer the moment a filter matches nothing.
+    private func boardRow(_ board: Board) -> some View {
+        let count = matchingCards(board)
+        return folderRow(.board(board.id), name: board.name, icon: "rectangle.split.3x1",
+                         count: count, dimmed: !labelFilter.isEmpty && count == 0)
+    }
+
+    private func folderRow(_ value: FolderSelection, name: String, icon: String, count: Int, dimmed: Bool = false) -> some View {
         HStack {
             Label {
                 Text(name).lineLimit(1)
@@ -340,6 +358,7 @@ struct NotesBrowserWindow: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
+        .opacity(dimmed ? 0.4 : 1)
         .tag(value)
     }
 
@@ -365,7 +384,7 @@ struct NotesBrowserWindow: View {
     }
 
     private var boardColumns: some View {
-        BoardColumnsView(store: boardStore, board: selectedBoard, selectedCard: $selectedCard)
+        BoardColumnsView(store: boardStore, board: selectedBoard, selectedCard: $selectedCard, labelFilter: $labelFilter)
     }
 
     @ViewBuilder

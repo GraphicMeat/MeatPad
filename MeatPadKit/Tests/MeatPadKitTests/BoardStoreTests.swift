@@ -412,4 +412,125 @@ final class BoardStoreTests: XCTestCase {
         try store.addExtraColumn(boardID: board.id, name: "Blocked")
         XCTAssertNil(store.boards[0].extraColumns[0].emoji)
     }
+
+    // MARK: - labels
+
+    func testCreateLabelPersistsAcrossReload() throws {
+        let store = try makeStore()
+        let label = try store.createLabel(name: "Bug")
+        XCTAssertEqual(store.labels.map(\.name), ["Bug"])
+        XCTAssertEqual(try makeStore().labels, [label])
+    }
+
+    func testCreateLabelTrimsAndRejectsEmptyName() throws {
+        let store = try makeStore()
+        XCTAssertEqual(try store.createLabel(name: "  Sunday  ").name, "Sunday")
+        XCTAssertThrowsError(try store.createLabel(name: "   ")) {
+            XCTAssertEqual($0 as? BoardStoreError, .invalidName)
+        }
+    }
+
+    func testEveryPaletteColorIsUsedBeforeAnyRepeats() throws {
+        let store = try makeStore()
+        for i in 0..<CardLabel.palette.count { _ = try store.createLabel(name: "l\(i)") }
+        XCTAssertEqual(Set(store.labels.map(\.color)).count, CardLabel.palette.count)
+        XCTAssertTrue(store.labels.allSatisfy { CardLabel.palette.contains($0.color) })
+    }
+
+    func testColorsWrapEvenlyOncePaletteIsExhausted() throws {
+        let store = try makeStore()
+        for i in 0...CardLabel.palette.count { _ = try store.createLabel(name: "l\(i)") }
+        let counts = Dictionary(grouping: store.labels, by: \.color).mapValues(\.count)
+        XCTAssertEqual(counts.values.max(), 2)
+        XCTAssertEqual(counts.values.filter { $0 == 2 }.count, 1)
+    }
+
+    func testRenameAndRecolorLabelPersist() throws {
+        let store = try makeStore()
+        let label = try store.createLabel(name: "Bug")
+        let cyan = try XCTUnwrap(RGBAColor(hex: "#33CCFF"))
+        try store.renameLabel(id: label.id, to: "Defect")
+        try store.setLabelColor(id: label.id, cyan)
+        let reloaded = try makeStore()
+        XCTAssertEqual(reloaded.labels.first?.name, "Defect")
+        XCTAssertEqual(reloaded.labels.first?.color, cyan)
+    }
+
+    func testLabelOpsOnUnknownIDThrow() throws {
+        let store = try makeStore()
+        let ghost = UUID()
+        XCTAssertThrowsError(try store.renameLabel(id: ghost, to: "x")) {
+            XCTAssertEqual($0 as? BoardStoreError, .labelNotFound(ghost))
+        }
+        XCTAssertThrowsError(try store.setLabelColor(id: ghost, RGBAColor(r: 0, g: 0, b: 0)))
+        XCTAssertThrowsError(try store.deleteLabel(id: ghost))
+    }
+
+    func testCardKeepsAssignedLabelsAcrossReload() throws {
+        let store = try makeStore()
+        let label = try store.createLabel(name: "Bug")
+        let board = try store.createBoard(name: "b")
+        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        card.labelIDs = [label.id]
+        try store.updateCard(boardID: board.id, card: card)
+        XCTAssertEqual(try makeStore().boards[0].cards[0].labelIDs, [label.id])
+    }
+
+    func testDeletingALabelStripsItFromEveryCard() throws {
+        let store = try makeStore()
+        let keep = try store.createLabel(name: "Keep")
+        let drop = try store.createLabel(name: "Drop")
+        let board = try store.createBoard(name: "b")
+        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        card.labelIDs = [keep.id, drop.id]
+        try store.updateCard(boardID: board.id, card: card)
+
+        try store.deleteLabel(id: drop.id)
+
+        XCTAssertEqual(store.labels.map(\.id), [keep.id])
+        XCTAssertEqual(try makeStore().boards[0].cards[0].labelIDs, [keep.id])
+    }
+
+    // MARK: - label filtering
+
+    func testEmptyFilterMatchesEveryCard() throws {
+        XCTAssertTrue(Card(title: "c", columnID: UUID()).matches(labels: []))
+    }
+
+    func testFilterMatchesAnySelectedLabelNotAllOfThem() throws {
+        let (a, b, c) = (UUID(), UUID(), UUID())
+        var card = Card(title: "c", columnID: UUID())
+        card.labelIDs = [a]
+        XCTAssertTrue(card.matches(labels: [a, b]))
+        XCTAssertFalse(card.matches(labels: [b, c]))
+    }
+
+    func testUnlabelledCardIsHiddenByAnyFilter() throws {
+        XCTAssertFalse(Card(title: "c", columnID: UUID()).matches(labels: [UUID()]))
+    }
+
+    // MARK: - legacy files
+
+    func testStoreWrittenBeforeLabelsStillDecodes() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "b")
+        _ = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+
+        let boardURL = tempDir.appendingPathComponent("\(board.id.uuidString).json")
+        var boardJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: boardURL)) as? [String: Any])
+        var cards = try XCTUnwrap(boardJSON["cards"] as? [[String: Any]])
+        for i in cards.indices { cards[i].removeValue(forKey: "labelIDs") }
+        boardJSON["cards"] = cards
+        try JSONSerialization.data(withJSONObject: boardJSON).write(to: boardURL)
+
+        let indexURL = tempDir.appendingPathComponent("boards.json")
+        var indexJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: indexURL)) as? [String: Any])
+        indexJSON.removeValue(forKey: "labels")
+        try JSONSerialization.data(withJSONObject: indexJSON).write(to: indexURL)
+
+        let reloaded = try makeStore()
+        XCTAssertTrue(reloaded.labels.isEmpty)
+        XCTAssertEqual(reloaded.boards[0].cards.count, 1)
+        XCTAssertNil(reloaded.boards[0].cards[0].labelIDs)
+    }
 }

@@ -4,6 +4,7 @@ public enum BoardStoreError: Error, Equatable {
     case boardNotFound(UUID)
     case cardNotFound(UUID)
     case columnNotFound(UUID)
+    case labelNotFound(UUID)
     case invalidName
     case lastColumn
 }
@@ -36,6 +37,9 @@ public final class BoardStore: ObservableObject {
     /// Columns every board shows, before its own extras.
     @Published public private(set) var globalColumns: [BoardColumn] = []
 
+    /// Labels every board's cards can carry, in creation order.
+    @Published public private(set) var labels: [CardLabel] = []
+
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -52,6 +56,8 @@ public final class BoardStore: ObservableObject {
     private struct Index: Codable {
         var boardOrder: [UUID]
         var globalColumns: [BoardColumn]
+        /// Optional so an index written before labels existed still decodes.
+        var labels: [CardLabel]?
     }
 
     /// `defaultColumnNames` is injected so the app can seed localized names on first run —
@@ -74,6 +80,7 @@ public final class BoardStore: ObservableObject {
                 globalColumns[i].emoji = globalColumns[i].isDone ? "✅" : (i == 0 ? "📋" : "🚧")
             }
         }
+        labels = index?.labels ?? []
         boards = Self.loadBoards(from: rootURL, order: index?.boardOrder ?? [])
         // Seeds a fresh install, and re-persists a healed order after a skipped/adopted file.
         try? saveIndex()
@@ -245,6 +252,56 @@ public final class BoardStore: ObservableObject {
         }
     }
 
+    // MARK: - Labels
+
+    /// The colour is assigned, never asked for: the least-used palette entry, so a new label
+    /// is visually distinct on sight and the user only opens a colour picker to override it.
+    @discardableResult
+    public func createLabel(name: String) throws -> CardLabel {
+        let label = CardLabel(name: try validated(name), color: nextLabelColor())
+        labels.append(label)
+        try saveIndex()
+        return label
+    }
+
+    public func renameLabel(id: UUID, to name: String) throws {
+        let trimmed = try validated(name)
+        try mutateLabel(id) { $0.name = trimmed }
+    }
+
+    public func setLabelColor(id: UUID, _ color: RGBAColor) throws {
+        try mutateLabel(id) { $0.color = color }
+    }
+
+    /// Deleting a label strips it off every card that carried it — a dangling id renders as
+    /// a chip with no name and no way to get rid of it.
+    public func deleteLabel(id: UUID) throws {
+        guard labels.contains(where: { $0.id == id }) else { throw BoardStoreError.labelNotFound(id) }
+        labels.removeAll { $0.id == id }
+        try saveIndex()
+        for idx in boards.indices where boards[idx].cards.contains(where: { $0.labelIDs?.contains(id) ?? false }) {
+            for cardIdx in boards[idx].cards.indices {
+                guard let ids = boards[idx].cards[cardIdx].labelIDs, ids.contains(id) else { continue }
+                boards[idx].cards[cardIdx].labelIDs = ids.filter { $0 != id }
+            }
+            try persist(at: idx)
+        }
+    }
+
+    private func mutateLabel(_ id: UUID, _ change: (inout CardLabel) -> Void) throws {
+        guard let idx = labels.firstIndex(where: { $0.id == id }) else { throw BoardStoreError.labelNotFound(id) }
+        change(&labels[idx])
+        try saveIndex()
+    }
+
+    /// `min(by:)` keeps the first of equal elements, so ties break on palette order and new
+    /// labels walk the palette top to bottom instead of jumping around it.
+    private func nextLabelColor() -> RGBAColor {
+        var used: [RGBAColor: Int] = [:]
+        for label in labels { used[label.color, default: 0] += 1 }
+        return CardLabel.palette.min { (used[$0] ?? 0) < (used[$1] ?? 0) } ?? CardLabel.palette[0]
+    }
+
     // MARK: - Note link
 
     /// The derived half of the note↔card link. `card.noteID` is the only stored pointer, so
@@ -324,7 +381,7 @@ public final class BoardStore: ObservableObject {
     }
 
     private func saveIndex() throws {
-        let index = Index(boardOrder: boards.map(\.id), globalColumns: globalColumns)
+        let index = Index(boardOrder: boards.map(\.id), globalColumns: globalColumns, labels: labels)
         try Self.encoder.encode(index).write(to: indexURL, options: .atomic)
     }
 

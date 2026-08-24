@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import MeatPadKit
 
 /// A small, shared visual language for MeatPad's translucent surfaces. Keeping the
@@ -187,5 +188,20 @@ struct GlassSearchField: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(.white.opacity(0.18), lineWidth: 0.75)
         }
+    }
+}
+
+// MARK: - RGBAColor <-> SwiftUI Color
+
+extension Color {
+    init(_ c: RGBAColor) {
+        self.init(red: c.r, green: c.g, blue: c.b, opacity: c.a)
+    }
+}
+
+extension RGBAColor {
+    init(_ color: Color) {
+        let ns = NSColor(color).usingColorSpace(.sRGB) ?? NSColor(color)
+        self.init(r: Double(ns.redComponent), g: Double(ns.greenComponent), b: Double(ns.blueComponent), a: Double(ns.alphaComponent))
     }
 }

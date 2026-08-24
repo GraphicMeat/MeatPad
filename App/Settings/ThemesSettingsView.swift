@@ -320,18 +320,3 @@ struct ThemesSettingsView: View {
         )
     }
 }
-
-// MARK: - RGBAColor <-> SwiftUI Color bridge (local to this pane)
-
-private extension Color {
-    init(_ c: RGBAColor) {
-        self.init(red: c.r, green: c.g, blue: c.b, opacity: c.a)
-    }
-}
-
-private extension RGBAColor {
-    init(_ color: Color) {
-        let ns = NSColor(color).usingColorSpace(.sRGB) ?? NSColor(color)
-        self.init(r: Double(ns.redComponent), g: Double(ns.greenComponent), b: Double(ns.blueComponent), a: Double(ns.alphaComponent))
-    }
-}

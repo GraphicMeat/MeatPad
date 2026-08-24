@@ -1,7 +1,7 @@
 import Foundation
 
 /// A color in the sRGB space with straight (non-premultiplied) alpha.
-public struct RGBAColor: Codable, Equatable, Sendable {
+public struct RGBAColor: Codable, Hashable, Sendable {
     public var r: Double
     public var g: Double
     public var b: Double

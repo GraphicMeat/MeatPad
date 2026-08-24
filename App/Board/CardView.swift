@@ -23,6 +23,8 @@ struct CardView: View {
     /// costs ~2ms (language detection over the whole body) and the menu is rebuilt with the
     /// card — a board of long cards would pay it on every layout pass.
     @State private var summarizable = false
+    @State private var newLabelShown = false
+    @State private var labelDraft = ""
     @FocusState private var notesFocused: Bool
     @Environment(\.openWindow) private var openWindow
 
@@ -51,6 +53,8 @@ struct CardView: View {
             }
 
             dueRow
+
+            labelChips
 
             if card.noteID != nil || boardBadge != nil {
                 HStack(spacing: 6) {
@@ -84,6 +88,11 @@ struct CardView: View {
                 .shadow(color: .black.opacity(isSelected ? 0.28 : 0.16), radius: isSelected ? 7 : 3, y: 2)
         }
         .contextMenu { cardMenu }
+        .alert("New Label", isPresented: $newLabelShown) {
+            TextField("Name", text: $labelDraft)
+            Button("Create") { createLabel() }
+            Button("Cancel", role: .cancel) {}
+        }
         // Calendar's own shape for "pick an exact time": a popover, not a field wedged into
         // the card — the card face carries the date, never the picker.
         .popover(isPresented: $editingDue) {
@@ -116,6 +125,13 @@ struct CardView: View {
                 Button("Remove Due Date") { update { $0.due = nil } }
             }
         }
+        Menu("Labels") {
+            ForEach(store.labels) { label in
+                Toggle(label.name, isOn: labelBinding(label.id))
+            }
+            if !store.labels.isEmpty { Divider() }
+            Button("New Label…") { labelDraft = ""; newLabelShown = true }
+        }
         Button(expanded ? "Hide Notes" : "Show Notes") { expanded.toggle() }
         if summarizable {
             Button("Summarize into Title") { summarize() }
@@ -128,6 +144,53 @@ struct CardView: View {
             bodyDebouncer.cancel()
             try? store.deleteCard(boardID: boardID, cardID: card.id)
         }
+    }
+
+    // MARK: - Labels
+
+    /// One tinted chip per label, in the store's order so a card's labels read the same way
+    /// everywhere. Hidden entirely when the card has none — an empty row would cost every
+    /// card 10pt of height for nothing.
+    @ViewBuilder
+    private var labelChips: some View {
+        let labels = store.labels.filter { card.labelIDs?.contains($0.id) ?? false }
+        if !labels.isEmpty {
+            HStack(spacing: 4) {
+                ForEach(labels) { label in
+                    Text(label.name)
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color(label.color).opacity(0.3)))
+                        .overlay(Capsule().strokeBorder(Color(label.color).opacity(0.75)))
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    /// Writes through `updateCard`, the same path every other card edit takes — a label is
+    /// just another field on the card, not its own store concept.
+    private func labelBinding(_ id: UUID) -> Binding<Bool> {
+        Binding(
+            get: { card.labelIDs?.contains(id) ?? false },
+            set: { on in
+                update { card in
+                    var ids = card.labelIDs ?? []
+                    ids.removeAll { $0 == id }
+                    if on { ids.append(id) }
+                    card.labelIDs = ids.isEmpty ? nil : ids
+                }
+            }
+        )
+    }
+
+    /// Creating from a card assigns it there and then — nobody opens this to make a label
+    /// they don't want on the card in front of them.
+    private func createLabel() {
+        guard let label = try? store.createLabel(name: labelDraft) else { return }
+        labelBinding(label.id).wrappedValue = true
     }
 
     // MARK: - Due date
