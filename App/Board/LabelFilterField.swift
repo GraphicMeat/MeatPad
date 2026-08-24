@@ -48,6 +48,7 @@ struct LabelFilterField: View {
                     .buttonStyle(.plain)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("labelFilter.clear")
             }
 
             Spacer(minLength: 0)
@@ -96,6 +97,7 @@ struct LabelFilterField: View {
         .contentShape(Capsule())
         .onTapGesture { selected.remove(label.id) }
         .help(String(localized: "Remove from filter"))
+        .accessibilityIdentifier("labelFilter.chip.\(label.name)")
     }
 
     // MARK: - Picker
@@ -104,6 +106,7 @@ struct LabelFilterField: View {
         VStack(alignment: .leading, spacing: 0) {
             TextField("Search or create", text: $query)
                 .textFieldStyle(.plain)
+                .accessibilityIdentifier("labelFilter.search")
                 .focused($searchFocused)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
@@ -165,6 +168,7 @@ struct LabelFilterField: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("labelFilter.row.\(label.name)")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -194,6 +198,7 @@ struct LabelFilterField: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("labelFilter.create")
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(highlight == matches.count ? Color.primary.opacity(0.08) : .clear)
