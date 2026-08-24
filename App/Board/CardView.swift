@@ -33,6 +33,7 @@ struct CardView: View {
                     .textFieldStyle(.plain)
                     .font(.body.weight(.semibold))
                     .onSubmit { commit() }
+                    .accessibilityIdentifier("card.title")
                 if summarizing {
                     ProgressView().controlSize(.mini)
                 }
@@ -233,6 +234,7 @@ struct CardView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("card.notesToggle")
 
             if expanded {
                 // axis: .vertical grows with its content instead of reserving a fixed block,
@@ -244,6 +246,8 @@ struct CardView: View {
                     .font(.callout)
                     .lineLimit(1...)
                     .focused($notesFocused)
+                    .newlineOnModifiedReturn()
+                    .accessibilityIdentifier("card.notes")
                     .onChange(of: body_) { _, _ in bodyDebouncer.call { commit() } }
             }
         }

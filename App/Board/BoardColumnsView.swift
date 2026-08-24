@@ -206,6 +206,7 @@ struct BoardColumnsView: View {
                     .textFieldStyle(.plain)
                     .lineLimit(1...5)
                     .onSubmit { addCard(to: column, in: board) }
+                    .newlineOnModifiedReturn()
                     .accessibilityIdentifier("column.addCard")
                 }
                 .ringlessField()

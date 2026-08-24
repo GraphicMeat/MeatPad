@@ -1,4 +1,5 @@
 import SwiftUI
+import MeatPadKit
 
 /// A small, shared visual language for MeatPad's translucent surfaces. Keeping the
 /// effects here makes the UI feel cohesive and avoids stacking expensive materials.
@@ -89,6 +90,26 @@ extension View {
                             .strokeBorder(.white.opacity(0.08), lineWidth: 1)
                     }
             }
+    }
+
+    /// Shift+Return and Option+Return add a line break instead of submitting — the chord
+    /// every multi-line field on macOS answers to, which SwiftUI's `TextField` drops.
+    /// The break is put in by AppKit's field editor rather than by rewriting the binding:
+    /// that lands it at the caret instead of at the end, and keeps the field's own undo.
+    func newlineOnModifiedReturn() -> some View {
+        onKeyPress(phases: .down) { press in
+            guard press.key == .return,
+                  ReturnKey.insertsNewline(
+                      shift: press.modifiers.contains(.shift),
+                      option: press.modifiers.contains(.option),
+                      command: press.modifiers.contains(.command),
+                      control: press.modifiers.contains(.control)
+                  ),
+                  let editor = NSApp.keyWindow?.firstResponder as? NSTextView
+            else { return .ignored }
+            editor.insertNewlineIgnoringFieldEditor(nil)
+            return .handled
+        }
     }
 
     func keyboardFocusRingOnly() -> some View {
