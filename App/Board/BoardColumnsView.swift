@@ -13,6 +13,10 @@ struct BoardColumnsView: View {
     /// sidebar can grey out the boards this filter empties.
     @Binding var labelFilter: Set<UUID>
 
+    /// Card density. Unlike the label filter this is remembered across launches and shared by
+    /// every board — it hides no cards, so nothing can go missing behind it.
+    @AppStorage("board.cardDisplay") private var display: CardDisplay = .full
+
     @State private var drafts: [UUID: String] = [:]
     @State private var nameDraft = ""
     @State private var renameTarget: ColumnRef?
@@ -70,9 +74,12 @@ struct BoardColumnsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            LabelFilterField(store: store, selected: $labelFilter)
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
+            HStack(spacing: 10) {
+                LabelFilterField(store: store, selected: $labelFilter)
+                displayPicker
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
 
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 14) {
@@ -131,6 +138,28 @@ struct BoardColumnsView: View {
         } message: {
             Text("This looks like a list. Each item can become its own card.")
         }
+    }
+
+    /// Segmented and ordered least-to-most, so it reads as a density slider rather than three
+    /// unrelated modes. Icon-only: it sits on the filter row, and three words there would
+    /// out-shout the filter itself.
+    private var displayPicker: some View {
+        Picker("Card Display", selection: $display) {
+            Image(systemName: "rectangle.compress.vertical")
+                .accessibilityLabel(Text("Compact"))
+                .tag(CardDisplay.compact)
+            Image(systemName: "text.alignleft")
+                .accessibilityLabel(Text("Titles"))
+                .tag(CardDisplay.titles)
+            Image(systemName: "rectangle.expand.vertical")
+                .accessibilityLabel(Text("Full"))
+                .tag(CardDisplay.full)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help(String(localized: "How much of each card to show"))
+        .accessibilityIdentifier("board.cardDisplay")
     }
 
     private var addColumnTitle: String {
@@ -338,7 +367,8 @@ struct BoardColumnsView: View {
             card: ref.card,
             boardBadge: board == nil ? (ref.board.name, store.color(forBoard: ref.board.id)) : nil,
             isDone: column?.isDone ?? columnIsDone(ref),
-            isSelected: selectedCard == ref.card.id
+            isSelected: selectedCard == ref.card.id,
+            display: display
         )
         .contentShape(Rectangle())
         .onTapGesture { selectedCard = ref.card.id }

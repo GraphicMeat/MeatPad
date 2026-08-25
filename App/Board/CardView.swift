@@ -15,6 +15,10 @@ struct CardView: View {
     var boardBadge: (name: String, color: RGBAColor)?
     let isDone: Bool
     let isSelected: Bool
+    /// How much of the card to draw. Owned by the board, not the card — "fold everything"
+    /// is a board-wide gesture — but a card can still open its own notes from the ⋯ menu
+    /// until the setting next changes.
+    let display: CardDisplay
 
     @State private var title = ""
     @State private var body_ = ""
@@ -35,15 +39,21 @@ struct CardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .top, spacing: 6) {
-                // axis: .vertical so a long title wraps onto as many lines as it needs. A
-                // card that reads "Masazas E…" is a card you have to open to identify.
+                // axis: .vertical so a long title wraps onto as many lines as it needs, up to
+                // what the board's display setting allows. A card that reads "Masazas E…" is a
+                // card you have to open to identify — which is why only `compact` clips it.
                 // No `newlineOnModifiedReturn` here on purpose: wrapping is layout, and a
                 // title with a literal newline in it is a title nothing can render.
                 TextField("Title", text: $title, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.body.weight(.semibold))
-                    .lineLimit(1...4)
+                    .lineLimit(display.titleLines)
                     .onSubmit { commit() }
+                    // A vertical-axis TextField that has already grown does not shrink back
+                    // when the limit tightens — it keeps the taller intrinsic size. Rebuilding
+                    // it on the limit itself is the cheapest way to re-measure, and titles↔full
+                    // share a limit, so it only happens on the switch that changes anything.
+                    .id(display.titleLines)
                     .accessibilityIdentifier("card.title")
                 if summarizing {
                     ProgressView().controlSize(.mini)
@@ -122,6 +132,9 @@ struct CardView: View {
             let text = new ?? ""
             if !notesFocused, text != body_ { body_ = text }
         }
+        // Changing the board setting overrides whatever this card was left on — that is the
+        // point of "fold all": one card the user opened earlier must not survive it.
+        .onChange(of: display) { _, _ in expanded = notesOpenByDefault }
     }
 
     // MARK: - Cell
@@ -372,8 +385,14 @@ struct CardView: View {
     private func load() {
         title = card.title
         body_ = card.body ?? ""
-        expanded = !(card.body ?? "").isEmpty
+        expanded = notesOpenByDefault
         refreshSummarizable()
+    }
+
+    /// A card with no notes never opens its field, whatever the board setting says — a column
+    /// of empty "Notes" boxes is less card, not more.
+    private var notesOpenByDefault: Bool {
+        display.notesOpen && !body_.isEmpty
     }
 
     /// Off the main thread: this is a menu's enabled-state, never worth a frame.

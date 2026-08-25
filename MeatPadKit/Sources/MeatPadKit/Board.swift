@@ -115,3 +115,25 @@ public struct Board: Identifiable, Codable, Equatable, Sendable {
         self.cards = cards
     }
 }
+
+/// How much of every card the board draws. A view setting rather than a filter — it hides
+/// nothing, it only decides how tall a card is allowed to be — and it is remembered across
+/// launches, because density is a preference and not a search you'd forget you left on.
+public enum CardDisplay: String, CaseIterable, Sendable {
+    /// Titles clipped to one line, notes shut. The most cards per screen a column can hold.
+    case compact
+    /// The whole title, however many lines it takes; notes stay shut.
+    case titles
+    /// Everything: the whole title, and the notes already open.
+    case full
+
+    /// Cards open their notes only in `.full` — and only if they have any, which is the
+    /// card's own business, not this setting's.
+    public var notesOpen: Bool { self == .full }
+
+    /// The lines a title may take. A count with a ceiling rather than `nil`: `lineLimit(nil)`
+    /// leaves a vertical-axis `TextField` on a single line, and a `ClosedRange` limit doesn't
+    /// let it grow either, so "unlimited" has to be spelled as a number. 30 is that number —
+    /// a title needing more lines has a bigger problem than this setting.
+    public var titleLines: Int { self == .compact ? 1 : 30 }
+}
