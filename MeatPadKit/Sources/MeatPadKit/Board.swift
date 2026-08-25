@@ -91,11 +91,19 @@ public struct Card: Identifiable, Codable, Equatable, Sendable {
         self.modified = modified
     }
 
-    /// Any, not all: an empty filter shows every card, otherwise the card needs one of the
-    /// selected labels. That is what a chip filter is expected to do — narrowing to cards
+    /// Any label, not all: an empty filter shows every card, otherwise the card needs one of
+    /// the selected labels. That is what a chip filter is expected to do — narrowing to cards
     /// carrying *every* selected label is a different feature.
-    public func matches(labels filter: Set<UUID>) -> Bool {
-        filter.isEmpty || (labelIDs ?? []).contains { filter.contains($0) }
+    ///
+    /// The text query narrows further — both have to pass, so search runs inside whatever the
+    /// chips already left. Substring, not fuzzy: this is a filter you watch cards fall out of
+    /// while typing, and an unrelated card surviving on a fuzzy score reads as a bug.
+    /// `localizedStandardContains` is the Finder's rule — case- and diacritic-insensitive.
+    public func matches(labels filter: Set<UUID>, text query: String = "") -> Bool {
+        guard filter.isEmpty || (labelIDs ?? []).contains(where: { filter.contains($0) }) else { return false }
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return true }
+        return title.localizedStandardContains(needle) || body?.localizedStandardContains(needle) == true
     }
 }
 

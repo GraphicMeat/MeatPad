@@ -93,6 +93,8 @@ struct NotesBrowserWindow: View {
     /// answer to it too. Session-only on purpose: a filter you forgot you left on is worse
     /// than retyping it.
     @State private var labelFilter: Set<UUID> = []
+    /// Board card search, session-only for the same reason as `labelFilter`.
+    @State private var cardSearch = ""
 
     private var folderFilteredNotes: [Note] {
         if case .trash = folderSelection { return noteStore.trashedNotes }
@@ -332,9 +334,13 @@ struct NotesBrowserWindow: View {
     }
 
     /// Sidebar counts answer the question the board is currently asking: with a label filter
-    /// on, a board reports how many of its cards survive it.
+    /// or a search on, a board reports how many of its cards survive it.
     private func matchingCards(_ board: Board) -> Int {
-        board.cards.filter { $0.matches(labels: labelFilter) }.count
+        board.cards.filter { $0.matches(labels: labelFilter, text: cardSearch) }.count
+    }
+
+    private var boardFilterIsOn: Bool {
+        !labelFilter.isEmpty || !cardSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Dimmed, never hidden: hiding the board you are looking at would pull it out from under
@@ -342,7 +348,7 @@ struct NotesBrowserWindow: View {
     private func boardRow(_ board: Board) -> some View {
         let count = matchingCards(board)
         return folderRow(.board(board.id), name: board.name, icon: "rectangle.split.3x1",
-                         count: count, dimmed: !labelFilter.isEmpty && count == 0)
+                         count: count, dimmed: boardFilterIsOn && count == 0)
     }
 
     private func folderRow(_ value: FolderSelection, name: String, icon: String, count: Int, dimmed: Bool = false) -> some View {
@@ -384,7 +390,8 @@ struct NotesBrowserWindow: View {
     }
 
     private var boardColumns: some View {
-        BoardColumnsView(store: boardStore, board: selectedBoard, selectedCard: $selectedCard, labelFilter: $labelFilter)
+        BoardColumnsView(store: boardStore, board: selectedBoard, selectedCard: $selectedCard,
+                         labelFilter: $labelFilter, searchQuery: $cardSearch)
     }
 
     @ViewBuilder

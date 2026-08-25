@@ -565,6 +565,38 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertNil(try makeStore().boards[0].cards[0].color)
     }
 
+    // MARK: - text search
+
+    func testEmptyQueryMatchesEveryCard() throws {
+        XCTAssertTrue(Card(title: "c", columnID: UUID()).matches(labels: [], text: ""))
+        XCTAssertTrue(Card(title: "c", columnID: UUID()).matches(labels: [], text: "   "))
+    }
+
+    func testQueryMatchesTitleSubstringIgnoringCaseAndDiacritics() throws {
+        let card = Card(title: "Réfactor the Parser", columnID: UUID())
+        XCTAssertTrue(card.matches(labels: [], text: "parser"))
+        XCTAssertTrue(card.matches(labels: [], text: "refactor"))
+        XCTAssertTrue(card.matches(labels: [], text: "or the Par"))
+        XCTAssertFalse(card.matches(labels: [], text: "lexer"))
+    }
+
+    func testQueryMatchesBody() throws {
+        let card = Card(title: "Ship it", body: "blocked on notarization", columnID: UUID())
+        XCTAssertTrue(card.matches(labels: [], text: "notarization"))
+        XCTAssertFalse(Card(title: "Ship it", columnID: UUID()).matches(labels: [], text: "notarization"))
+    }
+
+    /// Both filters narrow: a card the chips already dropped stays dropped however well it
+    /// matches the text, and vice versa.
+    func testLabelFilterAndQueryBothHaveToPass() throws {
+        let (a, b) = (UUID(), UUID())
+        var card = Card(title: "Fix crash", columnID: UUID())
+        card.labelIDs = [a]
+        XCTAssertTrue(card.matches(labels: [a], text: "crash"))
+        XCTAssertFalse(card.matches(labels: [a], text: "leak"))
+        XCTAssertFalse(card.matches(labels: [b], text: "crash"))
+    }
+
     // MARK: - legacy files
 
     func testStoreWrittenBeforeLabelsStillDecodes() throws {

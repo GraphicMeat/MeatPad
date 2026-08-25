@@ -12,6 +12,9 @@ struct BoardColumnsView: View {
     /// Labels the board is filtered to. Empty = show everything. Owned by the window so the
     /// sidebar can grey out the boards this filter empties.
     @Binding var labelFilter: Set<UUID>
+    /// Free text the cards are filtered to, matched against title and body. Owned by the
+    /// window for the same reason as `labelFilter`: the sidebar counts answer to it too.
+    @Binding var searchQuery: String
 
     /// Card density. Unlike the label filter this is remembered across launches and shared by
     /// every board — it hides no cards, so nothing can go missing behind it.
@@ -75,6 +78,12 @@ struct BoardColumnsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
+                GlassSearchField(
+                    prompt: String(localized: "Search cards"),
+                    text: $searchQuery,
+                    identifier: "board.search"
+                )
+                .frame(maxWidth: 260)
                 LabelFilterField(store: store, selected: $labelFilter)
                 displayPicker
             }
@@ -179,12 +188,12 @@ struct BoardColumnsView: View {
         if let board {
             let live = store.boards.first { $0.id == board.id } ?? board
             return store.cards(in: live, column: column.id)
-                .filter { $0.matches(labels: labelFilter) }
+                .filter { $0.matches(labels: labelFilter, text: searchQuery) }
                 .map { CardRef(board: live, card: $0) }
         }
         return store.boards.flatMap { board in
             store.cards(in: board, column: column.id)
-                .filter { $0.matches(labels: labelFilter) }
+                .filter { $0.matches(labels: labelFilter, text: searchQuery) }
                 .map { CardRef(board: board, card: $0) }
         }
     }
@@ -195,7 +204,7 @@ struct BoardColumnsView: View {
         let globals = Set(store.globalColumns.map(\.id))
         return store.boards.flatMap { board in
             board.cards
-                .filter { !globals.contains($0.columnID) && $0.matches(labels: labelFilter) }
+                .filter { !globals.contains($0.columnID) && $0.matches(labels: labelFilter, text: searchQuery) }
                 .map { CardRef(board: board, card: $0) }
         }
     }
@@ -416,10 +425,10 @@ struct BoardColumnsView: View {
         return moved
     }
 
-    /// A drop index counts the rows the user can SEE. A label filter (and, in the all-boards
-    /// view, the other boards' cards) hides rows, so the same number means something else to
-    /// the store — translate through the card the drop landed above, or the card lands in the
-    /// wrong place. Dropping past the last visible row, or above a card from another board,
+    /// A drop index counts the rows the user can SEE. The label and text filters (and, in the
+    /// all-boards view, the other boards' cards) hide rows, so the same number means something
+    /// else to the store — translate through the card the drop landed above, or the card lands
+    /// in the wrong place. Dropping past the last visible row, or above a card from another board,
     /// appends.
     private func storeIndex(visible items: [CardRef], at visibleIndex: Int, column: UUID, board: Board) -> Int {
         let all = store.cards(in: board, column: column)
