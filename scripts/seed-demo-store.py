@@ -40,6 +40,46 @@ BLOCKED = {
     "ja": "保留", "ko": "보류", "pt-BR": "Bloqueado", "zh-Hans": "受阻",
 }
 
+# Labels the demo board carries. Three is the most a card can wear before the badges wrap
+# onto a second line at the shot's card width. Colours are CardLabel.palette indices 8/4/0 —
+# the same violet/green/red a user gets from the picker, not invented values.
+LABELS = {
+    "en":      ("Design", "Copy", "Release"),
+    "de":      ("Design", "Text", "Release"),
+    "es":      ("Diseño", "Texto", "Publicación"),
+    "fr":      ("Design", "Texte", "Publication"),
+    "it":      ("Design", "Testo", "Rilascio"),
+    "ja":      ("デザイン", "文章", "リリース"),
+    "ko":      ("디자인", "문구", "출시"),
+    "pt-BR":   ("Design", "Texto", "Lançamento"),
+    "zh-Hans": ("设计", "文案", "发布"),
+}
+
+LABEL_IDS = (
+    "A1B2C3D4-0000-4000-8000-000000000001",
+    "A1B2C3D4-0000-4000-8000-000000000002",
+    "A1B2C3D4-0000-4000-8000-000000000003",
+)
+
+# CardLabel.palette[8], [4], [0] as the RGBAColor dict the store writes.
+LABEL_COLORS = (
+    {"r": 0.486, "g": 0.400, "b": 0.863, "a": 1.0},
+    {"r": 0.188, "g": 0.643, "b": 0.424, "a": 1.0},
+    {"r": 0.898, "g": 0.282, "b": 0.302, "a": 1.0},
+)
+
+# card index -> label indices. Left deliberately patchy: a board where every card is tagged
+# reads as a demo, not as work.
+CARD_LABELS = {0: (1,), 1: (0,), 2: (1,), 5: (2,), 6: (1,), 8: (2,)}
+
+# card index -> its own colour, palette[6] cyan and palette[2] amber. Two is enough to show
+# that a card can be coloured independently of its labels without turning the board into
+# a paint chart.
+CARD_COLORS = {
+    4: {"r": 0.000, "g": 0.635, "b": 0.780, "a": 1.0},
+    7: {"r": 1.000, "g": 0.698, "b": 0.141, "a": 1.0},
+}
+
 BOARDS = {
     "en":      ("Launch", "Website"),
     "de":      ("Veröffentlichung", "Website"),
@@ -228,6 +268,10 @@ def seed(root: pathlib.Path, locale: str, now: datetime) -> None:
             {"id": DOING_ID, "name": doing, "isDone": False, "emoji": "🚧"},
             {"id": DONE_ID, "name": done, "isDone": True, "emoji": "✅"},
         ],
+        "labels": [
+            {"id": LABEL_IDS[i], "name": name, "color": LABEL_COLORS[i]}
+            for i, name in enumerate(LABELS[locale])
+        ],
     }
     (boards_dir / "boards.json").write_text(json.dumps(index, ensure_ascii=False, indent=2))
 
@@ -244,6 +288,10 @@ def seed(root: pathlib.Path, locale: str, now: datetime) -> None:
             card["body"] = body
         if due_hours is not None:
             card["due"] = iso((now + timedelta(hours=due_hours)).replace(minute=0, second=0, microsecond=0))
+        if i in CARD_LABELS:
+            card["labelIDs"] = [LABEL_IDS[j] for j in CARD_LABELS[i]]
+        if i in CARD_COLORS:
+            card["color"] = CARD_COLORS[i]
         cards.append(card)
 
     board = {"id": BOARD_ID, "name": board_name, "extraColumns": [], "cards": cards}
