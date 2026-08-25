@@ -1,9 +1,10 @@
 import SwiftUI
 import MeatPadKit
 
-/// One card, editable in place — the board is the editor, so nothing opens a pane or a
-/// popup. Height follows content: a bare card is two lines tall, and the notes field grows
-/// only as far as the text it holds.
+/// One card, editable in place — the board is the editor, so the common edits (title,
+/// notes, due date) never cost a click. Height follows content: a bare card is two lines
+/// tall, the title wraps rather than truncates, and the notes field grows only as far as
+/// the text it holds. `⋯` opens `CardEditor` for everything at once.
 struct CardView: View {
     @ObservedObject var store: BoardStore
     let boardID: UUID
@@ -25,41 +26,53 @@ struct CardView: View {
     /// costs ~2ms (language detection over the whole body) and the menu is rebuilt with the
     /// card — a board of long cards would pay it on every layout pass.
     @State private var summarizable = false
-    @State private var newLabelShown = false
-    @State private var labelDraft = ""
-    /// The swatch the new-label form is on. Seeded from the store's own next pick, so
-    /// creating without touching a swatch gives exactly what the store would have chosen.
-    @State private var labelColor = CardLabel.palette[0]
+    @State private var editorShown = false
+    /// Whether the editor should open straight onto its new-label field.
+    @State private var editorLabelForm = false
     @FocusState private var notesFocused: Bool
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                TextField("Title", text: $title)
+            HStack(alignment: .top, spacing: 6) {
+                // axis: .vertical so a long title wraps onto as many lines as it needs. A
+                // card that reads "Masazas E…" is a card you have to open to identify.
+                // No `newlineOnModifiedReturn` here on purpose: wrapping is layout, and a
+                // title with a literal newline in it is a title nothing can render.
+                TextField("Title", text: $title, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.body.weight(.semibold))
+                    .lineLimit(1...4)
                     .onSubmit { commit() }
                     .accessibilityIdentifier("card.title")
                 if summarizing {
                     ProgressView().controlSize(.mini)
                 }
-                Menu {
-                    cardMenu
+                Button {
+                    editorLabelForm = false
+                    editorShown = true
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .foregroundStyle(.secondary)
+                        // A bare glyph is a 13pt target sitting next to a card that answers
+                        // clicks itself — miss it and you select the card instead.
+                        .frame(width: 22, height: 18)
+                        .contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
+                .buttonStyle(.plain)
                 .help(String(localized: "Card Actions"))
                 .accessibilityIdentifier("card.actions")
             }
-            // Anchored to the header row so it points at the ⋯ it came from. A form, not an
-            // alert: an alert can hold a text field and nothing else, and a label without a
-            // colour to pick is half a label.
-            .popover(isPresented: $newLabelShown, arrowEdge: .bottom) { newLabelForm }
+            // Anchored to the header row so it points at the ⋯ it came from.
+            .popover(isPresented: $editorShown, arrowEdge: .bottom) {
+                CardEditor(
+                    store: store,
+                    boardID: boardID,
+                    card: card,
+                    isPresented: $editorShown,
+                    startsCreatingLabel: editorLabelForm
+                )
+            }
 
             dueRow
 
@@ -88,18 +101,7 @@ struct CardView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(.thinMaterial)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(
-                            isSelected ? AnyShapeStyle(MeatPadGlass.violet.opacity(0.9)) : AnyShapeStyle(.white.opacity(0.10)),
-                            lineWidth: isSelected ? 1.5 : 1
-                        )
-                }
-                .shadow(color: .black.opacity(isSelected ? 0.28 : 0.16), radius: isSelected ? 7 : 3, y: 2)
-        }
+        .background { cellBackground }
         .contextMenu { cardMenu }
         // Calendar's own shape for "pick an exact time": a popover, not a field wedged into
         // the card — the card face carries the date, never the picker.
@@ -112,6 +114,39 @@ struct CardView: View {
         .onAppear { load() }
         // The same view instance is reused when a card moves column; reload so drafts follow it.
         .onChange(of: card.id) { _, _ in bodyDebouncer.cancel(); load() }
+        // The editor writes this very card, so take what it wrote. The inequality guard is
+        // what keeps this from fighting the cell's own field: a commit from here comes back
+        // identical, and the notes are left alone while the caret is in them.
+        .onChange(of: card.title) { _, new in if new != title { title = new } }
+        .onChange(of: card.body) { _, new in
+            let text = new ?? ""
+            if !notesFocused, text != body_ { body_ = text }
+        }
+    }
+
+    // MARK: - Cell
+
+    /// The card's colour paints the whole cell — fill and border both, the way a calendar
+    /// paints an event. It is a wash over the material rather than a flat colour: the board
+    /// is glass, and an opaque card sitting on it looks pasted on.
+    ///
+    /// Selection still wins the border. A colour is how a card is filed; selection is where
+    /// the keyboard is, and that has to be readable on a card of any colour.
+    private var cellBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        let tint = card.color.map { Color($0) }
+        return shape
+            .fill(.thinMaterial)
+            .overlay { shape.fill(tint?.opacity(0.22) ?? .clear) }
+            .overlay {
+                shape.strokeBorder(
+                    isSelected
+                        ? AnyShapeStyle(MeatPadGlass.violet.opacity(0.9))
+                        : AnyShapeStyle(tint?.opacity(0.7) ?? .white.opacity(0.10)),
+                    lineWidth: isSelected ? 1.5 : 1
+                )
+            }
+            .shadow(color: .black.opacity(isSelected ? 0.28 : 0.16), radius: isSelected ? 7 : 3, y: 2)
     }
 
     // MARK: - Menu
@@ -121,11 +156,11 @@ struct CardView: View {
     @ViewBuilder
     private var cardMenu: some View {
         Menu("Due Date") {
-            Button("Today") { setDue(Self.today()) }
-            Button("Tomorrow") { setDue(Self.morning(daysFromNow: 1)) }
-            Button("Next Week") { setDue(Self.morning(daysFromNow: 7)) }
+            Button("Today") { setDue(CardDue.today()) }
+            Button("Tomorrow") { setDue(CardDue.morning(daysFromNow: 1)) }
+            Button("Next Week") { setDue(CardDue.morning(daysFromNow: 7)) }
             Button("Custom…") {
-                if card.due == nil { setDue(Self.today()) }
+                if card.due == nil { setDue(CardDue.today()) }
                 editingDue = true
             }
             if card.due != nil {
@@ -139,9 +174,8 @@ struct CardView: View {
             }
             if !store.labels.isEmpty { Divider() }
             Button("New Label…") {
-                labelDraft = ""
-                labelColor = store.suggestedLabelColor
-                newLabelShown = true
+                editorLabelForm = true
+                editorShown = true
             }
         }
         Button(expanded ? "Hide Notes" : "Show Notes") { expanded.toggle() }
@@ -198,56 +232,6 @@ struct CardView: View {
         )
     }
 
-    /// Name plus a swatch, in the palette the store draws from anyway. No custom colour
-    /// well here — the filter row already carries a full ColorPicker per label, and this
-    /// form exists to get a label made in one gesture.
-    private var newLabelForm: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            TextField("Name", text: $labelDraft)
-                .ringlessField()
-                .onSubmit { createLabel() }
-                .accessibilityIdentifier("newLabel.name")
-
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(20), spacing: 6), count: 6), spacing: 6) {
-                ForEach(Array(CardLabel.palette.enumerated()), id: \.offset) { index, color in
-                    swatch(color, index: index)
-                }
-            }
-
-            HStack {
-                Spacer(minLength: 0)
-                Button("Create") { createLabel() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(labelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("newLabel.create")
-            }
-        }
-        .padding(12)
-        .frame(width: 212)
-    }
-
-    private func swatch(_ color: RGBAColor, index: Int) -> some View {
-        Circle()
-            .fill(Color(color))
-            .frame(width: 20, height: 20)
-            .overlay {
-                Circle().strokeBorder(.primary.opacity(labelColor == color ? 0.9 : 0), lineWidth: 2)
-                    .padding(-2)
-            }
-            .contentShape(Circle())
-            .onTapGesture { labelColor = color }
-            .accessibilityIdentifier("newLabel.swatch.\(index)")
-            .accessibilityAddTraits(labelColor == color ? [.isSelected] : [])
-    }
-
-    /// Creating from a card assigns it there and then — nobody opens this to make a label
-    /// they don't want on the card in front of them.
-    private func createLabel() {
-        guard let label = try? store.createLabel(name: labelDraft, color: labelColor) else { return }
-        labelBinding(label.id).wrappedValue = true
-        newLabelShown = false
-    }
-
     // MARK: - Due date
 
     /// The card face states the date and opens the picker; it never carries the picker.
@@ -274,7 +258,7 @@ struct CardView: View {
 
     private var dueBinding: Binding<Date> {
         Binding(
-            get: { card.due ?? Self.today() },
+            get: { card.due ?? CardDue.today() },
             set: { newValue in setDue(newValue) }
         )
     }
@@ -284,21 +268,6 @@ struct CardView: View {
     private func setDue(_ date: Date) {
         update { $0.due = date }
         Task { await DueNotifier.shared.requestAuthorizationIfNeeded() }
-    }
-
-    /// Today at 17:00, or the next full hour if that has already passed.
-    private static func today() -> Date {
-        let calendar = Calendar.current
-        let end = calendar.date(bySettingHour: 17, minute: 0, second: 0, of: Date())
-        if let end, end > Date() { return end }
-        let next = calendar.date(byAdding: .hour, value: 1, to: Date()) ?? Date()
-        return calendar.date(bySetting: .minute, value: 0, of: next) ?? next
-    }
-
-    private static func morning(daysFromNow days: Int) -> Date {
-        let calendar = Calendar.current
-        let day = calendar.date(byAdding: .day, value: days, to: Date()) ?? Date()
-        return calendar.date(bySettingHour: 9, minute: 0, second: 0, of: day) ?? day
     }
 
     // MARK: - Summary

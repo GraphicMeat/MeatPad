@@ -67,11 +67,17 @@ public struct Card: Identifiable, Codable, Equatable, Sendable {
     /// decoder ignores default values — a board file written before labels existed would
     /// fail on a missing key, exactly like `BoardColumn.emoji`.
     public var labelIDs: [UUID]?
+    /// The card's own colour, painting its whole cell the way a calendar paints an event.
+    /// One per card, unlike labels: a card can carry five tags but it can only look like one
+    /// thing. nil is not a missing colour, it is the plain glass card — the default, and what
+    /// every board file written before this decodes as.
+    public var color: RGBAColor?
     public var created: Date
     public var modified: Date
 
     public init(id: UUID = UUID(), title: String, body: String? = nil, due: Date? = nil,
                 columnID: UUID, noteID: UUID? = nil, labelIDs: [UUID]? = nil,
+                color: RGBAColor? = nil,
                 created: Date = Date(), modified: Date = Date()) {
         self.id = id
         self.title = title
@@ -80,6 +86,7 @@ public struct Card: Identifiable, Codable, Equatable, Sendable {
         self.columnID = columnID
         self.noteID = noteID
         self.labelIDs = labelIDs
+        self.color = color
         self.created = created
         self.modified = modified
     }

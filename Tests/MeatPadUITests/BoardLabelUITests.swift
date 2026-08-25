@@ -91,6 +91,7 @@ final class BoardLabelUITests: XCTestCase {
         field.click()
         field.typeText("FromCard")
         element("newLabel.create").click()
+        closeEditor()
 
         XCTAssertTrue(app.staticTexts["FromCard"].waitForExistence(timeout: 5),
                       "the new label never landed on the card")
@@ -112,6 +113,7 @@ final class BoardLabelUITests: XCTestCase {
         XCTAssertTrue(element("newLabel.swatch.4").isSelected, "the picked swatch never took")
         element("newLabel.create").click()
 
+        closeEditor()
         XCTAssertTrue(app.staticTexts["Coloured"].waitForExistence(timeout: 5),
                       "the new label never landed on the card")
         // Read back what the app actually wrote: a swatch that only highlights itself is a
@@ -157,33 +159,43 @@ final class BoardLabelUITests: XCTestCase {
         dismissPopover()
     }
 
-    /// Ticks the label in the card's ⋯ menu → Labels submenu.
+    /// Ticks the label in the card editor's label menu, then closes the editor.
     private func assign(label: String, toCardTitled title: String) {
         let card = cardTitles.matching(NSPredicate(format: "value == %@", title)).firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 5), "no card titled “\(title)”")
-        // The ⋯ button sits in the same card row; hit the one nearest this title.
-        let menu = app.descendants(matching: .any).matching(identifier: "card.actions")
-            .element(boundBy: cardIndex(of: title))
-        menu.click()
-        let labels = app.menuItems["Labels"]
-        XCTAssertTrue(labels.waitForExistence(timeout: 5), "card menu has no Labels item")
-        labels.click()
+        openLabelMenu(onCardTitled: title)
         let item = app.menuItems[label]
-        XCTAssertTrue(item.waitForExistence(timeout: 5), "Labels submenu has no “\(label)”")
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "the label menu has no “\(label)”")
         item.click()
+        closeEditor()
     }
 
-    /// Card ⋯ → Labels → New Label…
+    /// Card ⋯ → the editor's label menu → New Label…
     private func openNewLabelForm(onCardTitled title: String) {
-        let menu = app.descendants(matching: .any).matching(identifier: "card.actions")
-            .element(boundBy: cardIndex(of: title))
-        menu.click()
-        let labels = app.menuItems["Labels"]
-        XCTAssertTrue(labels.waitForExistence(timeout: 5), "card menu has no Labels item")
-        labels.click()
+        openLabelMenu(onCardTitled: title)
         let new = app.menuItems["New Label…"]
-        XCTAssertTrue(new.waitForExistence(timeout: 5), "Labels submenu has no New Label item")
+        XCTAssertTrue(new.waitForExistence(timeout: 5), "the label menu has no New Label item")
         new.click()
+    }
+
+    /// The ⋯ button opens the card editor; labels hang off its own menu inside.
+    private func openLabelMenu(onCardTitled title: String) {
+        let more = app.descendants(matching: .any).matching(identifier: "card.actions")
+            .element(boundBy: cardIndex(of: title))
+        more.click()
+        let labels = element("cardEditor.labels")
+        XCTAssertTrue(labels.waitForExistence(timeout: 5), "the card editor never opened")
+        labels.click()
+    }
+
+    /// The editor is a popover, and it is modal to the keyboard while it is up. Escape only
+    /// reaches it once something inside holds the keyboard, so click a field first.
+    private func closeEditor() {
+        guard element("cardEditor.title").exists else { return }
+        element("cardEditor.title").click()
+        app.typeKey(.escape, modifierFlags: [])
+        let deadline = Date().addingTimeInterval(5)
+        while element("cardEditor.title").exists, Date() < deadline { usleep(200_000) }
     }
 
     private func filter(by label: String) {
@@ -199,11 +211,14 @@ final class BoardLabelUITests: XCTestCase {
         if clear.exists { clear.click() }
     }
 
-    /// The popover is modal to the keyboard; Escape returns the board to the tests.
+    /// The popover is modal to the keyboard; Escape returns the board to the tests. Waited
+    /// out rather than fired and forgotten — the next click is eaten by a popover that is
+    /// still closing.
     private func dismissPopover() {
-        if element("labelFilter.search").exists {
-            app.typeKey(.escape, modifierFlags: [])
-        }
+        guard element("labelFilter.search").exists else { return }
+        app.typeKey(.escape, modifierFlags: [])
+        let deadline = Date().addingTimeInterval(5)
+        while element("labelFilter.search").exists, Date() < deadline { usleep(200_000) }
     }
 
     // MARK: - Reading the board

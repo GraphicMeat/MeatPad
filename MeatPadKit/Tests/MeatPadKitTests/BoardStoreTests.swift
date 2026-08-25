@@ -541,6 +541,30 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertFalse(Card(title: "c", columnID: UUID()).matches(labels: [UUID()]))
     }
 
+    // MARK: - card colour
+
+    func testCardColorPersistsAcrossReload() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "b")
+        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        card.color = CardLabel.palette[4]
+        try store.updateCard(boardID: board.id, card: card)
+
+        XCTAssertEqual(try makeStore().boards[0].cards[0].color, CardLabel.palette[4])
+    }
+
+    func testClearingCardColorPersistsAsNil() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "b")
+        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        card.color = CardLabel.palette[0]
+        try store.updateCard(boardID: board.id, card: card)
+        card.color = nil
+        try store.updateCard(boardID: board.id, card: card)
+
+        XCTAssertNil(try makeStore().boards[0].cards[0].color)
+    }
+
     // MARK: - legacy files
 
     func testStoreWrittenBeforeLabelsStillDecodes() throws {
@@ -551,7 +575,10 @@ final class BoardStoreTests: XCTestCase {
         let boardURL = tempDir.appendingPathComponent("\(board.id.uuidString).json")
         var boardJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: boardURL)) as? [String: Any])
         var cards = try XCTUnwrap(boardJSON["cards"] as? [[String: Any]])
-        for i in cards.indices { cards[i].removeValue(forKey: "labelIDs") }
+        for i in cards.indices {
+            cards[i].removeValue(forKey: "labelIDs")
+            cards[i].removeValue(forKey: "color")
+        }
         boardJSON["cards"] = cards
         try JSONSerialization.data(withJSONObject: boardJSON).write(to: boardURL)
 
@@ -564,5 +591,6 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertTrue(reloaded.labels.isEmpty)
         XCTAssertEqual(reloaded.boards[0].cards.count, 1)
         XCTAssertNil(reloaded.boards[0].cards[0].labelIDs)
+        XCTAssertNil(reloaded.boards[0].cards[0].color)
     }
 }
