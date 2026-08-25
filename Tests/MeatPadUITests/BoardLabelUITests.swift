@@ -13,6 +13,7 @@ final class BoardLabelUITests: XCTestCase {
     private var storageRoot: URL!
     private let boardID = UUID()
     private let columnID = UUID()
+    private let otherBoardID = UUID()
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -82,7 +83,65 @@ final class BoardLabelUITests: XCTestCase {
         XCTAssertTrue(waitForCardTitles([]), "visible cards: \(visibleCardTitles)")
     }
 
+    func testCreatingALabelFromACardMenuAssignsItToThatCard() throws {
+        openNewLabelForm(onCardTitled: "Alpha")
+
+        let field = element("newLabel.name")
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "the New Label form has no name field")
+        field.click()
+        field.typeText("FromCard")
+        element("newLabel.create").click()
+
+        XCTAssertTrue(app.staticTexts["FromCard"].waitForExistence(timeout: 5),
+                      "the new label never landed on the card")
+    }
+
+    /// The colour is the point of the form: picking a swatch has to survive into the label,
+    /// not just tick a circle. Read back through the filter row, the one place a label's
+    /// colour is rendered as a control instead of as paint.
+    func testTheNewLabelFormPicksAColour() throws {
+        openNewLabelForm(onCardTitled: "Alpha")
+
+        let field = element("newLabel.name")
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "the New Label form has no name field")
+        field.click()
+        field.typeText("Coloured")
+        let swatch = element("newLabel.swatch.4")
+        XCTAssertTrue(swatch.exists, "the New Label form offers no colours")
+        swatch.click()
+        XCTAssertTrue(element("newLabel.swatch.4").isSelected, "the picked swatch never took")
+        element("newLabel.create").click()
+
+        XCTAssertTrue(app.staticTexts["Coloured"].waitForExistence(timeout: 5),
+                      "the new label never landed on the card")
+        // Read back what the app actually wrote: a swatch that only highlights itself is a
+        // colour picker that picks nothing.
+        XCTAssertEqual(try storedColor(ofLabel: "Coloured"), Self.palette[4],
+                       "the label was not stored in the picked colour")
+    }
+
+    /// The All Boards overview stacks four boards into one column; every card has to say
+    /// which board it came from.
+    func testAllBoardsBadgesEveryCardWithItsBoard() throws {
+        showAllBoards()
+        let badges = app.descendants(matching: .any).matching(identifier: "card.boardBadge")
+        XCTAssertTrue(badges.firstMatch.waitForExistence(timeout: 5), "no board badges in All Boards")
+        XCTAssertEqual(badges.count, 3, "every card in All Boards carries a badge")
+    }
+
     // MARK: - Board actions
+
+    /// Relaunches onto the overview — `setUp` lands on one board, which shows no badges.
+    private func showAllBoards() {
+        app.terminate()
+        app.launchArguments = [
+            "-meatpad.storageRootOverride", storageRoot.path,
+            "-meatpad.revealBoard", "all",
+            "-hasSeenFirstRunIntro", "YES",
+        ]
+        app.launch()
+        XCTAssertTrue(cardTitles.firstMatch.waitForExistence(timeout: 20), "All Boards never rendered")
+    }
 
     /// Opens the filter popover, types the name, and commits with Return — the create-on-⏎
     /// path. A created label is filtered on immediately, so the board narrows straight away.
@@ -112,6 +171,19 @@ final class BoardLabelUITests: XCTestCase {
         let item = app.menuItems[label]
         XCTAssertTrue(item.waitForExistence(timeout: 5), "Labels submenu has no “\(label)”")
         item.click()
+    }
+
+    /// Card ⋯ → Labels → New Label…
+    private func openNewLabelForm(onCardTitled title: String) {
+        let menu = app.descendants(matching: .any).matching(identifier: "card.actions")
+            .element(boundBy: cardIndex(of: title))
+        menu.click()
+        let labels = app.menuItems["Labels"]
+        XCTAssertTrue(labels.waitForExistence(timeout: 5), "card menu has no Labels item")
+        labels.click()
+        let new = app.menuItems["New Label…"]
+        XCTAssertTrue(new.waitForExistence(timeout: 5), "Labels submenu has no New Label item")
+        new.click()
     }
 
     private func filter(by label: String) {
@@ -163,6 +235,39 @@ final class BoardLabelUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
+    // MARK: - Reading what the app wrote
+
+    /// `CardLabel.palette`, which the UI test bundle cannot import (it links the app, not
+    /// MeatPadKit). Kept in the same order — a swatch index means nothing otherwise.
+    private static let palette = [
+        "#E5484D", "#F76B15", "#FFB224", "#99D52A", "#30A46C", "#12A594",
+        "#00A2C7", "#3E63DD", "#7C66DC", "#BF7AF0", "#E93D82", "#AD7F58",
+    ]
+
+    /// Polls the index file the app writes, and returns the label's colour as a hex string.
+    private func storedColor(ofLabel name: String) throws -> String {
+        let url = storageRoot.appendingPathComponent("Boards/boards.json")
+        let deadline = Date().addingTimeInterval(5)
+        var last = ""
+        repeat {
+            if let data = try? Data(contentsOf: url),
+               let index = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let labels = index["labels"] as? [[String: Any]],
+               let label = labels.first(where: { $0["name"] as? String == name }),
+               let color = label["color"] as? [String: Double] {
+                last = Self.hex(color)
+                return last
+            }
+            usleep(200_000)
+        } while Date() < deadline
+        return last
+    }
+
+    private static func hex(_ color: [String: Double]) -> String {
+        let channel = { (key: String) in Int(((color[key] ?? 0) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", channel("r"), channel("g"), channel("b"))
+    }
+
     // MARK: - Seeding
 
     /// Writes the same files `BoardStore` would: `Boards/boards.json` plus one board file.
@@ -172,7 +277,7 @@ final class BoardLabelUITests: XCTestCase {
         try FileManager.default.createDirectory(at: boards, withIntermediateDirectories: true)
 
         let index: [String: Any] = [
-            "boardOrder": [boardID.uuidString],
+            "boardOrder": [boardID.uuidString, otherBoardID.uuidString],
             "globalColumns": [
                 ["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"],
             ],
@@ -197,5 +302,21 @@ final class BoardLabelUITests: XCTestCase {
         ]
         try JSONSerialization.data(withJSONObject: board)
             .write(to: boards.appendingPathComponent("\(boardID.uuidString).json"))
+
+        // A second board so the All Boards overview has two badges to tell apart.
+        let other: [String: Any] = [
+            "id": otherBoardID.uuidString,
+            "name": "Other Board",
+            "extraColumns": [],
+            "cards": [[
+                "id": UUID().uuidString,
+                "title": "Gamma",
+                "columnID": columnID.uuidString,
+                "created": stamp,
+                "modified": stamp,
+            ]],
+        ]
+        try JSONSerialization.data(withJSONObject: other)
+            .write(to: boards.appendingPathComponent("\(otherBoardID.uuidString).json"))
     }
 }

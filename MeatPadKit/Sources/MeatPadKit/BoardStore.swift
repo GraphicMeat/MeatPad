@@ -254,14 +254,26 @@ public final class BoardStore: ObservableObject {
 
     // MARK: - Labels
 
-    /// The colour is assigned, never asked for: the least-used palette entry, so a new label
-    /// is visually distinct on sight and the user only opens a colour picker to override it.
+    /// The colour is proposed, not demanded: pass one to honour the user's pick, or leave it
+    /// off for the least-used palette entry, so a label made in a hurry is still distinct.
     @discardableResult
-    public func createLabel(name: String) throws -> CardLabel {
-        let label = CardLabel(name: try validated(name), color: nextLabelColor())
+    public func createLabel(name: String, color: RGBAColor? = nil) throws -> CardLabel {
+        let label = CardLabel(name: try validated(name), color: color ?? nextLabelColor())
         labels.append(label)
         try saveIndex()
         return label
+    }
+
+    /// The colour a brand-new label would be given right now — the swatch a "new label" form
+    /// starts on, so creating without touching the colours matches what the store would pick.
+    public var suggestedLabelColor: RGBAColor { nextLabelColor() }
+
+    /// A board's own colour, so the All Boards overview can tell four boards apart at a
+    /// glance. Taken from the palette by position, not by hashing the id: position cannot
+    /// collide, and a hash sooner or later hands two boards the same colour.
+    public func color(forBoard id: UUID) -> RGBAColor {
+        let index = boards.firstIndex { $0.id == id } ?? 0
+        return CardLabel.palette[index % CardLabel.palette.count]
     }
 
     public func renameLabel(id: UUID, to name: String) throws {

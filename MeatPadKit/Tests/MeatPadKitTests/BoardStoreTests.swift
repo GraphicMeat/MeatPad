@@ -445,6 +445,38 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(counts.values.filter { $0 == 2 }.count, 1)
     }
 
+    func testCreateLabelHonoursAPickedColor() throws {
+        let store = try makeStore()
+        let picked = CardLabel.palette[7]
+        XCTAssertEqual(try store.createLabel(name: "Picked", color: picked).color, picked)
+        XCTAssertEqual(try makeStore().labels.map(\.color), [picked])
+    }
+
+    /// The form opens on this swatch, so it has to be the colour the store would have
+    /// assigned itself — creating without touching the swatches must not change behaviour.
+    func testSuggestedColorIsWhatAnUncolouredCreateWouldUse() throws {
+        let store = try makeStore()
+        _ = try store.createLabel(name: "First")
+        let suggested = store.suggestedLabelColor
+        XCTAssertEqual(try store.createLabel(name: "Second").color, suggested)
+    }
+
+    // MARK: - board colours
+
+    func testEachBoardGetsItsOwnColor() throws {
+        let store = try makeStore()
+        let ids = try (0..<4).map { try store.createBoard(name: "b\($0)").id }
+        let colors = ids.map { store.color(forBoard: $0) }
+        XCTAssertEqual(Set(colors).count, ids.count)
+        XCTAssertTrue(colors.allSatisfy { CardLabel.palette.contains($0) })
+    }
+
+    func testBoardColorIsStableAcrossReload() throws {
+        let store = try makeStore()
+        let id = try store.createBoard(name: "Only").id
+        XCTAssertEqual(try makeStore().color(forBoard: id), store.color(forBoard: id))
+    }
+
     func testRenameAndRecolorLabelPersist() throws {
         let store = try makeStore()
         let label = try store.createLabel(name: "Bug")

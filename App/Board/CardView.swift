@@ -8,8 +8,10 @@ struct CardView: View {
     @ObservedObject var store: BoardStore
     let boardID: UUID
     let card: Card
-    /// Board name badge, shown only in the All Boards overview.
-    var boardBadge: String?
+    /// Board name badge, shown only in the All Boards overview. Carries the board's own
+    /// colour with it — in a view that stacks four boards into one column, the badge is the
+    /// only thing saying which board a card came from, and four grey badges say it slowly.
+    var boardBadge: (name: String, color: RGBAColor)?
     let isDone: Bool
     let isSelected: Bool
 
@@ -25,6 +27,9 @@ struct CardView: View {
     @State private var summarizable = false
     @State private var newLabelShown = false
     @State private var labelDraft = ""
+    /// The swatch the new-label form is on. Seeded from the store's own next pick, so
+    /// creating without touching a swatch gives exactly what the store would have chosen.
+    @State private var labelColor = CardLabel.palette[0]
     @FocusState private var notesFocused: Bool
     @Environment(\.openWindow) private var openWindow
 
@@ -51,6 +56,10 @@ struct CardView: View {
                 .help(String(localized: "Card Actions"))
                 .accessibilityIdentifier("card.actions")
             }
+            // Anchored to the header row so it points at the ⋯ it came from. A form, not an
+            // alert: an alert can hold a text field and nothing else, and a label without a
+            // colour to pick is half a label.
+            .popover(isPresented: $newLabelShown, arrowEdge: .bottom) { newLabelForm }
 
             dueRow
 
@@ -61,12 +70,16 @@ struct CardView: View {
                     if card.noteID != nil { linkChip }
                     Spacer(minLength: 0)
                     if let boardBadge {
-                        Text(boardBadge)
+                        // Tinted like a label chip, down to the opacities: the text stays
+                        // primary because a caption2 painted in the palette colour is the
+                        // first thing to go unreadable in light appearance.
+                        Text(boardBadge.name)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Capsule().fill(.quaternary))
+                            .background(Capsule().fill(Color(boardBadge.color).opacity(0.3)))
+                            .overlay(Capsule().strokeBorder(Color(boardBadge.color).opacity(0.75)))
+                            .accessibilityIdentifier("card.boardBadge")
                     }
                 }
             }
@@ -88,11 +101,6 @@ struct CardView: View {
                 .shadow(color: .black.opacity(isSelected ? 0.28 : 0.16), radius: isSelected ? 7 : 3, y: 2)
         }
         .contextMenu { cardMenu }
-        .alert("New Label", isPresented: $newLabelShown) {
-            TextField("Name", text: $labelDraft)
-            Button("Create") { createLabel() }
-            Button("Cancel", role: .cancel) {}
-        }
         // Calendar's own shape for "pick an exact time": a popover, not a field wedged into
         // the card — the card face carries the date, never the picker.
         .popover(isPresented: $editingDue) {
@@ -130,7 +138,11 @@ struct CardView: View {
                 Toggle(label.name, isOn: labelBinding(label.id))
             }
             if !store.labels.isEmpty { Divider() }
-            Button("New Label…") { labelDraft = ""; newLabelShown = true }
+            Button("New Label…") {
+                labelDraft = ""
+                labelColor = store.suggestedLabelColor
+                newLabelShown = true
+            }
         }
         Button(expanded ? "Hide Notes" : "Show Notes") { expanded.toggle() }
         if summarizable {
@@ -186,11 +198,54 @@ struct CardView: View {
         )
     }
 
+    /// Name plus a swatch, in the palette the store draws from anyway. No custom colour
+    /// well here — the filter row already carries a full ColorPicker per label, and this
+    /// form exists to get a label made in one gesture.
+    private var newLabelForm: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Name", text: $labelDraft)
+                .ringlessField()
+                .onSubmit { createLabel() }
+                .accessibilityIdentifier("newLabel.name")
+
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(20), spacing: 6), count: 6), spacing: 6) {
+                ForEach(Array(CardLabel.palette.enumerated()), id: \.offset) { index, color in
+                    swatch(color, index: index)
+                }
+            }
+
+            HStack {
+                Spacer(minLength: 0)
+                Button("Create") { createLabel() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(labelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("newLabel.create")
+            }
+        }
+        .padding(12)
+        .frame(width: 212)
+    }
+
+    private func swatch(_ color: RGBAColor, index: Int) -> some View {
+        Circle()
+            .fill(Color(color))
+            .frame(width: 20, height: 20)
+            .overlay {
+                Circle().strokeBorder(.primary.opacity(labelColor == color ? 0.9 : 0), lineWidth: 2)
+                    .padding(-2)
+            }
+            .contentShape(Circle())
+            .onTapGesture { labelColor = color }
+            .accessibilityIdentifier("newLabel.swatch.\(index)")
+            .accessibilityAddTraits(labelColor == color ? [.isSelected] : [])
+    }
+
     /// Creating from a card assigns it there and then — nobody opens this to make a label
     /// they don't want on the card in front of them.
     private func createLabel() {
-        guard let label = try? store.createLabel(name: labelDraft) else { return }
+        guard let label = try? store.createLabel(name: labelDraft, color: labelColor) else { return }
         labelBinding(label.id).wrappedValue = true
+        newLabelShown = false
     }
 
     // MARK: - Due date
