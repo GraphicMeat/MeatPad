@@ -79,6 +79,10 @@ private struct TabItem: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .font(.system(size: 12, weight: isSelected ? .medium : .regular))
+                // On the label, not the tab: an identifier on the row would clobber the
+                // close button's. Filenames also show in the file tree, so UI tests need
+                // something that says *tab* specifically (`OpenWithUITests`).
+                .accessibilityIdentifier("tab-\(url.lastPathComponent)")
         }
         .padding(.horizontal, 10)
         .frame(maxWidth: 180)
