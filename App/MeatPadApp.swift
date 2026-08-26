@@ -712,7 +712,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// project.yml). One multi-selection arrives as one call, so the whole list goes to
     /// `AppModel.open(_:)` in one go rather than a URL at a time.
     func application(_ sender: NSApplication, open urls: [URL]) {
-        AppModel.shared.open(urls)
+        // Hopped off this callback deliberately. Finder's open activates the app, and
+        // AppKit rebuilds the SwiftUI menu bar in the same pass — opening a project from
+        // inside it mutates observable state (recents, windows) mid-update and trips
+        // AttributeGraph's precondition, aborting the app (seen in OpenWithUITests).
+        DispatchQueue.main.async { AppModel.shared.open(urls) }
     }
 
     /// Dock icon click with no visible windows: General settings picks what opens —

@@ -87,6 +87,10 @@ targets:
             CFBundleTypeRole: Editor
             LSHandlerRank: Alternate
             LSItemContentTypes:
+              # A folder is a type like any other: without this claim Launch Services
+              # refuses to hand one over at all (kLSAppDoesNotClaimTypeErr), so Open With
+              # never lists MeatPad for a folder and dropping one on the icon does nothing.
+              - public.folder
               - public.text
               - public.plain-text
               - public.source-code

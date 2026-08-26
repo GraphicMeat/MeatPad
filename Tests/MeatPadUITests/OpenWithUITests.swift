@@ -135,7 +135,12 @@ final class OpenWithUITests: XCTestCase {
         XCTAssertTrue(tab("beta.md").waitForExistence(timeout: 20), "beta.md never opened as a tab")
 
         XCTAssertTrue(tab("alpha.md").exists, "opening the second file closed the first one's tab")
-        XCTAssertEqual(app.windows.count, 1, "the second file opened a second window instead of a tab")
+        // Counted by title (the project window is titled after its root folder) — plain
+        // `app.windows.count` also counts the scene windows SwiftUI keeps around unshown.
+        XCTAssertEqual(
+            app.windows.matching(identifier: "Docs").count, 1,
+            "the second file opened a second window instead of a tab"
+        )
     }
 
     /// Dropping a folder on the app is the other half of the same call. It opens as the
