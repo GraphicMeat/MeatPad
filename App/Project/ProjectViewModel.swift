@@ -139,17 +139,22 @@ final class ProjectViewModel: ObservableObject {
             tabs = restoredTabs
             let savedSelection = session.selectedTab.map { URL(fileURLWithPath: $0) }
             selectedTab = (savedSelection.flatMap { restoredTabs.contains($0) ? $0 : nil }) ?? restoredTabs.first
-        } else if let pending = AppModel.shared.pendingFileOpen,
-           // Task 6 leftover: Cmd+O on a file opens its parent as a project and
-           // pre-opens the file as a tab. AppModel stashes the file; consume it if it
-           // lives under this root.
-           pending.deletingLastPathComponent().standardizedFileURL == root.standardizedFileURL {
-            tabs = [pending]
-            selectedTab = pending
-            AppModel.shared.pendingFileOpen = nil
-            if let range = AppModel.shared.pendingFileOpenReveal {
-                revealTarget = RevealTarget(token: UUID(), range: range)
-                AppModel.shared.pendingFileOpenReveal = nil
+        } else {
+            // Task 6 leftover: Cmd+O on a file — and Finder's double-click / Open With —
+            // opens its parent as a project and pre-opens the file as a tab. AppModel
+            // stashes the files; consume the ones living under this root (Finder can hand
+            // over a whole multi-selection at once).
+            let pending = AppModel.shared.pendingFileOpens.filter {
+                $0.deletingLastPathComponent().standardizedFileURL == root.standardizedFileURL
+            }
+            if !pending.isEmpty {
+                AppModel.shared.pendingFileOpens.removeAll(where: pending.contains)
+                tabs = pending
+                selectedTab = pending.first
+                if let range = AppModel.shared.pendingFileOpenReveal {
+                    revealTarget = RevealTarget(token: UUID(), range: range)
+                    AppModel.shared.pendingFileOpenReveal = nil
+                }
             }
         }
         // Restored/pre-opened tabs above bypass `open(file:)` (they assign `tabs`
@@ -291,7 +296,7 @@ final class ProjectViewModel: ObservableObject {
             NSWorkspace.shared.activateFileViewerSelecting([url])
             return
         }
-        AppModel.shared.pendingFileOpen = url
+        AppModel.shared.pendingFileOpens.append(url)
         AppModel.shared.pendingFileOpenReveal = LSPPositionBridge.nsRange(of: range, in: vm.text)
         AppModel.shared.openWindowAction?(value: url.deletingLastPathComponent())
     }

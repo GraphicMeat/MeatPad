@@ -62,11 +62,16 @@ final class AppModel: ObservableObject {
     /// SwiftUI environment is otherwise reachable.
     var openWindowAction: OpenWindowAction?
 
-    /// Set just before opening a project window when the user picked a *file* (Cmd+O):
-    /// the parent opens as the project and the new `ProjectViewModel` consumes this to
-    /// pre-open the file as a tab. Plain var (consumed once, imperatively).
-    var pendingFileOpen: URL?
-    /// Optional one-shot scroll target for `pendingFileOpen`, in the *target file's* own
+    /// Stashed just before opening a project window when the user picked *files* rather
+    /// than a folder (Cmd+O, or Finder's double-click / Open With): the parent folder
+    /// opens as the project and the new `ProjectViewModel` consumes the entries sitting
+    /// under its own root as tabs. A list, not one URL, because Finder hands over a whole
+    /// multi-selection in a single `application(_:open:)` call — and `open(_:)` stashes
+    /// all of them before opening the first window, since `ProjectViewModel.init` can run
+    /// synchronously inside that call and would miss anything stashed after it.
+    /// Plain var (consumed once, imperatively).
+    var pendingFileOpens: [URL] = []
+    /// Optional one-shot scroll target for `pendingFileOpens`, in the *target file's* own
     /// UTF-16 coordinates — set alongside it by Go to Definition (0.7 LSP plan Task 4) when
     /// the definition lives outside the current project root, so the new window's
     /// `ProjectViewModel` can jump straight to the line instead of just opening the file.
@@ -80,7 +85,7 @@ final class AppModel: ObservableObject {
 
     /// Saved tabs/selection for a project window about to be reopened by session
     /// restore, keyed by standardized root URL. `ProjectViewModel.init` consumes (and
-    /// removes) its own entry, same one-shot pattern as `pendingFileOpen`.
+    /// removes) its own entry, same one-shot pattern as `pendingFileOpens`.
     var pendingProjectSessions: [URL: ProjectSession] = [:]
 
     /// Set by `PrivacySettingsView.confirmDeleteAll()` immediately before recycling the
@@ -202,10 +207,8 @@ final class AppModel: ObservableObject {
 
     // MARK: - Open project
 
-    /// File ▸ Open… (and the Dock menu). Directory → open as a project. File → open the
-    /// file's parent folder as the project and pre-open the file as a tab (via
-    /// `pendingFileOpen`, consumed by the new `ProjectViewModel`). Shared by the File menu
-    /// and the Dock menu so both take the identical path.
+    /// File ▸ Open… (and the Dock menu). Hands the selection to `open(_:)` so the panel,
+    /// the Dock menu and Finder all take the identical path.
     func openProjectPanel() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -213,13 +216,50 @@ final class AppModel: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            if url.hasDirectoryPath {
-                self.openProject(url)
+            self.open([url])
+        }
+    }
+
+    /// The single "open these" entry point: File ▸ Open…, the Dock menu, and Finder
+    /// (double-click, drag onto the icon, Open With — see `AppDelegate.application(_:open:)`).
+    ///
+    /// A directory opens as a project. A file opens its parent folder as the project with
+    /// the file pre-opened as a tab — unless an already-open project window contains it,
+    /// which takes the tab straight there: `openWindow(value:)` only re-focuses a window
+    /// that already exists for that value, so its `ProjectViewModel.init` never runs again
+    /// and a stashed `pendingFileOpens` entry would sit there unconsumed (the file would
+    /// silently not open). Every file is stashed before the first `openProject` call for
+    /// the same reason in reverse — see `pendingFileOpens`.
+    func open(_ urls: [URL]) {
+        var folders: [URL] = []
+        for url in urls {
+            // Asked of the filesystem, not `hasDirectoryPath` (which only looks for a
+            // trailing slash): the URLs Finder sends over don't always carry one, and a
+            // folder mistaken for a file would open its *parent* with the folder as a tab.
+            let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            if isDirectory {
+                folders.append(url)
+            } else if let viewModel = projectViewModel(containing: url) {
+                viewModel.open(file: url)
+                viewModel.window?.makeKeyAndOrderFront(nil)
             } else {
-                self.pendingFileOpen = url
-                self.openProject(url.deletingLastPathComponent())
+                pendingFileOpens.append(url)
+                folders.append(url.deletingLastPathComponent())
             }
         }
+        var opened: Set<URL> = []
+        for folder in folders where opened.insert(folder.standardizedFileURL).inserted {
+            openProject(folder)
+        }
+    }
+
+    /// The open project window whose root contains `url`, deepest root first when several
+    /// nest (a sub-folder opened as its own project wins over its parent repo).
+    private func projectViewModel(containing url: URL) -> ProjectViewModel? {
+        let path = url.standardizedFileURL.path
+        return projectViewModels.values
+            .filter { path.hasPrefix($0.root.standardizedFileURL.path + "/") }
+            .max { $0.root.standardizedFileURL.path.count < $1.root.standardizedFileURL.path.count }
     }
 
     func openProject(_ url: URL) {

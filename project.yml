@@ -75,6 +75,28 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: MeatPad
+        # Finder's Open With menu (and double-click / drag-onto-the-icon), routed by
+        # AppDelegate.application(_:open:). `Alternate` offers MeatPad for these types
+        # without claiming anyone's default handler — Xcode stays the default for .swift,
+        # TextEdit for .txt. `public.data` is the one that matters for a text editor:
+        # extension-less and unknown-extension files (Makefile, LICENSE, .env, .conf)
+        # resolve to it or to a dynamic type conforming to it, and nothing else would
+        # put MeatPad in their menu.
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Text Document
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.text
+              - public.plain-text
+              - public.source-code
+              - public.script
+              - public.shell-script
+              - public.xml
+              - public.json
+              - public.comma-separated-values-text
+              - net.daringfireball.markdown
+              - public.data
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "14.0"

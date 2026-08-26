@@ -707,6 +707,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppModel.shared.saveSessionNow()
     }
 
+    /// Finder hands files over here: double-click, drag onto the app icon, and Open With
+    /// (which MeatPad appears in because of `CFBundleDocumentTypes` in Info.plist — see
+    /// project.yml). One multi-selection arrives as one call, so the whole list goes to
+    /// `AppModel.open(_:)` in one go rather than a URL at a time.
+    func application(_ sender: NSApplication, open urls: [URL]) {
+        AppModel.shared.open(urls)
+    }
+
     /// Dock icon click with no visible windows: General settings picks what opens —
     /// the All Notes browser (default) or a fresh note. Returning false suppresses
     /// SwiftUI's default reopen (a blank parameterized WindowGroup window).
