@@ -87,6 +87,22 @@ final class BoardCardFaceUITests: XCTestCase {
         XCTAssertEqual(try storedTitle(), "Alpha")
     }
 
+    func testASeededAttachmentIsShownOnTheFaceAndRemovableInTheEditor() throws {
+        XCTAssertTrue(app.descendants(matching: .any)["card.attachment"].firstMatch.waitForExistence(timeout: 5),
+                      "the face shows no thumbnail for a seeded attachment")
+        app.buttons["card.actions"].firstMatch.click()
+        let thumb = app.descendants(matching: .any)["cardEditor.attachment"].firstMatch
+        XCTAssertTrue(thumb.waitForExistence(timeout: 5))
+        thumb.hover()
+        let remove = app.buttons["cardEditor.attachment.remove"].firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        remove.click()
+        XCTAssertTrue(poll { (try? self.storedCard()["attachments"] as? [String]) == nil },
+                      "the card kept its attachment name")
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: storageRoot.appendingPathComponent("Boards/Attachments/\(cardID.uuidString)/seed.png").path))
+    }
+
     // MARK: - Reading the store
 
     private func boardJSON() throws -> [String: Any] {
@@ -124,8 +140,19 @@ final class BoardCardFaceUITests: XCTestCase {
             "cards": [[
                 "id": cardID.uuidString, "title": "Alpha", "body": "first line\nsecond line",
                 "columnID": columnID.uuidString, "created": stamp, "modified": stamp,
+                "attachments": ["seed.png"],
             ]],
         ]
         try JSONSerialization.data(withJSONObject: board).write(to: boards.appendingPathComponent("\(boardID.uuidString).json"))
+
+        // The file has to exist too: a name on the record with nothing behind it draws an
+        // empty tile, which would let the face test pass on a thumbnail that never decoded.
+        let attachments = boards.appendingPathComponent("Attachments/\(cardID.uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: attachments, withIntermediateDirectories: true)
+        try Self.onePixelPNG.write(to: attachments.appendingPathComponent("seed.png"))
     }
+
+    /// A 1×1 red PNG — the smallest thing `CGImageSource` will make a thumbnail out of.
+    private static let onePixelPNG = Data(base64Encoded:
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==")!
 }

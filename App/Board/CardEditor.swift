@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import MeatPadKit
 
 /// Due dates a card can be given without opening a picker. Lives outside the views because
@@ -79,6 +80,20 @@ struct CardEditor: View {
 
             section { notesRow }
 
+            section {
+                if let names = card.attachments, !names.isEmpty {
+                    AttachmentStrip(
+                        urls: names.map { store.attachmentURL(cardID: card.id, name: $0) },
+                        identifier: "cardEditor.attachment",
+                        onRemove: { index in try? store.removeAttachment(boardID: boardID, cardID: card.id, name: names[index]) }
+                    )
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 9)
+                    HairlineDivider()
+                }
+                addImageRow
+            }
+
             if card.noteID != nil || summarizable {
                 section {
                     if card.noteID != nil {
@@ -113,6 +128,15 @@ struct CardEditor: View {
         // A popover can go away without warning (click outside, Escape); the debounced text
         // has to land before the view does.
         .onDisappear { flush(commitEdits: true) }
+        // The whole editor takes images, not just the strip: the strip is empty until the
+        // card has one, and an empty 0pt target is not a drop target at all.
+        .dropDestination(for: CardDrop.self) { drops, _ in
+            var handled = false
+            for case .image(let data, let ext) in drops {
+                handled = ((try? store.addAttachment(boardID: boardID, cardID: card.id, data: data, ext: ext)) != nil) || handled
+            }
+            return handled
+        }
     }
 
     // MARK: - Sections
@@ -374,6 +398,37 @@ struct CardEditor: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 9)
             .accessibilityIdentifier("cardEditor.notes")
+    }
+
+    // MARK: - Images
+
+    /// NSOpenPanel is app-modal, so the popover survives it; if AppKit ever closes the
+    /// popover under the panel, the images still land — the action captured the ids.
+    private var addImageRow: some View {
+        Button {
+            let panel = NSOpenPanel()
+            panel.allowedContentTypes = [.image]
+            panel.allowsMultipleSelection = true
+            panel.prompt = String(localized: "Attach")
+            guard panel.runModal() == .OK else { return }
+            for url in panel.urls {
+                guard let data = try? Data(contentsOf: url),
+                      let ext = UTType(filenameExtension: url.pathExtension)?.preferredFilenameExtension else { continue }
+                _ = try? store.addAttachment(boardID: boardID, cardID: card.id, data: data, ext: ext)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "photo").foregroundStyle(.secondary)
+                Text("Add Image…")
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .font(.callout)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .accessibilityIdentifier("cardEditor.addImage")
     }
 
     // MARK: - Linked note and summary

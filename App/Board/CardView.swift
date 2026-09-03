@@ -49,7 +49,14 @@ struct CardView: View {
             if hasLabels { HairlineDivider(); labelChips }
             if card.due != nil { HairlineDivider(); dueRow }
             if card.noteID != nil || boardBadge != nil { HairlineDivider(); linkRow }
-            // MARK: - Images (Task 5 adds the attachment row here)
+            // Not in `.compact`: that density exists to fit a column on screen, and a row of
+            // 44pt tiles is the tallest thing a card can carry.
+            if display != .compact, let names = card.attachments, !names.isEmpty {
+                HairlineDivider()
+                AttachmentStrip(urls: names.map { store.attachmentURL(cardID: card.id, name: $0) },
+                                size: 44, limit: 4, identifier: "card.attachment")
+                    .padding(.vertical, 7)
+            }
             HairlineDivider()
             notesSection
         }

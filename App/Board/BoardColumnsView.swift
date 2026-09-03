@@ -310,8 +310,15 @@ struct BoardColumnsView: View {
         }
         .animation(.snappy(duration: 0.18), value: dropTarget)
         // Column-level drop appends; the per-card drop inserts above the card it lands on.
-        .dropDestination(for: String.self) { ids, _ in
+        // Cards only: the column has no card to hang an image on, so a `.image` payload that
+        // lands on bare column space is refused rather than silently attached somewhere.
+        .dropDestination(for: CardDrop.self) { drops, _ in
             defer { dropTarget = nil }
+            let ids: [String] = drops.compactMap { drop in
+                if case .card(let id) = drop { return id.uuidString }
+                return nil
+            }
+            guard !ids.isEmpty else { return false }
             return move(ids, to: column.id, visible: items, at: items.count)
         } isTargeted: { targeted in
             if targeted {
@@ -414,11 +421,22 @@ struct BoardColumnsView: View {
                 .padding(.vertical, 6)
                 .background(Capsule().fill(.thinMaterial))
         }
-        // Only real columns accept drops — "Other" has no single target column to move into.
-        .dropDestination(for: String.self) { ids, _ in
-            guard let column else { return false }
+        // One destination, two payloads: a card id reorders, an image attaches to the card
+        // it was dropped on. Only real columns can take a reorder — "Other" has no single
+        // target column to move into — but an image lands on any card, that one included.
+        .dropDestination(for: CardDrop.self) { drops, _ in
             defer { dropTarget = nil }
-            return move(ids, to: column.id, visible: visible, at: index)
+            var handled = false
+            for drop in drops {
+                switch drop {
+                case .card(let id):
+                    guard let column else { continue }
+                    handled = move([id.uuidString], to: column.id, visible: visible, at: index) || handled
+                case .image(let data, let ext):
+                    handled = ((try? store.addAttachment(boardID: ref.board.id, cardID: ref.card.id, data: data, ext: ext)) != nil) || handled
+                }
+            }
+            return handled
         } isTargeted: { targeted in
             guard let column else { return }
             if targeted {
