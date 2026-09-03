@@ -58,14 +58,12 @@ struct LabelFilterField: View {
         .onChange(of: store.labels) { _, labels in
             selected.formIntersection(labels.map(\.id))
         }
-        // Alerts hang off the row, not off the popover: a sheet raised from inside a popover
+        // Hangs off the row, not off the popover: a sheet raised from inside a popover
         // dismisses the popover out from under itself.
-        .alert("Rename Label", isPresented: renamePresented) {
-            TextField("Name", text: $nameDraft)
-            Button("Rename") {
+        .sheet(isPresented: renamePresented) {
+            NamePromptSheet(title: "Rename Label", action: "Rename", name: $nameDraft) {
                 if let target = renameTarget { try? store.renameLabel(id: target.id, to: nameDraft) }
             }
-            Button("Cancel", role: .cancel) {}
         }
         .confirmationDialog(deleteTitle, isPresented: deletePresented, titleVisibility: .visible) {
             Button("Delete Label", role: .destructive) {

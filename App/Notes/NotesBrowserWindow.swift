@@ -178,24 +178,21 @@ struct NotesBrowserWindow: View {
             hasSelection: !selection.isEmpty,
             isTrash: folderSelection == .trash
         ))
-        .alert("New Folder", isPresented: $newFolderShown) {
-            TextField("Name", text: $folderNameDraft)
-            Button("Create") { runFolderOp { try noteStore.createFolder(folderNameDraft) } }
-            Button("Cancel", role: .cancel) {}
+        .sheet(isPresented: $newFolderShown) {
+            NamePromptSheet(title: "New Folder", action: "Create", name: $folderNameDraft) {
+                runFolderOp { try noteStore.createFolder(folderNameDraft) }
+            }
         }
-        .alert("New Board", isPresented: $newBoardShown) {
-            TextField("Name", text: $boardNameDraft)
-            Button("Create") {
+        .sheet(isPresented: $newBoardShown) {
+            NamePromptSheet(title: "New Board", action: "Create", name: $boardNameDraft) {
                 runFolderOp {
                     let board = try boardStore.createBoard(name: boardNameDraft)
                     folderSelection = .board(board.id)
                 }
             }
-            Button("Cancel", role: .cancel) {}
         }
-        .alert("Rename Folder", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
-            TextField("Name", text: $folderNameDraft)
-            Button("Rename") {
+        .sheet(isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
+            NamePromptSheet(title: "Rename Folder", action: "Rename", name: $folderNameDraft) {
                 if let old = renameTarget {
                     let new = folderNameDraft
                     runFolderOp {
@@ -204,17 +201,14 @@ struct NotesBrowserWindow: View {
                     }
                 }
             }
-            Button("Cancel", role: .cancel) {}
         }
-        .alert("Rename Board", isPresented: boardRenamePresented) {
-            TextField("Name", text: $boardNameDraft)
-            Button("Rename") {
+        .sheet(isPresented: boardRenamePresented) {
+            NamePromptSheet(title: "Rename Board", action: "Rename", name: $boardNameDraft) {
                 if let id = boardRenameTarget {
                     let name = boardNameDraft
                     runFolderOp { try boardStore.renameBoard(id: id, to: name) }
                 }
             }
-            Button("Cancel", role: .cancel) {}
         }
         .confirmationDialog(
             boardDeleteTitle,
@@ -298,7 +292,7 @@ struct NotesBrowserWindow: View {
                         Button("Delete…", role: .destructive) { boardDeleteTarget = board.id }
                     }
             }
-            actionRow(title: String(localized: "New Board"), icon: "plus.rectangle.on.folder") {
+            actionRow(title: String(localized: "New Board"), icon: "plus.rectangle.on.folder", identifier: "sidebar.newBoard") {
                 boardNameDraft = ""
                 newBoardShown = true
             }
@@ -317,7 +311,7 @@ struct NotesBrowserWindow: View {
     }
 
     /// Sidebar row that performs an action instead of selecting something.
-    private func actionRow(title: String, icon: String, action: @escaping () -> Void) -> some View {
+    private func actionRow(title: String, icon: String, identifier: String? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack {
                 Label {
@@ -331,6 +325,7 @@ struct NotesBrowserWindow: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
+        .accessibilityIdentifier(identifier ?? "")
     }
 
     /// Sidebar counts answer the question the board is currently asking: with a label filter

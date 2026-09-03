@@ -125,25 +125,21 @@ struct BoardColumnsView: View {
             guard let undoManager, note.object as? UndoManager === undoManager else { return }
             canUndo = undoManager.canUndo
         }
-        .alert("Rename Column", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
-            TextField("Name", text: $nameDraft)
-            Button("Rename") {
+        .sheet(isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
+            NamePromptSheet(title: "Rename Column", action: "Rename", name: $nameDraft) {
                 if let target = renameTarget {
                     try? store.renameColumn(id: target.id, to: nameDraft, boardID: target.boardID)
                 }
             }
-            Button("Cancel", role: .cancel) {}
         }
-        .alert(addColumnTitle, isPresented: Binding(get: { addColumnTarget != nil }, set: { if !$0 { addColumnTarget = nil } })) {
-            TextField("Name", text: $nameDraft)
-            Button("Add") {
+        .sheet(isPresented: Binding(get: { addColumnTarget != nil }, set: { if !$0 { addColumnTarget = nil } })) {
+            NamePromptSheet(title: addColumnTitle, action: "Add", name: $nameDraft) {
                 switch addColumnTarget {
                 case .global: try? store.addGlobalColumn(name: nameDraft)
                 case .board(let id): try? store.addExtraColumn(boardID: id, name: nameDraft)
                 case nil: break
                 }
             }
-            Button("Cancel", role: .cancel) {}
         }
         .confirmationDialog(
             "Delete “\(deleteTarget?.name ?? "")”?",
@@ -193,9 +189,9 @@ struct BoardColumnsView: View {
         .accessibilityIdentifier("board.cardDisplay")
     }
 
-    private var addColumnTitle: String {
-        if case .board = addColumnTarget { return String(localized: "New Board Column") }
-        return String(localized: "New Column")
+    private var addColumnTitle: LocalizedStringKey {
+        if case .board = addColumnTarget { return "New Board Column" }
+        return "New Column"
     }
 
     /// nil `boardID` = a global column; otherwise the column belongs to this board alone.
