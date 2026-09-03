@@ -83,9 +83,20 @@ struct CardView: View {
         // Blur = commit. Whatever took focus away (a click elsewhere, Tab, the editor popover)
         // the field's text must land before the row turns back into Text.
         .onChange(of: focus) { old, new in
-            if old == .title, new != .title { commit() }
+            if old == .title, new != .title {
+                // A blank title is never stored, so put the card's own back — otherwise the
+                // idle row draws its grey placeholder over a card that still has a name.
+                if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { title = card.title }
+                commit()
+            }
             if old == .notes, new != .notes { bodyDebouncer.cancel(); commit() }
-            if new == nil { editing = nil }
+            // Only the row that lost focus goes back to Text. Clicking the other row sets
+            // `editing` in the same pass that drops this field — that click must survive.
+            if new == nil, editing == old { editing = nil }
+            // The caret is placed here rather than in the field's own onAppear: only once
+            // focus has landed is the field editor AppKit's first responder, which is what
+            // `moveCaretToEnd` reaches for.
+            if new != nil { moveCaretToEnd() }
         }
     }
 
@@ -104,7 +115,7 @@ struct CardView: View {
                     .lineLimit(display.titleLines)
                     .focused($focus, equals: .title)
                     .onSubmit { focus = nil }
-                    .onAppear { focus = .title; moveCaretToEnd() }
+                    .onAppear { focus = .title }
                     .accessibilityIdentifier("card.title")
             } else {
                 Text(title.isEmpty ? String(localized: "Title") : title)
@@ -114,7 +125,10 @@ struct CardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                     .onTapGesture { editing = .title }
+                    // A tap gesture is invisible to VoiceOver, and a Button here would take
+                    // the mouse-down back off `.draggable` — trait plus action, not a Button.
                     .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { editing = .title }
                     .accessibilityIdentifier("card.title")
             }
             if summarizing {
@@ -355,7 +369,7 @@ struct CardView: View {
                     .lineLimit(1...)
                     .focused($focus, equals: .notes)
                     .newlineOnModifiedReturn()
-                    .onAppear { focus = .notes; moveCaretToEnd() }
+                    .onAppear { focus = .notes }
                     .onChange(of: body_) { _, _ in bodyDebouncer.call { commit() } }
                     .accessibilityIdentifier("card.notes")
             } else {
@@ -367,6 +381,7 @@ struct CardView: View {
                     .contentShape(Rectangle())
                     .onTapGesture { expanded = true; editing = .notes }
                     .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { expanded = true; editing = .notes }
                     .accessibilityIdentifier("card.notes")
             }
             Button {
@@ -470,10 +485,15 @@ struct CardView: View {
     }
 
     private func commit() {
+        // An empty title would be rejected by the store; keep the stored one instead.
+        let edited = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? card.title : title
+        let editedBody = body_.isEmpty ? nil : body_
+        // Every write through the store is an undo step, and a blur is not an edit: clicking
+        // into a row and back out again must not leave a ⌘Z that restores an identical card.
+        guard edited != card.title || editedBody != card.body else { return }
         update {
-            // An empty title would be rejected by the store; keep the stored one instead.
-            $0.title = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? card.title : title
-            $0.body = body_.isEmpty ? nil : body_
+            $0.title = edited
+            $0.body = editedBody
         }
         refreshSummarizable()
     }
