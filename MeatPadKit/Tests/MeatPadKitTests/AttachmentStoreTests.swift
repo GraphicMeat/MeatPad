@@ -49,4 +49,11 @@ final class AttachmentStoreTests: XCTestCase {
         try store.write(Data([9]), name: "fixed.png", to: owner)
         XCTAssertEqual(store.data("fixed.png", for: owner), Data([9]))
     }
+
+    func testNamesCannotEscapeTheOwnerDirectory() {
+        let store = AttachmentStore(rootURL: tempDir)
+        let owner = UUID()
+        let url = store.url("../../escape.png", for: owner)
+        XCTAssertEqual(url, tempDir.appendingPathComponent(owner.uuidString).appendingPathComponent("escape.png"))
+    }
 }

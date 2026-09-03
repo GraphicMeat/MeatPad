@@ -197,7 +197,10 @@ public final class BoardStore: ObservableObject {
         }
         boards[idx].cards.remove(at: cardIdx)
         try persist(at: idx)
-        try attachments.removeAll(for: cardID)
+        // Best-effort: the card is already gone from the board, and a failed cleanup here
+        // (permissions, a Quick Look handle on one of the files, an external volume) must not
+        // cost the undo step below — the files snapshotted above are what makes it whole again.
+        try? attachments.removeAll(for: cardID)
         registerUndo { $0.restore(card, boardID: boardID, at: cardIdx, files: files) }
     }
 

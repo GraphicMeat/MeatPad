@@ -51,7 +51,10 @@ public struct AttachmentStore: Sendable {
     }
 
     public func url(_ name: String, for owner: UUID) -> URL {
-        directory(for: owner).appendingPathComponent(name)
+        // `name` can come from a hand-edited or corrupt sidecar; every other method routes
+        // through here, so pinning it to a bare filename is what keeps all of them inside
+        // the owner's own directory.
+        directory(for: owner).appendingPathComponent((name as NSString).lastPathComponent)
     }
 
     public func data(_ name: String, for owner: UUID) -> Data? {
