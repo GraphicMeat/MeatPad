@@ -625,4 +625,106 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertNil(reloaded.boards[0].cards[0].labelIDs)
         XCTAssertNil(reloaded.boards[0].cards[0].color)
     }
+
+    // MARK: - undo
+
+    /// Each mutation is its own group whatever the run loop is doing, so a unit test (no
+    /// event loop) sees the same one-step-per-edit granularity the app does.
+    private func undoable(_ store: BoardStore) -> UndoManager {
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        store.undoManager = undo
+        return undo
+    }
+
+    func testUpdateCardUndoRestoresThePreviousCardAndRedoReapplies() throws {
+        let store = try makeStore()
+        let undo = undoable(store)
+        let board = try store.createBoard(name: "b")
+        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "before")
+        card.title = "after"
+        card.body = "notes"
+        try store.updateCard(boardID: board.id, card: card)
+
+        XCTAssertTrue(undo.canUndo)
+        undo.undo()
+        XCTAssertEqual(store.boards[0].cards[0].title, "before")
+        XCTAssertNil(store.boards[0].cards[0].body)
+
+        XCTAssertTrue(undo.canRedo)
+        undo.redo()
+        XCTAssertEqual(store.boards[0].cards[0].title, "after")
+        XCTAssertEqual(store.boards[0].cards[0].body, "notes")
+    }
+
+    func testDeleteCardUndoPutsItBackAtTheSamePosition() throws {
+        let store = try makeStore()
+        let undo = undoable(store)
+        let board = try store.createBoard(name: "b")
+        let column = store.globalColumns[0].id
+        for title in ["a", "b", "c"] { _ = try store.addCard(boardID: board.id, columnID: column, title: title) }
+        let middle = store.boards[0].cards[1]
+
+        try store.deleteCard(boardID: board.id, cardID: middle.id)
+        XCTAssertEqual(store.boards[0].cards.map(\.title), ["a", "c"])
+
+        undo.undo()
+        XCTAssertEqual(store.boards[0].cards.map(\.title), ["a", "b", "c"])
+        XCTAssertEqual(store.boards[0].cards[1].id, middle.id)
+
+        undo.redo()
+        XCTAssertEqual(store.boards[0].cards.map(\.title), ["a", "c"])
+    }
+
+    func testMoveCardUndoReturnsItToItsColumnAndPosition() throws {
+        let store = try makeStore()
+        let undo = undoable(store)
+        let board = try store.createBoard(name: "b")
+        let todo = store.globalColumns[0].id
+        let doing = store.globalColumns[1].id
+        for title in ["a", "b", "c"] { _ = try store.addCard(boardID: board.id, columnID: todo, title: title) }
+        let b = store.boards[0].cards[1]
+
+        try store.moveCard(id: b.id, boardID: board.id, toColumn: doing, index: 0)
+        XCTAssertEqual(store.cards(in: store.boards[0], column: doing).map(\.title), ["b"])
+
+        undo.undo()
+        XCTAssertEqual(store.cards(in: store.boards[0], column: todo).map(\.title), ["a", "b", "c"])
+        XCTAssertTrue(store.cards(in: store.boards[0], column: doing).isEmpty)
+    }
+
+    func testAddCardUndoRemovesIt() throws {
+        let store = try makeStore()
+        let undo = undoable(store)
+        let board = try store.createBoard(name: "b")
+        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "x")
+
+        undo.undo()
+        XCTAssertFalse(store.boards[0].cards.contains { $0.id == card.id })
+
+        undo.redo()
+        XCTAssertEqual(store.boards[0].cards.map(\.title), ["x"])
+    }
+
+    func testUndoIsPersistedToDisk() throws {
+        let store = try makeStore()
+        let undo = undoable(store)
+        let board = try store.createBoard(name: "b")
+        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "before")
+        card.title = "after"
+        try store.updateCard(boardID: board.id, card: card)
+        undo.undo()
+
+        XCTAssertEqual(try makeStore().boards[0].cards[0].title, "before")
+    }
+
+    func testNothingIsRegisteredWithoutAnUndoManager() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "b")
+        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "before")
+        card.title = "after"
+        try store.updateCard(boardID: board.id, card: card)
+        XCTAssertEqual(store.boards[0].cards[0].title, "after")
+        XCTAssertNil(store.undoManager)
+    }
 }

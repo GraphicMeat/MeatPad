@@ -40,6 +40,12 @@ public final class BoardStore: ObservableObject {
     /// Labels every board's cards can carry, in creation order.
     @Published public private(set) var labels: [CardLabel] = []
 
+    /// The window's undo manager, handed in by the board view. Weak because the window owns
+    /// it; nil (menu-bar popover, tests) means mutations simply aren't undoable. Every card
+    /// mutation below registers its inverse here, so ⌘Z, Edit ▸ Undo and the board's Undo
+    /// button all pull from one stack.
+    public weak var undoManager: UndoManager?
+
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -127,6 +133,17 @@ public final class BoardStore: ObservableObject {
 
     // MARK: - Cards
 
+    /// One mutation = one undo step, whatever the run loop is doing — an explicit group is
+    /// what keeps a unit test (no event loop) and the app (event-grouped) agreeing.
+    private func registerUndo(_ inverse: @escaping @MainActor (BoardStore) -> Void) {
+        guard let undoManager else { return }
+        undoManager.beginUndoGrouping()
+        undoManager.registerUndo(withTarget: self) { store in
+            MainActor.assumeIsolated { inverse(store) }
+        }
+        undoManager.endUndoGrouping()
+    }
+
     @discardableResult
     public func addCard(boardID: UUID, columnID: UUID, title: String, body: String? = nil) throws -> Card {
         let idx = try boardIndex(boardID)
@@ -136,6 +153,7 @@ public final class BoardStore: ObservableObject {
         let card = Card(title: try validated(title), body: body, columnID: columnID)
         boards[idx].cards.append(card)
         try persist(at: idx)
+        registerUndo { try? $0.deleteCard(boardID: boardID, cardID: card.id) }
         return card
     }
 
@@ -145,20 +163,32 @@ public final class BoardStore: ObservableObject {
         guard let cardIdx = boards[idx].cards.firstIndex(where: { $0.id == card.id }) else {
             throw BoardStoreError.cardNotFound(card.id)
         }
+        let previous = boards[idx].cards[cardIdx]
         var updated = card
         updated.title = try validated(card.title)
         updated.modified = Date()
         boards[idx].cards[cardIdx] = updated
         try persist(at: idx)
+        registerUndo { try? $0.updateCard(boardID: boardID, card: previous) }
     }
 
     public func deleteCard(boardID: UUID, cardID: UUID) throws {
         let idx = try boardIndex(boardID)
-        guard boards[idx].cards.contains(where: { $0.id == cardID }) else {
+        guard let cardIdx = boards[idx].cards.firstIndex(where: { $0.id == cardID }) else {
             throw BoardStoreError.cardNotFound(cardID)
         }
-        boards[idx].cards.removeAll { $0.id == cardID }
+        let card = boards[idx].cards.remove(at: cardIdx)
         try persist(at: idx)
+        registerUndo { $0.restore(card, boardID: boardID, at: cardIdx) }
+    }
+
+    /// The inverse of `deleteCard`: the card goes back where it was in the flat array, which
+    /// is also where it was in its column. Registers the delete as its own inverse.
+    private func restore(_ card: Card, boardID: UUID, at index: Int) {
+        guard let idx = try? boardIndex(boardID) else { return }
+        boards[idx].cards.insert(card, at: min(index, boards[idx].cards.count))
+        try? persist(at: idx)
+        registerUndo { try? $0.deleteCard(boardID: boardID, cardID: card.id) }
     }
 
     /// Moves a card to `index` within `toColumn` (clamped). The position is expressed in the
@@ -172,6 +202,9 @@ public final class BoardStore: ObservableObject {
             throw BoardStoreError.cardNotFound(id)
         }
         var card = boards[idx].cards.remove(at: cardIdx)
+        let fromColumn = card.columnID
+        // Column-local position before the move — what the inverse `moveCard` needs.
+        let fromIndex = boards[idx].cards[..<cardIdx].filter { $0.columnID == fromColumn }.count
         card.columnID = toColumn
 
         // Translate the column-local index into an index in the flat `cards` array.
@@ -180,6 +213,7 @@ public final class BoardStore: ObservableObject {
         let insertAt = clamped < siblings.count ? siblings[clamped].offset : boards[idx].cards.count
         boards[idx].cards.insert(card, at: insertAt)
         try persist(at: idx)
+        registerUndo { try? $0.moveCard(id: id, boardID: boardID, toColumn: fromColumn, index: fromIndex) }
     }
 
     // MARK: - Column editing
