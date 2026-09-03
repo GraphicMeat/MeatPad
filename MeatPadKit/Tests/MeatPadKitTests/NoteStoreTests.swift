@@ -571,4 +571,49 @@ final class NoteStoreTests: XCTestCase {
             XCTAssertEqual(error as? NoteStoreError, .notFound(ghost))
         }
     }
+
+    // MARK: - attachments
+
+    func testAddAttachmentWritesTheFileAndTheSidecar() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+        let name = try store.addAttachment(id: note.id, data: Data([1]), ext: "png")
+        XCTAssertEqual(store.notes[0].attachments, [name])
+        XCTAssertEqual(store.attachmentURL(id: note.id, name: name),
+                       tempDir.appendingPathComponent("Attachments/\(note.id.uuidString)/\(name)"))
+        XCTAssertEqual(try Data(contentsOf: store.attachmentURL(id: note.id, name: name)), Data([1]))
+        XCTAssertEqual(try makeStore().notes[0].attachments, [name])
+    }
+
+    func testRemoveAttachmentDeletesTheFile() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+        let name = try store.addAttachment(id: note.id, data: Data([1]), ext: "png")
+        try store.removeAttachment(id: note.id, name: name)
+        XCTAssertNil(store.notes[0].attachments)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.attachmentURL(id: note.id, name: name).path))
+    }
+
+    func testTrashAndRestoreKeepAttachmentsAndPermanentDeleteRemovesThem() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+        let name = try store.addAttachment(id: note.id, data: Data([1]), ext: "png")
+        let url = store.attachmentURL(id: note.id, name: name)
+
+        try store.trash(id: note.id)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        try store.restore(id: note.id)
+        XCTAssertEqual(store.notes[0].attachments, [name])
+
+        try store.trash(id: note.id)
+        try store.delete(id: note.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.deletingLastPathComponent().path))
+    }
+
+    func testAttachmentsDirectoryIsNotMistakenForANote() throws {
+        let store = try makeStore()
+        let note = try store.createNote()
+        _ = try store.addAttachment(id: note.id, data: Data([1]), ext: "png")
+        XCTAssertEqual(try makeStore().notes.count, 1)
+    }
 }

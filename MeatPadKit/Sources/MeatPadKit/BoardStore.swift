@@ -46,6 +46,10 @@ public final class BoardStore: ObservableObject {
     /// button all pull from one stack.
     public weak var undoManager: UndoManager?
 
+    /// Card image files, kept under `<root>/Attachments/<cardID>/…`. A board's own
+    /// sibling directory, never inside a board's json — see `AttachmentStore`.
+    private let attachments: AttachmentStore
+
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -72,6 +76,7 @@ public final class BoardStore: ObservableObject {
                 defaultColumnNames: (todo: String, inProgress: String, done: String) = ("Todo", "In Progress", "Done")) throws {
         self.rootURL = rootURL
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        attachments = AttachmentStore(rootURL: rootURL.appendingPathComponent("Attachments", isDirectory: true))
 
         let index = Self.loadIndex(from: rootURL.appendingPathComponent("boards.json"))
         globalColumns = index?.globalColumns ?? [
@@ -110,7 +115,8 @@ public final class BoardStore: ObservableObject {
     }
 
     public func deleteBoard(id: UUID) throws {
-        _ = try boardIndex(id)
+        let idx = try boardIndex(id)
+        for card in boards[idx].cards { try? attachments.removeAll(for: card.id) }
         let url = boardURL(id)
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
@@ -133,8 +139,15 @@ public final class BoardStore: ObservableObject {
 
     // MARK: - Cards
 
-    /// One mutation = one undo step, whatever the run loop is doing — an explicit group is
-    /// what keeps a unit test (no event loop) and the app (event-grouped) agreeing.
+    /// An explicit begin/end group is what lets a unit test register at all — `groupsByEvent
+    /// = false` with no run loop means an ungrouped `registerUndo` call would assert. It also
+    /// gives the test the same one-step-per-edit view the app gets from event grouping; in
+    /// the app these groups nest inside the run loop event's own group, so several mutations
+    /// in one pass (e.g. a multi-card drag) undo together as one step — intended.
+    ///
+    /// ponytail: every inverse below runs through `try?`, so a stale step (its board or
+    /// column deleted since) silently no-ops instead of erroring. Board/column/label
+    /// mutations aren't undoable yet at all — only cards and their attachments are.
     private func registerUndo(_ inverse: @escaping @MainActor (BoardStore) -> Void) {
         guard let undoManager else { return }
         undoManager.beginUndoGrouping()
@@ -177,15 +190,24 @@ public final class BoardStore: ObservableObject {
         guard let cardIdx = boards[idx].cards.firstIndex(where: { $0.id == cardID }) else {
             throw BoardStoreError.cardNotFound(cardID)
         }
-        let card = boards[idx].cards.remove(at: cardIdx)
+        let card = boards[idx].cards[cardIdx]
+        // Snapshotted before the files are gone — the undo has nowhere else to read them from.
+        let files: [(String, Data)] = (card.attachments ?? []).compactMap { name in
+            attachments.data(name, for: cardID).map { (name, $0) }
+        }
+        boards[idx].cards.remove(at: cardIdx)
         try persist(at: idx)
-        registerUndo { $0.restore(card, boardID: boardID, at: cardIdx) }
+        try attachments.removeAll(for: cardID)
+        registerUndo { $0.restore(card, boardID: boardID, at: cardIdx, files: files) }
     }
 
     /// The inverse of `deleteCard`: the card goes back where it was in the flat array, which
-    /// is also where it was in its column. Registers the delete as its own inverse.
-    private func restore(_ card: Card, boardID: UUID, at index: Int) {
+    /// is also where it was in its column. Registers the delete as its own inverse. `files`
+    /// are the attachment bytes the card carried, snapshotted by the delete since the
+    /// `AttachmentStore` no longer has them.
+    private func restore(_ card: Card, boardID: UUID, at index: Int, files: [(String, Data)] = []) {
         guard let idx = try? boardIndex(boardID) else { return }
+        for (name, data) in files { try? attachments.write(data, name: name, to: card.id) }
         boards[idx].cards.insert(card, at: min(index, boards[idx].cards.count))
         try? persist(at: idx)
         registerUndo { try? $0.deleteCard(boardID: boardID, cardID: card.id) }
@@ -203,7 +225,11 @@ public final class BoardStore: ObservableObject {
         }
         var card = boards[idx].cards.remove(at: cardIdx)
         let fromColumn = card.columnID
-        // Column-local position before the move — what the inverse `moveCard` needs.
+        // Column-local position before the move — what the inverse `moveCard` needs. The
+        // guarantee this buys is column-local too: the inverse restores each column's order
+        // exactly, not the flat `cards` array's cross-column interleaving. E.g. flat
+        // [A(todo), X(todo), B(doing), C(todo)] → move X → undo yields [A, B, X, C]; every
+        // `cards(in:column:)` result is identical to before, which is all the UI ever reads.
         let fromIndex = boards[idx].cards[..<cardIdx].filter { $0.columnID == fromColumn }.count
         card.columnID = toColumn
 
@@ -214,6 +240,50 @@ public final class BoardStore: ObservableObject {
         boards[idx].cards.insert(card, at: insertAt)
         try persist(at: idx)
         registerUndo { try? $0.moveCard(id: id, boardID: boardID, toColumn: fromColumn, index: fromIndex) }
+    }
+
+    // MARK: - Attachments
+
+    @discardableResult
+    public func addAttachment(boardID: UUID, cardID: UUID, data: Data, ext: String) throws -> String {
+        let idx = try boardIndex(boardID)
+        guard let cardIdx = boards[idx].cards.firstIndex(where: { $0.id == cardID }) else {
+            throw BoardStoreError.cardNotFound(cardID)
+        }
+        let name = try attachments.add(data, ext: ext, to: cardID)
+        boards[idx].cards[cardIdx].attachments = (boards[idx].cards[cardIdx].attachments ?? []) + [name]
+        boards[idx].cards[cardIdx].modified = Date()
+        try persist(at: idx)
+        registerUndo { try? $0.removeAttachment(boardID: boardID, cardID: cardID, name: name) }
+        return name
+    }
+
+    /// The bytes ride along in the undo closure: a removed image has nowhere else to live.
+    public func removeAttachment(boardID: UUID, cardID: UUID, name: String) throws {
+        let idx = try boardIndex(boardID)
+        guard let cardIdx = boards[idx].cards.firstIndex(where: { $0.id == cardID }),
+              let position = boards[idx].cards[cardIdx].attachments?.firstIndex(of: name)
+        else { throw BoardStoreError.cardNotFound(cardID) }
+        let data = attachments.data(name, for: cardID)
+        try attachments.remove(name, from: cardID)
+        var names = boards[idx].cards[cardIdx].attachments ?? []
+        names.remove(at: position)
+        boards[idx].cards[cardIdx].attachments = names.isEmpty ? nil : names
+        try persist(at: idx)
+        registerUndo { store in
+            if let data { try? store.attachments.write(data, name: name, to: cardID) }
+            guard let idx = try? store.boardIndex(boardID),
+                  let cardIdx = store.boards[idx].cards.firstIndex(where: { $0.id == cardID }) else { return }
+            var names = store.boards[idx].cards[cardIdx].attachments ?? []
+            names.insert(name, at: min(position, names.count))
+            store.boards[idx].cards[cardIdx].attachments = names
+            try? store.persist(at: idx)
+            store.registerUndo { try? $0.removeAttachment(boardID: boardID, cardID: cardID, name: name) }
+        }
+    }
+
+    public func attachmentURL(cardID: UUID, name: String) -> URL {
+        attachments.url(name, for: cardID)
     }
 
     // MARK: - Column editing

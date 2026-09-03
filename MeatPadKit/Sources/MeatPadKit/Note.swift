@@ -15,8 +15,11 @@ public struct Note: Identifiable, Equatable, Sendable, Codable {
     // User folder name; nil = the implicit default "Notes" folder. Same legacy-decode
     // story as windowFrame.
     public var folder: String?
+    /// Image files attached to the note, by name, in display order — files live in the
+    /// store's `AttachmentStore`. Same legacy-decode story as `windowFrame`/`folder`.
+    public var attachments: [String]?
 
-    public init(id: UUID, languageID: String?, created: Date, modified: Date, cursor: Int, title: String, windowFrame: String? = nil, folder: String? = nil) {
+    public init(id: UUID, languageID: String?, created: Date, modified: Date, cursor: Int, title: String, windowFrame: String? = nil, folder: String? = nil, attachments: [String]? = nil) {
         self.id = id
         self.languageID = languageID
         self.created = created
@@ -25,6 +28,7 @@ public struct Note: Identifiable, Equatable, Sendable, Codable {
         self.title = title
         self.windowFrame = windowFrame
         self.folder = folder
+        self.attachments = attachments
     }
 }
 

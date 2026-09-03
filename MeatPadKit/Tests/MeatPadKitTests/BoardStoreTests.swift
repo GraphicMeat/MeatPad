@@ -725,6 +725,98 @@ final class BoardStoreTests: XCTestCase {
         card.title = "after"
         try store.updateCard(boardID: board.id, card: card)
         XCTAssertEqual(store.boards[0].cards[0].title, "after")
-        XCTAssertNil(store.undoManager)
+
+        // Attaching an undo manager only now proves nothing was queued while it was absent —
+        // a fresh UndoManager with nothing registered can't undo.
+        let undo = undoable(store)
+        XCTAssertFalse(undo.canUndo)
+    }
+
+    func testMoveCardWithinAColumnUndoRestoresTheOldOrderAndRedoReapplies() throws {
+        let store = try makeStore()
+        let undo = undoable(store)
+        let board = try store.createBoard(name: "b")
+        let todo = store.globalColumns[0].id
+        for title in ["a", "b", "c"] { _ = try store.addCard(boardID: board.id, columnID: todo, title: title) }
+        let c = store.boards[0].cards[2]
+
+        try store.moveCard(id: c.id, boardID: board.id, toColumn: todo, index: 0)
+        XCTAssertEqual(store.cards(in: store.boards[0], column: todo).map(\.title), ["c", "a", "b"])
+
+        undo.undo()
+        XCTAssertEqual(store.cards(in: store.boards[0], column: todo).map(\.title), ["a", "b", "c"])
+
+        undo.redo()
+        XCTAssertEqual(store.cards(in: store.boards[0], column: todo).map(\.title), ["c", "a", "b"])
+    }
+
+    // MARK: - attachments
+
+    func testAddAttachmentStoresTheFileAndTheName() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "b")
+        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        let name = try store.addAttachment(boardID: board.id, cardID: card.id, data: Data([1, 2]), ext: "png")
+
+        XCTAssertEqual(store.boards[0].cards[0].attachments, [name])
+        let url = store.attachmentURL(cardID: card.id, name: name)
+        XCTAssertEqual(url, tempDir.appendingPathComponent("Attachments/\(card.id.uuidString)/\(name)"))
+        XCTAssertEqual(try Data(contentsOf: url), Data([1, 2]))
+        XCTAssertEqual(try makeStore().boards[0].cards[0].attachments, [name])
+    }
+
+    func testRemoveAttachmentDeletesTheFileAndUndoBringsItBack() throws {
+        let store = try makeStore()
+        let undo = undoable(store)
+        let board = try store.createBoard(name: "b")
+        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        let name = try store.addAttachment(boardID: board.id, cardID: card.id, data: Data([7]), ext: "png")
+        let url = store.attachmentURL(cardID: card.id, name: name)
+
+        try store.removeAttachment(boardID: board.id, cardID: card.id, name: name)
+        XCTAssertNil(store.boards[0].cards[0].attachments)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+
+        undo.undo()
+        XCTAssertEqual(store.boards[0].cards[0].attachments, [name])
+        XCTAssertEqual(try Data(contentsOf: url), Data([7]))
+    }
+
+    func testDeleteCardRemovesItsFilesAndUndoRestoresThem() throws {
+        let store = try makeStore()
+        let undo = undoable(store)
+        let board = try store.createBoard(name: "b")
+        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        let name = try store.addAttachment(boardID: board.id, cardID: card.id, data: Data([5]), ext: "png")
+        let url = store.attachmentURL(cardID: card.id, name: name)
+
+        try store.deleteCard(boardID: board.id, cardID: card.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+
+        undo.undo()
+        XCTAssertEqual(store.boards[0].cards[0].attachments, [name])
+        XCTAssertEqual(try Data(contentsOf: url), Data([5]))
+    }
+
+    func testDeleteBoardRemovesEveryCardsFiles() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "b")
+        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        _ = try store.addAttachment(boardID: board.id, cardID: card.id, data: Data([5]), ext: "png")
+        try store.deleteBoard(id: board.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("Attachments/\(card.id.uuidString)").path))
+    }
+
+    func testStoreWrittenBeforeAttachmentsStillDecodes() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "b")
+        _ = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        let boardURL = tempDir.appendingPathComponent("\(board.id.uuidString).json")
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: boardURL)) as? [String: Any])
+        var cards = try XCTUnwrap(json["cards"] as? [[String: Any]])
+        cards[0].removeValue(forKey: "attachments")
+        json["cards"] = cards
+        try JSONSerialization.data(withJSONObject: json).write(to: boardURL)
+        XCTAssertNil(try makeStore().boards[0].cards[0].attachments)
     }
 }

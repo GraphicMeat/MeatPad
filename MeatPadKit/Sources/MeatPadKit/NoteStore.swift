@@ -30,6 +30,9 @@ public final class NoteStore: ObservableObject {
     /// contents, so they don't touch the index either.
     public let searchIndex = NoteSearchIndex()
 
+    /// Note image files, kept under `<root>/Attachments/<noteID>/…` — see `AttachmentStore`.
+    private let attachments: AttachmentStore
+
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -48,6 +51,7 @@ public final class NoteStore: ObservableObject {
         let fm = FileManager.default
         try fm.createDirectory(at: rootURL, withIntermediateDirectories: true)
         try fm.createDirectory(at: trashURL, withIntermediateDirectories: true)
+        attachments = AttachmentStore(rootURL: rootURL.appendingPathComponent("Attachments", isDirectory: true))
         notes = try Self.loadNotes(from: rootURL)
         trashedNotes = (try? Self.loadNotes(from: trashURL)) ?? [] // already sorted, most recent first
         folders = Self.loadFolders(from: foldersURL)
@@ -138,7 +142,35 @@ public final class NoteStore: ObservableObject {
             let url = trashURL.appendingPathComponent(name)
             if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
         }
+        try attachments.removeAll(for: id)
         trashedNotes.removeAll { $0.id == id }
+    }
+
+    // MARK: - Attachments
+
+    /// Attaching is an edit: `modified` moves and the list re-sorts, the same as typing.
+    @discardableResult
+    public func addAttachment(id: UUID, data: Data, ext: String) throws -> String {
+        guard var note = notes.first(where: { $0.id == id }) else { throw NoteStoreError.notFound(id) }
+        let name = try attachments.add(data, ext: ext, to: id)
+        note.attachments = (note.attachments ?? []) + [name]
+        note.modified = Date()
+        try writeSidecar(note)
+        updateInMemory(note)
+        return name
+    }
+
+    public func removeAttachment(id: UUID, name: String) throws {
+        guard var note = notes.first(where: { $0.id == id }) else { throw NoteStoreError.notFound(id) }
+        try attachments.remove(name, from: id)
+        let names = (note.attachments ?? []).filter { $0 != name }
+        note.attachments = names.isEmpty ? nil : names
+        try writeSidecar(note)
+        updateInMemory(note)
+    }
+
+    public func attachmentURL(id: UUID, name: String) -> URL {
+        attachments.url(name, for: id)
     }
 
     // MARK: - Folders

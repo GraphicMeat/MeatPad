@@ -72,12 +72,16 @@ public struct Card: Identifiable, Codable, Equatable, Sendable {
     /// thing. nil is not a missing colour, it is the plain glass card — the default, and what
     /// every board file written before this decodes as.
     public var color: RGBAColor?
+    /// Image files attached to the card, by name, in display order — files live in the
+    /// store's `AttachmentStore`. Optional for the same reason as `labelIDs`: board files
+    /// written before attachments existed must still decode.
+    public var attachments: [String]?
     public var created: Date
     public var modified: Date
 
     public init(id: UUID = UUID(), title: String, body: String? = nil, due: Date? = nil,
                 columnID: UUID, noteID: UUID? = nil, labelIDs: [UUID]? = nil,
-                color: RGBAColor? = nil,
+                color: RGBAColor? = nil, attachments: [String]? = nil,
                 created: Date = Date(), modified: Date = Date()) {
         self.id = id
         self.title = title
@@ -87,6 +91,7 @@ public struct Card: Identifiable, Codable, Equatable, Sendable {
         self.noteID = noteID
         self.labelIDs = labelIDs
         self.color = color
+        self.attachments = attachments
         self.created = created
         self.modified = modified
     }
