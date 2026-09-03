@@ -1,10 +1,11 @@
 import SwiftUI
 import MeatPadKit
 
-/// One card, editable in place — the board is the editor, so the common edits (title,
-/// notes, due date) never cost a click. Height follows content: a bare card is two lines
-/// tall, the title wraps rather than truncates, and the notes field grows only as far as
-/// the text it holds. `⋯` opens `CardEditor` for everything at once.
+/// One card, editable in place — the board is the editor. Rows separated by hairlines, the
+/// way `CardEditor` groups its own, and every row is `Text` until it is clicked: that is what
+/// leaves the mouse-down to `.draggable`, so the card drags from its title instead of only
+/// from its padding. Height follows content — the title wraps rather than truncates, and the
+/// notes fold down to their first line. `⋯` opens `CardEditor` for everything at once.
 struct CardView: View {
     @ObservedObject var store: BoardStore
     let boardID: UUID
@@ -20,6 +21,13 @@ struct CardView: View {
     /// until the setting next changes.
     let display: CardDisplay
 
+    /// Which of the two text rows currently holds a live field. The face renders `Text` until
+    /// a row is clicked: an `NSTextField` takes every mouse-down for caret placement, which is
+    /// why a card could only be dragged by its padding. Text lets `.draggable` see the press.
+    private enum Field: Hashable { case title, notes }
+    @State private var editing: Field?
+    @FocusState private var focus: Field?
+
     @State private var title = ""
     @State private var body_ = ""
     @State private var expanded = false
@@ -33,83 +41,20 @@ struct CardView: View {
     @State private var editorShown = false
     /// Whether the editor should open straight onto its new-label field.
     @State private var editorLabelForm = false
-    @FocusState private var notesFocused: Bool
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .top, spacing: 6) {
-                // axis: .vertical so a long title wraps onto as many lines as it needs, up to
-                // what the board's display setting allows. A card that reads "Masazas E…" is a
-                // card you have to open to identify — which is why only `compact` clips it.
-                // No `newlineOnModifiedReturn` here on purpose: wrapping is layout, and a
-                // title with a literal newline in it is a title nothing can render.
-                TextField("Title", text: $title, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.body.weight(.semibold))
-                    .lineLimit(display.titleLines)
-                    .onSubmit { commit() }
-                    // A vertical-axis TextField that has already grown does not shrink back
-                    // when the limit tightens — it keeps the taller intrinsic size. Rebuilding
-                    // it on the limit itself is the cheapest way to re-measure, and titles↔full
-                    // share a limit, so it only happens on the switch that changes anything.
-                    .id(display.titleLines)
-                    .accessibilityIdentifier("card.title")
-                if summarizing {
-                    ProgressView().controlSize(.mini)
-                }
-                Button {
-                    editorLabelForm = false
-                    editorShown = true
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .foregroundStyle(.secondary)
-                        // A bare glyph is a 13pt target sitting next to a card that answers
-                        // clicks itself — miss it and you select the card instead.
-                        .frame(width: 22, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(String(localized: "Card Actions"))
-                .accessibilityIdentifier("card.actions")
-            }
-            // Anchored to the header row so it points at the ⋯ it came from.
-            .popover(isPresented: $editorShown, arrowEdge: .bottom) {
-                CardEditor(
-                    store: store,
-                    boardID: boardID,
-                    card: card,
-                    isPresented: $editorShown,
-                    startsCreatingLabel: editorLabelForm
-                )
-            }
-
-            dueRow
-
-            labelChips
-
-            if card.noteID != nil || boardBadge != nil {
-                HStack(spacing: 6) {
-                    if card.noteID != nil { linkChip }
-                    Spacer(minLength: 0)
-                    if let boardBadge {
-                        // Tinted like a label chip, down to the opacities: the text stays
-                        // primary because a caption2 painted in the palette colour is the
-                        // first thing to go unreadable in light appearance.
-                        Text(boardBadge.name)
-                            .font(.caption2)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color(boardBadge.color).opacity(0.3)))
-                            .overlay(Capsule().strokeBorder(Color(boardBadge.color).opacity(0.75)))
-                            .accessibilityIdentifier("card.boardBadge")
-                    }
-                }
-            }
-
+        VStack(alignment: .leading, spacing: 0) {
+            titleRow
+            if hasLabels { HairlineDivider(); labelChips }
+            if card.due != nil { HairlineDivider(); dueRow }
+            if card.noteID != nil || boardBadge != nil { HairlineDivider(); linkRow }
+            // MARK: - Images (Task 5 adds the attachment row here)
+            HairlineDivider()
             notesSection
         }
-        .padding(10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background { cellBackground }
         .contextMenu { cardMenu }
@@ -123,18 +68,94 @@ struct CardView: View {
         }
         .onAppear { load() }
         // The same view instance is reused when a card moves column; reload so drafts follow it.
-        .onChange(of: card.id) { _, _ in bodyDebouncer.cancel(); load() }
+        .onChange(of: card.id) { _, _ in bodyDebouncer.cancel(); editing = nil; load() }
         // The editor writes this very card, so take what it wrote. The inequality guard is
         // what keeps this from fighting the cell's own field: a commit from here comes back
-        // identical, and the notes are left alone while the caret is in them.
-        .onChange(of: card.title) { _, new in if new != title { title = new } }
+        // identical, and a row being typed into is left alone.
+        .onChange(of: card.title) { _, new in if editing != .title, new != title { title = new } }
         .onChange(of: card.body) { _, new in
             let text = new ?? ""
-            if !notesFocused, text != body_ { body_ = text }
+            if editing != .notes, text != body_ { body_ = text }
         }
         // Changing the board setting overrides whatever this card was left on — that is the
         // point of "fold all": one card the user opened earlier must not survive it.
         .onChange(of: display) { _, _ in expanded = notesOpenByDefault }
+        // Blur = commit. Whatever took focus away (a click elsewhere, Tab, the editor popover)
+        // the field's text must land before the row turns back into Text.
+        .onChange(of: focus) { old, new in
+            if old == .title, new != .title { commit() }
+            if old == .notes, new != .notes { bodyDebouncer.cancel(); commit() }
+            if new == nil { editing = nil }
+        }
+    }
+
+    // MARK: - Title
+
+    private var titleRow: some View {
+        HStack(alignment: .top, spacing: 6) {
+            if editing == .title {
+                // axis: .vertical so a long title wraps onto as many lines as it needs, up to
+                // what the board's display setting allows. No `newlineOnModifiedReturn` here
+                // on purpose: wrapping is layout, and a title with a literal newline in it is
+                // a title nothing can render.
+                TextField("Title", text: $title, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.body.weight(.semibold))
+                    .lineLimit(display.titleLines)
+                    .focused($focus, equals: .title)
+                    .onSubmit { focus = nil }
+                    .onAppear { focus = .title; moveCaretToEnd() }
+                    .accessibilityIdentifier("card.title")
+            } else {
+                Text(title.isEmpty ? String(localized: "Title") : title)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(title.isEmpty ? .secondary : .primary)
+                    .lineLimit(display.titleLines)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { editing = .title }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("card.title")
+            }
+            if summarizing {
+                ProgressView().controlSize(.mini)
+            }
+            Button {
+                editorLabelForm = false
+                editorShown = true
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .foregroundStyle(.secondary)
+                    // A bare glyph is a 13pt target sitting next to a card that answers
+                    // clicks itself — miss it and you select the card instead.
+                    .frame(width: 22, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(String(localized: "Card Actions"))
+            .accessibilityIdentifier("card.actions")
+        }
+        .padding(.vertical, 7)
+        // Anchored to the header row so it points at the ⋯ it came from.
+        .popover(isPresented: $editorShown, arrowEdge: .bottom) {
+            CardEditor(
+                store: store,
+                boardID: boardID,
+                card: card,
+                isPresented: $editorShown,
+                startsCreatingLabel: editorLabelForm
+            )
+        }
+    }
+
+    /// A field that has just taken focus selects everything; a click on a title means
+    /// "append", so put the caret at the end instead. Same first-responder seam as
+    /// `newlineOnModifiedReturn` — the vertical-axis field's editor is an NSTextView.
+    private func moveCaretToEnd() {
+        DispatchQueue.main.async {
+            guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return }
+            editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+        }
     }
 
     // MARK: - Cell
@@ -207,6 +228,12 @@ struct CardView: View {
 
     // MARK: - Labels
 
+    /// Asked by the body before it draws a separator, so a card with no labels doesn't get a
+    /// hairline with nothing under it.
+    private var hasLabels: Bool {
+        store.labels.contains { card.labelIDs?.contains($0.id) ?? false }
+    }
+
     /// One tinted chip per label, in the store's order so a card's labels read the same way
     /// everywhere. Hidden entirely when the card has none — an empty row would cost every
     /// card 10pt of height for nothing.
@@ -226,6 +253,7 @@ struct CardView: View {
                 }
                 Spacer(minLength: 0)
             }
+            .padding(.vertical, 7)
         }
     }
 
@@ -266,6 +294,7 @@ struct CardView: View {
             }
             .buttonStyle(.plain)
             .help(String(localized: "Change Due Date"))
+            .padding(.vertical, 7)
         }
     }
 
@@ -310,33 +339,12 @@ struct CardView: View {
 
     // MARK: - Notes
 
-    /// Collapsed shows one line of what's there (nothing at all if the card has no notes);
-    /// clicking anywhere on the row opens the field AND puts the caret in it.
-    @ViewBuilder
+    /// Folded: the first line of the notes, in the same type the editor uses, with a chevron
+    /// at the trailing edge (where the editor keeps its tag button). Open: the whole text.
+    /// Either way a click on the text edits; only the chevron folds.
     private var notesSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                expanded.toggle()
-                if expanded { notesFocused = true }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                    if expanded || body_.isEmpty {
-                        Text("Notes")
-                    } else {
-                        Text(body_).lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("card.notesToggle")
-
-            if expanded {
+        HStack(alignment: .top, spacing: 6) {
+            if editing == .notes {
                 // axis: .vertical grows with its content instead of reserving a fixed block,
                 // and unlike TextEditor it takes the caret on a single click. No upper line
                 // limit: a capped field clips the rest of the text AND eats the scroll wheel,
@@ -345,15 +353,72 @@ struct CardView: View {
                     .textFieldStyle(.plain)
                     .font(.callout)
                     .lineLimit(1...)
-                    .focused($notesFocused)
+                    .focused($focus, equals: .notes)
                     .newlineOnModifiedReturn()
-                    .accessibilityIdentifier("card.notes")
+                    .onAppear { focus = .notes; moveCaretToEnd() }
                     .onChange(of: body_) { _, _ in bodyDebouncer.call { commit() } }
+                    .accessibilityIdentifier("card.notes")
+            } else {
+                Text(body_.isEmpty ? String(localized: "Add Notes") : (expanded ? body_ : firstLine))
+                    .font(.callout)
+                    .foregroundStyle(body_.isEmpty ? .secondary : .primary)
+                    .lineLimit(expanded ? nil : 1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { expanded = true; editing = .notes }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("card.notes")
             }
+            Button {
+                // Folding the row out from under a live field would leave the caret in a
+                // view that is on its way out; hand focus back first, which also commits.
+                if editing == .notes { focus = nil }
+                expanded.toggle()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(expanded ? 0 : -90))
+                    .frame(width: 22, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .animation(.snappy(duration: 0.18), value: expanded)
+            .help(expanded ? String(localized: "Hide Notes") : String(localized: "Show Notes"))
+            .accessibilityIdentifier("card.notesToggle")
         }
+        .padding(.vertical, 7)
+    }
+
+    /// What the folded row shows. Empty lines are skipped: a body that starts with a blank
+    /// line would otherwise fold to nothing at all.
+    private var firstLine: String {
+        String(body_.split(omittingEmptySubsequences: true, whereSeparator: \.isNewline).first ?? "")
     }
 
     // MARK: - Linked note
+
+    /// The link and the board badge share a row: one says where the card's text lives, the
+    /// other which board it came from, and neither is ever more than a chip wide.
+    private var linkRow: some View {
+        HStack(spacing: 6) {
+            if card.noteID != nil { linkChip }
+            Spacer(minLength: 0)
+            if let boardBadge {
+                // Tinted like a label chip, down to the opacities: the text stays primary
+                // because a caption2 painted in the palette colour is the first thing to go
+                // unreadable in light appearance.
+                Text(boardBadge.name)
+                    .font(.caption2)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color(boardBadge.color).opacity(0.3)))
+                    .overlay(Capsule().strokeBorder(Color(boardBadge.color).opacity(0.75)))
+                    .accessibilityIdentifier("card.boardBadge")
+            }
+        }
+        .padding(.vertical, 7)
+    }
 
     private var linkChip: some View {
         Button {

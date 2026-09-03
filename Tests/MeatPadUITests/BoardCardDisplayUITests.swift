@@ -1,9 +1,9 @@
 import XCTest
 
 /// The card display control: three densities, applied to every card on the board at once.
-/// None of this is testable below the UI — what the setting changes is layout (does the notes
-/// field exist, how many lines is the title allowed), and layout only exists once AppKit has
-/// laid it out.
+/// None of this is testable below the UI — what the setting changes is layout (how much of the
+/// notes the row shows, how many lines is the title allowed), and layout only exists once
+/// AppKit has laid it out.
 ///
 /// Seeded like `BoardLabelUITests`: a throwaway storage root, launched straight onto the board.
 /// The card carries a title long enough to wrap in a 280pt column and a body, because a short
@@ -16,7 +16,9 @@ final class BoardCardDisplayUITests: XCTestCase {
     private let columnID = UUID()
 
     private let longTitle = "A card title long enough that it has to wrap onto several lines"
-    private let notes = "Notes body that only the full display opens"
+    /// Two lines on purpose: a folded notes row still shows the first one, so the second is
+    /// the only thing that says whether the notes are open.
+    private let notes = "Notes body that only the full display opens\nand a second line under it"
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -47,12 +49,12 @@ final class BoardCardDisplayUITests: XCTestCase {
     func testFullOpensTheNotes() throws {
         select(.full)
 
-        XCTAssertTrue(notesField.waitForExistence(timeout: 5), "full display left the notes shut")
+        XCTAssertTrue(waitForNotes(open: true), "full display left the notes folded")
     }
 
     func testCompactFoldsTheNotesAway() throws {
         select(.full)
-        XCTAssertTrue(notesField.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForNotes(open: true))
 
         select(.compact)
 
@@ -61,7 +63,7 @@ final class BoardCardDisplayUITests: XCTestCase {
 
     func testTitlesKeepsTheNotesShut() throws {
         select(.full)
-        XCTAssertTrue(notesField.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForNotes(open: true))
 
         select(.titles)
 
@@ -71,9 +73,8 @@ final class BoardCardDisplayUITests: XCTestCase {
     /// The half the notes field can't prove: compact clips the title to one line and the other
     /// two let it wrap. Measured, because "one line" is a height, not an element.
     ///
-    /// Ends where it started on purpose. A vertical-axis `TextField` that has grown keeps the
-    /// taller intrinsic size, so the switch that actually breaks is the way back down — the
-    /// title stays wrapped in a display that is meant to clip it.
+    /// Ends where it started on purpose: the switch that used to break is the way back down —
+    /// a title that grew and stayed wrapped in a display that is meant to clip it.
     func testCompactClipsTheTitleAndTheOthersLetItWrap() throws {
         select(.compact)
         let clipped = settledTitleHeight()
@@ -111,19 +112,26 @@ final class BoardCardDisplayUITests: XCTestCase {
 
     // MARK: - Reading the board
 
+    /// Both rows are a `Text` until they are clicked and a `TextField` after, so neither can
+    /// be asked for by element type. The text is the value either way — bar an idle row
+    /// exposed as a button, which carries it as the label.
     private var cardTitle: XCUIElement {
-        app.textFields.matching(identifier: "card.title").firstMatch
+        app.descendants(matching: .any).matching(identifier: "card.title").firstMatch
     }
 
-    private var notesField: XCUIElement {
-        app.textFields.matching(identifier: "card.notes").firstMatch
+    private var notesRow: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "card.notes").firstMatch
     }
 
-    /// Polls: the display change animates, and the field leaves the tree a frame or two later.
+    /// The notes row is always there now; folded, it shows the first line only. So "open" is
+    /// a question about the text, not about the element. Polls, because the display change
+    /// animates and the row re-lays out a frame or two later.
     private func waitForNotes(open: Bool) -> Bool {
+        let secondLine = "and a second line under it"
         let deadline = Date().addingTimeInterval(10)
         while Date() < deadline {
-            if notesField.exists == open { return true }
+            let shown = notesRow.value as? String ?? notesRow.label
+            if shown.contains(secondLine) == open { return true }
             usleep(200_000)
         }
         return false

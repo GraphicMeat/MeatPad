@@ -402,7 +402,9 @@ struct BoardColumnsView: View {
             display: display
         )
         .contentShape(Rectangle())
-        .onTapGesture { selectedCard = ref.card.id }
+        // Simultaneous, not exclusive: a click on the title both selects the card and starts
+        // editing — the face's own tap gestures must still fire.
+        .simultaneousGesture(TapGesture().onEnded { selectedCard = ref.card.id })
         .draggable(ref.card.id.uuidString) {
             // A compact chip drags better than a full-card snapshot, and shows what's moving.
             Text(ref.card.title)

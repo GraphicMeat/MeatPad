@@ -184,8 +184,11 @@ final class BoardCardEditorUITests: XCTestCase {
 
     // MARK: - Reading the board
 
+    /// `card.title` is a `Text` until the row is clicked and a `TextField` after, so the query
+    /// can't name an element type. Its text is the value either way — bar an idle row exposed
+    /// as a button, which carries it as the label instead.
     private var cardTitles: XCUIElementQuery {
-        app.textFields.matching(identifier: "card.title")
+        app.descendants(matching: .any).matching(identifier: "card.title")
     }
 
     private func card(titled title: String) -> XCUIElement {
@@ -193,7 +196,10 @@ final class BoardCardEditorUITests: XCTestCase {
     }
 
     private var visibleCardTitles: [String] {
-        (0..<cardTitles.count).compactMap { cardTitles.element(boundBy: $0).value as? String }.sorted()
+        (0..<cardTitles.count)
+            .map { cardTitles.element(boundBy: $0) }
+            .map { $0.value as? String ?? $0.label }
+            .sorted()
     }
 
     private func cardIndex(of title: String) -> Int {

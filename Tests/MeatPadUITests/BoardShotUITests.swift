@@ -43,7 +43,8 @@ final class BoardShotUITests: XCTestCase {
             "-AppleLocale", region,
         ]
         app.launch()
-        XCTAssertTrue(app.textFields.matching(identifier: "card.title").firstMatch.waitForExistence(timeout: 30),
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "card.title")
+                        .firstMatch.waitForExistence(timeout: 30),
                       "board never rendered for \(locale)")
     }
 

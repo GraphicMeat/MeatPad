@@ -55,9 +55,9 @@ final class BoardNewlineUITests: XCTestCase {
         field.typeText("gamma")
         app.typeKey(.return, modifierFlags: [])
 
-        let title = app.textFields["card.title"].firstMatch
+        let title = faceTitle(in: app)
         XCTAssertTrue(title.waitForExistence(timeout: 5))
-        XCTAssertEqual(title.value as? String, "gamma")
+        XCTAssertEqual(faceText(title), "gamma")
         XCTAssertNotEqual(field.value as? String, "gamma", "the draft should be cleared once the card exists")
     }
 
@@ -71,13 +71,13 @@ final class BoardNewlineUITests: XCTestCase {
         field.typeText("beta")
         app.typeKey(.return, modifierFlags: [])
 
-        let title = app.textFields["card.title"].firstMatch
+        let title = faceTitle(in: app)
         XCTAssertTrue(title.waitForExistence(timeout: 5))
-        XCTAssertEqual(title.value as? String, "alpha")
+        XCTAssertEqual(faceText(title), "alpha")
 
-        let notes = app.textFields["card.notes"].firstMatch
-        XCTAssertTrue(notes.waitForExistence(timeout: 5), "a card with a body opens with its notes shown")
-        XCTAssertEqual(notes.value as? String, "beta")
+        let notes = faceNotes(in: app)
+        XCTAssertTrue(notes.waitForExistence(timeout: 5), "the new card has no notes row")
+        XCTAssertEqual(faceText(notes), "beta")
     }
 
     // MARK: - Card notes
@@ -89,21 +89,35 @@ final class BoardNewlineUITests: XCTestCase {
         field.typeText("gamma")
         app.typeKey(.return, modifierFlags: [])
 
-        let toggle = app.buttons["card.notesToggle"].firstMatch
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-        toggle.click()
-
-        let notes = app.textFields["card.notes"].firstMatch
+        // The notes row is a `Text` until it is clicked; the click is what puts a field there.
+        let notes = faceNotes(in: app)
         XCTAssertTrue(notes.waitForExistence(timeout: 5))
         notes.click()
-        notes.typeText("one")
+        let notesField = app.textFields["card.notes"].firstMatch
+        XCTAssertTrue(notesField.waitForExistence(timeout: 5), "clicking the notes opened no field")
+        notesField.typeText("one")
         app.typeKey(.return, modifierFlags: .shift)
-        notes.typeText("two")
+        notesField.typeText("two")
 
-        XCTAssertEqual(notes.value as? String, "one\ntwo")
+        XCTAssertEqual(notesField.value as? String, "one\ntwo")
     }
 
     // MARK: - Harness
+
+    /// The card face renders its rows as `Text` until they are clicked, so neither row can be
+    /// asked for by element type; the text is the value on a field and on an idle row alike,
+    /// bar an idle row exposed as a button, which carries it as the label.
+    private func faceTitle(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "card.title").firstMatch
+    }
+
+    private func faceNotes(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "card.notes").firstMatch
+    }
+
+    private func faceText(_ element: XCUIElement) -> String {
+        element.value as? String ?? element.label
+    }
 
     private func launch() -> XCUIApplication {
         let app = XCUIApplication()

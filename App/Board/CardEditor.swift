@@ -56,10 +56,10 @@ struct CardEditor: View {
         VStack(spacing: 8) {
             section {
                 titleRow
-                divider
+                HairlineDivider()
                 labelsRow
                 if addingLabel {
-                    divider
+                    HairlineDivider()
                     newLabelForm
                 }
             }
@@ -67,7 +67,7 @@ struct CardEditor: View {
             section {
                 dueRow
                 if pickingDue {
-                    divider
+                    HairlineDivider()
                     DatePicker("", selection: dueBinding, displayedComponents: [.date, .hourAndMinute])
                         .datePickerStyle(.graphical)
                         .labelsHidden()
@@ -83,7 +83,7 @@ struct CardEditor: View {
                 section {
                     if card.noteID != nil {
                         linkRow
-                        if summarizable { divider }
+                        if summarizable { HairlineDivider() }
                     }
                     if summarizable { summarizeRow }
                 }
@@ -129,13 +129,6 @@ struct CardEditor: View {
                             .strokeBorder(.white.opacity(0.08), lineWidth: 1)
                     }
             }
-    }
-
-    private var divider: some View {
-        Rectangle()
-            .fill(.white.opacity(0.08))
-            .frame(height: 1)
-            .padding(.leading, 10)
     }
 
     // MARK: - Title and colour

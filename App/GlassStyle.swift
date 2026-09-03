@@ -119,6 +119,17 @@ extension View {
     }
 }
 
+/// The 1pt line between grouped rows — the card editor's row separator, now shared with the
+/// card face so both read as the same control.
+struct HairlineDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(.white.opacity(0.08))
+            .frame(height: 1)
+            .padding(.leading, 10)
+    }
+}
+
 struct GlassIconButtonStyle: ButtonStyle {
     var selected = false
 
