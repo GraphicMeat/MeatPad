@@ -516,8 +516,12 @@ struct CardView: View {
     }
 
     private func commit() {
-        // An empty title would be rejected by the store; keep the stored one instead.
-        let edited = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? card.title : title
+        // The store trims the title before persisting (`validated(_:)`), so this guard must
+        // compare the same trimmed value — otherwise a trailing-space-only edit would diverge
+        // from the store's echo and the space would vanish from the draft on the next resync.
+        // An empty title is rejected by the store; keep the stored one instead.
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let edited = trimmed.isEmpty ? card.title : trimmed
         let editedBody = body_.isEmpty ? nil : body_
         // Recorded even on the no-op path below: this is what the card's own values are about
         // to be (or already are), and the `.onChange` handlers above must not mistake either
