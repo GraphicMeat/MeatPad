@@ -722,16 +722,23 @@ private struct NoteDetailEditor: View {
                     reveal: viewModel.revealTarget,
                     onRevealApplied: { viewModel.revealConsumed(token: $0) },
                     snippetController: snippetController,
-                    onCursorChange: viewModel.cursorDidChange
+                    onCursorChange: viewModel.cursorDidChange,
+                    onImageImport: { items in
+                        for item in items { _ = try? appModel.noteStore.addAttachment(id: viewModel.noteID, data: item.data, ext: item.ext) }
+                        return !items.isEmpty
+                    }
                 )
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    EditorStatusBar(
-                        text: viewModel.text,
-                        cursor: viewModel.cursor,
-                        languageOverride: viewModel.languageOverride,
-                        language: viewModel.language,
-                        onSelectLanguage: viewModel.setLanguage
-                    )
+                    VStack(spacing: 0) {
+                        NoteAttachmentsBar(store: appModel.noteStore, noteID: viewModel.noteID)
+                        EditorStatusBar(
+                            text: viewModel.text,
+                            cursor: viewModel.cursor,
+                            languageOverride: viewModel.languageOverride,
+                            language: viewModel.language,
+                            onSelectLanguage: viewModel.setLanguage
+                        )
+                    }
                 }
             } else {
                 Text("This note was deleted.")

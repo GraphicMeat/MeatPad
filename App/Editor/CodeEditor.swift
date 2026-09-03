@@ -61,6 +61,9 @@ struct CodeEditor: NSViewRepresentable {
     /// .onDefinitionClick` is then never wired up (see `makeNSView`), so Cmd+click behaves
     /// exactly like a plain click, unchanged from before this feature existed.
     var onGoToDefinition: ((Int, NSPoint) -> Void)? = nil
+    /// Images dropped on or pasted into this editor (Task 6). `nil` for project files —
+    /// drag/paste there are untouched, unchanged from before this feature existed.
+    var onImageImport: (([(data: Data, ext: String)]) -> Bool)? = nil
 
     /// SF Mono at the given point size.
     static func font(size: CGFloat) -> NSFont {
@@ -109,6 +112,10 @@ struct CodeEditor: NSViewRepresentable {
         textView.onFoldToggle = { [weak coord] fold in MainActor.assumeIsolated { coord?.foldToggle(fold: fold) ?? false } }
         textView.onFoldAll = { [weak coord] in MainActor.assumeIsolated { coord?.foldController.foldAll() } }
         textView.onUnfoldAll = { [weak coord] in MainActor.assumeIsolated { coord?.foldController.unfoldAll() } }
+        if let onImageImport {
+            textView.onImageImport = onImageImport
+            textView.installImageImport()
+        }
         coord.foldController.attach(to: textView)
         coord.lspController.attach(to: textView)
 

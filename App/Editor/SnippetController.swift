@@ -47,6 +47,48 @@ final class SnippetTextView: STTextView {
     /// reading the fork source, not just by "it happened not to conflict."
     var onDefinitionClick: ((NSPoint) -> Bool)?
 
+    /// Images dropped on or pasted into the text. Returns true to consume them (the owner
+    /// attached them), false to let STTextView do what it would have done. nil = the surface
+    /// has no attachments (project files), and drag/paste are untouched.
+    var onImageImport: (([(data: Data, ext: String)]) -> Bool)?
+
+    /// STTextView registers only its readable text types; image files and bitmaps have to
+    /// be asked for explicitly or `draggingEntered` never fires for them.
+    func installImageImport() {
+        registerForDraggedTypes(registeredDraggedTypes + [.fileURL, .png, .tiff])
+    }
+
+    // ponytail: ImageImport.items reads pasteboard file bytes eagerly, so a hover over a drag
+    // carrying many images re-reads them all on every draggingEntered/draggingUpdated call.
+    // Fine for the handful of images a person actually drags; upgrade = check pasteboard types
+    // only in entered/updated and defer the real read to performDragOperation.
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        if onImageImport != nil, !ImageImport.items(from: sender.draggingPasteboard).isEmpty { return .copy }
+        return super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        if onImageImport != nil, !ImageImport.items(from: sender.draggingPasteboard).isEmpty { return .copy }
+        return super.draggingUpdated(sender)
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        if let onImageImport {
+            let items = ImageImport.items(from: sender.draggingPasteboard)
+            if !items.isEmpty, onImageImport(items) { return true }
+        }
+        return super.performDragOperation(sender)
+    }
+
+    /// A screenshot on the pasteboard has no string form; text pastes stay text pastes.
+    override func paste(_ sender: Any?) {
+        if let onImageImport, NSPasteboard.general.string(forType: .string) == nil {
+            let items = ImageImport.items(from: .general)
+            if !items.isEmpty, onImageImport(items) { return }
+        }
+        super.paste(sender)
+    }
+
     /// `.inVisibleRect` keeps the tracking area's rect in sync with the view's own bounds as it
     /// resizes/scrolls, so this only needs to run once (`makeNSView`, not `updateTrackingAreas`).
     func installHoverTracking() {
