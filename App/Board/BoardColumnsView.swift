@@ -20,6 +20,13 @@ struct BoardColumnsView: View {
     /// every board — it hides no cards, so nothing can go missing behind it.
     @AppStorage("board.cardDisplay") private var display: CardDisplay = .full
 
+    /// The window's undo manager. Handed to the store on appear so every card edit lands on
+    /// the same stack ⌘Z and Edit ▸ Undo already pull from.
+    @Environment(\.undoManager) private var undoManager
+    /// `UndoManager` is not observable; its checkpoint notification is how a button learns
+    /// whether there is anything to undo.
+    @State private var canUndo = false
+
     @State private var drafts: [UUID: String] = [:]
     @State private var nameDraft = ""
     @State private var renameTarget: ColumnRef?
@@ -86,6 +93,16 @@ struct BoardColumnsView: View {
                 .frame(maxWidth: 260)
                 LabelFilterField(store: store, selected: $labelFilter)
                 displayPicker
+                Button {
+                    undoManager?.undo()
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!canUndo)
+                .help(String(localized: "Undo"))
+                .accessibilityLabel(Text("Undo"))
+                .accessibilityIdentifier("board.undo")
             }
             .padding(.horizontal, 16)
             .padding(.top, 10)
@@ -102,6 +119,11 @@ struct BoardColumnsView: View {
                 }
                 .padding(16)
             }
+        }
+        .onAppear { store.undoManager = undoManager; canUndo = undoManager?.canUndo ?? false }
+        .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerCheckpoint)) { note in
+            guard let undoManager, note.object as? UndoManager === undoManager else { return }
+            canUndo = undoManager.canUndo
         }
         .alert("Rename Column", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
             TextField("Name", text: $nameDraft)
