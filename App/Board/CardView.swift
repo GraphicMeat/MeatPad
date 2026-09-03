@@ -2,9 +2,10 @@ import SwiftUI
 import MeatPadKit
 
 /// One card, editable in place — the board is the editor. Rows separated by hairlines, the
-/// way `CardEditor` groups its own, and every row is `Text` until it is clicked: that is what
+/// way `CardEditor` groups its own, and every row is a label until it is clicked: that is what
 /// leaves the mouse-down to `.draggable`, so the card drags from its title instead of only
-/// from its padding. Height follows content — the title wraps rather than truncates, and the
+/// from its padding. The label is `LinkableText`, which keeps a URL in the text clickable
+/// without taking the clicks that belong to editing and dragging. Height follows content — the title wraps rather than truncates, and the
 /// notes fold down to their first line. `⋯` opens `CardEditor` for everything at once.
 struct CardView: View {
     @ObservedObject var store: BoardStore
@@ -21,9 +22,9 @@ struct CardView: View {
     /// until the setting next changes.
     let display: CardDisplay
 
-    /// Which of the two text rows currently holds a live field. The face renders `Text` until
+    /// Which of the two text rows currently holds a live field. The face renders a label until
     /// a row is clicked: an `NSTextField` takes every mouse-down for caret placement, which is
-    /// why a card could only be dragged by its padding. Text lets `.draggable` see the press.
+    /// why a card could only be dragged by its padding. A label lets `.draggable` see the press.
     private enum Field: Hashable { case title, notes }
     @State private var editing: Field?
     @FocusState private var focus: Field?
@@ -140,18 +141,27 @@ struct CardView: View {
                     .onChange(of: title) { _, _ in titleDebouncer.call { commit() } }
                     .accessibilityIdentifier("card.title")
             } else {
-                Text(title.isEmpty ? String(localized: "Title") : title)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(title.isEmpty ? .secondary : .primary)
-                    .lineLimit(display.titleLines)
+                LinkableText(
+                    text: faceTitle,
+                    font: .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .body).pointSize, weight: .semibold),
+                    color: title.isEmpty ? .secondaryLabelColor : .labelColor,
+                    lineLimit: display.titleLines ?? 0
+                )
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .onTapGesture { editing = .title; focus = .title }
+                    .background { editTapLayer { editing = .title; focus = .title } }
+                    // One element for the row, standing in for the `Text` this used to be:
+                    // `.isStaticText` keeps it a StaticText for VoiceOver and for the tests
+                    // that read a face, and the value carries the text because that is where
+                    // an AXStaticText's content lives — the label alone reads back empty.
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityAddTraits(.isStaticText)
+                    .accessibilityLabel(faceTitle)
+                    .accessibilityValue(faceTitle)
                     // A tap gesture is invisible to VoiceOver, so the row still offers a named
                     // action — but never the `.isButton` trait: that turns the element into an
                     // AXButton whose value is always "", so both VoiceOver and a UI test reading
-                    // this row's text get nothing back. Text stays Text; the rotor just grows
-                    // an "Edit" entry.
+                    // this row's text get nothing back. The row stays static text; the rotor
+                    // just grows an "Edit" entry.
                     .accessibilityAction(named: Text("Edit")) { editing = .title; focus = .title }
                     .accessibilityIdentifier("card.title")
             }
@@ -184,6 +194,21 @@ struct CardView: View {
                 startsCreatingLabel: editorLabelForm
             )
         }
+    }
+
+    private var faceTitle: String {
+        title.isEmpty ? String(localized: "Title") : title
+    }
+
+    private var faceNotes: String {
+        body_.isEmpty ? String(localized: "Add Notes") : (expanded ? body_ : firstLine)
+    }
+
+    /// "Click this row to edit it" — as a layer BEHIND the text rather than a gesture on it.
+    /// `LinkableText` hands back every click that didn't land on a link, and this is what
+    /// catches them; a gesture on the text itself would swallow the link clicks too.
+    private func editTapLayer(_ begin: @escaping () -> Void) -> some View {
+        Color.clear.contentShape(Rectangle()).onTapGesture(perform: begin)
     }
 
     /// A field that has just taken focus selects everything; a click on a title means
@@ -402,13 +427,18 @@ struct CardView: View {
                     .onChange(of: body_) { _, _ in bodyDebouncer.call { commit() } }
                     .accessibilityIdentifier("card.notes")
             } else {
-                Text(body_.isEmpty ? String(localized: "Add Notes") : (expanded ? body_ : firstLine))
-                    .font(.callout)
-                    .foregroundStyle(body_.isEmpty ? .secondary : .primary)
-                    .lineLimit(expanded ? nil : 1)
+                LinkableText(
+                    text: faceNotes,
+                    font: NSFont.preferredFont(forTextStyle: .callout),
+                    color: body_.isEmpty ? .secondaryLabelColor : .labelColor,
+                    lineLimit: expanded ? 0 : 1
+                )
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .onTapGesture { expanded = true; editing = .notes; focus = .notes }
+                    .background { editTapLayer { expanded = true; editing = .notes; focus = .notes } }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityAddTraits(.isStaticText)
+                    .accessibilityLabel(faceNotes)
+                    .accessibilityValue(faceNotes)
                     // No `.isButton` trait here either — see the title row's comment above.
                     .accessibilityAction(named: Text("Edit")) { expanded = true; editing = .notes; focus = .notes }
                     .accessibilityIdentifier("card.notes")

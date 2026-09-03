@@ -9,6 +9,8 @@ struct NoteWindow: View {
     @StateObject private var viewModel: NoteEditorViewModel
     @StateObject private var snippetController = SnippetController(library: AppModel.shared.snippetLibrary)
     @ObservedObject private var executor = AppModel.shared.commandExecutor
+    /// Raised by a paste that brought a link in; drawn by `.linkPasteHint` below.
+    @StateObject private var linkHint = LinkPasteHintState()
 
     init(noteID: UUID) {
         _viewModel = StateObject(wrappedValue: EditorRegistry.shared.noteViewModel(for: noteID))
@@ -48,7 +50,9 @@ struct NoteWindow: View {
                     onImageImport: { items in
                         for item in items { _ = try? appModel.noteStore.addAttachment(id: viewModel.noteID, data: item.data, ext: item.ext) }
                         return !items.isEmpty
-                    }
+                    },
+                    linkActivation: appModel.linkActivation,
+                    onLinkPaste: { linkHint.pasted() }
                 )
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 0) {
@@ -68,6 +72,7 @@ struct NoteWindow: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .linkPasteHint(linkHint)
         .focusedSceneValue(\.snippetInsertion, SnippetInsertion(languageID: viewModel.language?.id, insert: { snippetController.insert($0) }))
         .focusedSceneValue(\.editorCommandContext, EditorCommandContext.make(
             hostID: ObjectIdentifier(snippetController),

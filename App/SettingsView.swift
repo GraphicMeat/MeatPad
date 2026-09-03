@@ -1,7 +1,13 @@
 import SwiftUI
 import MeatPadKit
 
-/// `Settings` scene: General (font, wrap) + Themes + Snippets + Commands + Privacy.
+/// The Settings tabs, by name — so another window can ask for one (the note editor's link
+/// paste hint sends the user to General, where the setting it describes lives).
+enum SettingsTab: Hashable {
+    case general, themes, snippets, commands, privacy
+}
+
+/// `Settings` scene: General (font, wrap, links) + Themes + Snippets + Commands + Privacy.
 struct SettingsView: View {
     @EnvironmentObject private var appModel: AppModel
 
@@ -22,23 +28,28 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        TabView {
+        TabView(selection: $appModel.settingsTab) {
             GeneralSettingsView()
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .tag(SettingsTab.general)
             ThemesSettingsView(themeStore: appModel.themeStore)
                 .tabItem {
                     Label("Themes", systemImage: "paintpalette")
                         .accessibilityIdentifier("settings-themes-tab")
                 }
+                .tag(SettingsTab.themes)
             SnippetsSettingsView(library: appModel.snippetLibrary)
                 .tabItem { Label("Snippets", systemImage: "text.badge.plus") }
+                .tag(SettingsTab.snippets)
             CommandsSettingsView(store: appModel.commandStore)
                 .tabItem { Label("Commands", systemImage: "terminal") }
+                .tag(SettingsTab.commands)
             PrivacySettingsView()
                 .tabItem {
                     Label("Privacy", systemImage: "hand.raised")
                         .accessibilityIdentifier("settings-privacy-tab")
                 }
+                .tag(SettingsTab.privacy)
         }
         .frame(width: captureSize.width, height: captureSize.height)
         .background { AmbientGlassBackground() }
@@ -81,6 +92,22 @@ private struct GeneralSettingsView: View {
 
                     Toggle(isOn: $appModel.softWrap) {
                         Label("Soft wrap", systemImage: "arrow.turn.down.right")
+                    }
+                    .padding(14)
+
+                    Divider().opacity(0.45).padding(.leading, 44)
+
+                    HStack {
+                        Label("Open links in notes", systemImage: "link")
+                        Spacer()
+                        Picker("Open links in notes", selection: $appModel.linkActivation) {
+                            ForEach(LinkActivation.allCases) { activation in
+                                Text(activation.label).tag(activation)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        .accessibilityIdentifier("settings.linkActivation")
                     }
                     .padding(14)
 

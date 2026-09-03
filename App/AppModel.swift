@@ -50,6 +50,15 @@ final class AppModel: ObservableObject {
     @Published var softWrap: Bool {
         didSet { UserDefaults.standard.set(softWrap, forKey: Self.softWrapDefaultsKey) }
     }
+    /// What opens a link in a note. `⌘-click` by default: a note is a text buffer first, and
+    /// a plain click that opened links would leave the caret unable to land inside a URL.
+    @Published var linkActivation: LinkActivation {
+        didSet { UserDefaults.standard.set(linkActivation.rawValue, forKey: Self.linkActivationDefaultsKey) }
+    }
+    /// Which Settings tab to show. Published rather than local to the scene so a control in
+    /// another window — the note editor's paste hint — can send the user to the exact row it
+    /// is talking about, the same shape as `pendingBoardReveal`.
+    @Published var settingsTab: SettingsTab = .general
     /// MRU list of project folder paths, most recent first, capped at 10 — backs the
     /// File ▸ Open Recent submenu.
     @Published private(set) var recentProjectPaths: [String] {
@@ -107,6 +116,7 @@ final class AppModel: ObservableObject {
     private static let themeDefaultsKey = "themeID"
     private static let fontSizeDefaultsKey = "editorFontSize"
     private static let softWrapDefaultsKey = "softWrap"
+    private static let linkActivationDefaultsKey = "linkActivation"
     private static let recentProjectsDefaultsKey = "recentProjectPaths"
 
     /// Launch override, a sibling of `NoteStore.storageRootOverrideKey`: a board UUID (or
@@ -180,6 +190,9 @@ final class AppModel: ObservableObject {
 
         let savedSoftWrap = UserDefaults.standard.object(forKey: Self.softWrapDefaultsKey) as? Bool
         softWrap = savedSoftWrap ?? true
+
+        let savedLinkActivation = UserDefaults.standard.string(forKey: Self.linkActivationDefaultsKey)
+        linkActivation = savedLinkActivation.flatMap(LinkActivation.init(rawValue:)) ?? .command
 
         recentProjectPaths = UserDefaults.standard.stringArray(forKey: Self.recentProjectsDefaultsKey) ?? []
 

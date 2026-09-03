@@ -47,6 +47,10 @@ final class SnippetTextView: STTextView {
     /// reading the fork source, not just by "it happened not to conflict."
     var onDefinitionClick: ((NSPoint) -> Bool)?
 
+    /// Fired after a paste that brought a link into the buffer, so the note window can say
+    /// once what opens it. nil wherever links aren't drawn (project files).
+    var onLinkPaste: (() -> Void)?
+
     /// Images dropped on or pasted into the text. Returns true to consume them (the owner
     /// attached them), false to let STTextView do what it would have done. nil = the surface
     /// has no attachments (project files), and drag/paste are untouched.
@@ -87,6 +91,12 @@ final class SnippetTextView: STTextView {
             if !items.isEmpty, onImageImport(items) { return }
         }
         super.paste(sender)
+        // Read from the pasteboard rather than the buffer: what was just pasted is exactly
+        // what the hint is about, and the buffer may already have held links for weeks.
+        if let onLinkPaste, let pasted = NSPasteboard.general.string(forType: .string),
+           LinkScanner.containsLink(pasted) {
+            onLinkPaste()
+        }
     }
 
     /// `.inVisibleRect` keeps the tracking area's rect in sync with the view's own bounds as it

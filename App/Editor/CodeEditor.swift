@@ -64,6 +64,13 @@ struct CodeEditor: NSViewRepresentable {
     /// Images dropped on or pasted into this editor (Task 6). `nil` for project files —
     /// drag/paste there are untouched, unchanged from before this feature existed.
     var onImageImport: (([(data: Data, ext: String)]) -> Bool)? = nil
+    /// Draw the URLs in this buffer as links, and how a click hands one over. `nil` for
+    /// project files: they get no link decoration at all, and ⌘-click there stays
+    /// go-to-definition.
+    var linkActivation: LinkActivation? = nil
+    /// Fired after a paste brought a link in, so the note window can say once what opens it.
+    /// `nil` alongside `linkActivation`.
+    var onLinkPaste: (() -> Void)? = nil
 
     /// SF Mono at the given point size.
     static func font(size: CGFloat) -> NSFont {
@@ -116,6 +123,9 @@ struct CodeEditor: NSViewRepresentable {
             textView.onImageImport = onImageImport
             textView.installImageImport()
         }
+        if linkActivation != nil, let onLinkPaste {
+            textView.onLinkPaste = onLinkPaste
+        }
         coord.foldController.attach(to: textView)
         coord.lspController.attach(to: textView)
 
@@ -126,7 +136,13 @@ struct CodeEditor: NSViewRepresentable {
             textView.installHoverTracking()
             textView.onHoverMouseMoved = { [weak coord] event in MainActor.assumeIsolated { coord?.hoverMouseMoved(event) } }
             textView.onHoverDismiss = { [weak coord] in MainActor.assumeIsolated { coord?.lspController.dismissHover() } }
-            textView.onDefinitionClick = { [weak coord] point in MainActor.assumeIsolated { coord?.definitionClick(at: point) ?? false } }
+        }
+
+        // ⌘-click, shared: a definition where a language server backs the document, a link
+        // where one sits under the click. Each half returns false on the other's surface, so
+        // installing one hook for both can't cross them.
+        if lspManager != nil || linkActivation != nil {
+            textView.onDefinitionClick = { [weak coord] point in MainActor.assumeIsolated { coord?.commandClick(at: point) ?? false } }
         }
 
         textView.textDelegate = coord
@@ -192,6 +208,12 @@ struct CodeEditor: NSViewRepresentable {
         coord.applySoftWrap(softWrap)
         coord.applyTheme(theme)
         coord.lspController.setDiagnostics(diagnostics)
+        // Switching between ⌘-click and click changes the attributes the links carry (only
+        // one of the two modes hands STTextView a real `.link`), so it has to repaint.
+        if coord.lastLinkActivation != linkActivation {
+            coord.lastLinkActivation = linkActivation
+            coord.scheduleHighlight()
+        }
 
         coord.applyReveal(reveal)
     }
@@ -222,6 +244,12 @@ struct CodeEditor: NSViewRepresentable {
         /// what this doesn't cover yet; a new parse clears it.
         private var paintedSet = IndexSet()
         private var lastTheme: Theme?
+        /// What the links currently on screen were painted for — see `updateNSView`.
+        var lastLinkActivation: LinkActivation?
+        /// Character ranges whose links are already drawn, so scrolling only scans the text
+        /// it just exposed. Mirrors `paintedSet`; cleared whenever the text changes, because
+        /// every offset in it moves with an edit.
+        private var linkedSet = IndexSet()
         private var lastFontSize: CGFloat?
         private var lastSoftWrap: Bool?
         private var pendingHighlight: DispatchWorkItem?
@@ -275,6 +303,11 @@ struct CodeEditor: NSViewRepresentable {
                     // unpainted text is what fetches its spans. Must run before the completion
                     // guards below, which return early on the common path.
                     self.highlightVisibleIfNeeded()
+                    // Links are drawn per viewport too, and unlike spans they exist on a
+                    // buffer with no grammar — so this is topped up on its own.
+                    if let textView = self.textView {
+                        self.renderLinks(over: self.paintRange(in: textView), repainted: false)
+                    }
                     // Hover is a screen-anchored child window like the completion popup below —
                     // it doesn't track content scrolling either, so any scroll dismisses it.
                     self.lspController.dismissHover()
@@ -327,6 +360,35 @@ struct CodeEditor: NSViewRepresentable {
         /// Returns `false` — SnippetTextView then falls through to `super.mouseDown`'s normal
         /// click placement — whenever no server is alive for this doc (`lspHandle == nil`,
         /// the same gate the async completion hook uses) or the point doesn't land on text.
+        /// One ⌘-click, two possible answers. Links first: a URL under the click is an
+        /// unambiguous target, where a definition request is a guess that may resolve to
+        /// nothing. Neither can fire on the other's surface (`linkActivation` is nil for
+        /// project files, `lspHandle` nil for notes), so the order only matters in principle.
+        func commandClick(at pointInWindow: NSPoint) -> Bool {
+            if linkClick(at: pointInWindow) { return true }
+            return definitionClick(at: pointInWindow)
+        }
+
+        /// Opens the link under a ⌘-click, if the click landed on one. Only the ⌘ mode comes
+        /// through here — in click mode the links carry a real `.link` attribute and
+        /// STTextView opens them itself.
+        private func linkClick(at pointInWindow: NSPoint) -> Bool {
+            guard parent.linkActivation == .command,
+                  let textView, let window = textView.window else { return false }
+            let screenPoint = window.convertPoint(toScreen: pointInWindow)
+            let index = textView.characterIndex(for: screenPoint)
+            guard index != NSNotFound else { return false }
+            let text = (textView.text ?? "") as NSString
+            guard index < text.length else { return false }
+            // Scan the clicked line, not the document: a note can be a megabyte, and a link
+            // never spans a newline.
+            let line = text.lineRange(for: NSRange(location: index, length: 0))
+            guard let link = LinkScanner.links(in: textView.text ?? "", range: line)
+                .first(where: { NSLocationInRange(index, $0.range) }) else { return false }
+            LinkOpener.open(link.url)
+            return true
+        }
+
         func definitionClick(at pointInWindow: NSPoint) -> Bool {
             guard let textView, let window = textView.window, lspHandle != nil,
                   parent.onGoToDefinition != nil else { return false }
@@ -445,7 +507,13 @@ struct CodeEditor: NSViewRepresentable {
             // full-range reset wipes underline attributes along with everything else, so this
             // must run last regardless of which path through this method is taken.
             defer { lspController.render() }
-            guard let textView, let engine = highlightEngine else { return }
+            guard let textView else { return }
+            // Links aren't a grammar's business, so they are (re)drawn even on a buffer with
+            // no highlighter at all — which is most notes. Deferred so the no-engine return
+            // below still gets them; LIFO means this runs before the diagnostics render.
+            linkedSet = IndexSet()
+            defer { renderLinks(over: paintRange(in: textView)) }
+            guard let engine = highlightEngine else { return }
             let source = textView.text ?? ""
             let full = NSRange(location: 0, length: (source as NSString).length)
             guard full.length > 0 else { return }
@@ -511,6 +579,7 @@ struct CodeEditor: NSViewRepresentable {
             if clipped.length > 0, let integers = Range(clipped) {
                 resetAttributes(over: clipped)
                 paint(spans, textLength: length)
+                renderLinks(over: clipped)
                 paintedSet.insert(integersIn: integers)
                 painted = true
             }
@@ -537,6 +606,9 @@ struct CodeEditor: NSViewRepresentable {
                 resetAttributes(over: range)
             }
             paint(lastSpans, textLength: length)
+            for region in paintedSet.rangeView {
+                renderLinks(over: NSRange(location: region.lowerBound, length: region.count))
+            }
             lspController.render()
         }
 
@@ -572,6 +644,35 @@ struct CodeEditor: NSViewRepresentable {
         /// `textLength` is passed in rather than re-read per span: the text can shrink
         /// between a parse starting and its spans being painted, and an out-of-bounds
         /// NSRange into the text storage is a crash, not a glitch.
+        /// Draws the links in the painted window. Called from the same three places as
+        /// `lspController.render()` and for the same reason: `resetAttributes` wipes every
+        /// attribute over its range, so anything that isn't a syntax colour has to go back on
+        /// after each pass.
+        private func renderLinks(over range: NSRange, repainted: Bool = true) {
+            guard let activation = parent.linkActivation, let textView else { return }
+            let text = textView.text ?? ""
+            let clipped = NSIntersectionRange(range, NSRange(location: 0, length: (text as NSString).length))
+            guard clipped.length > 0, let integers = Range(clipped) else { return }
+            // `repainted` = the caller just reset this range's attributes, so its links are
+            // gone whatever `linkedSet` remembers. Otherwise this is a scroll topping up the
+            // gaps, and already-decorated text is skipped.
+            if !repainted, IndexSet(integersIn: integers).subtracting(linkedSet).isEmpty { return }
+            linkedSet.insert(integersIn: integers)
+            for link in LinkScanner.links(in: text, range: clipped) {
+                // Colour only. STTextView draws no underline from `.underlineStyle` here —
+                // with or without an explicit `.underlineColor` — checked twice against a
+                // screenshot, so the attributes are left off rather than carried dead. The
+                // card faces underline (they draw through TextKit 1, where it works) and
+                // want it more: a card can be painted any colour, an editor line can't.
+                var attributes: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.linkColor]
+                // Only click mode hands over the real `.link`: STTextView opens one on a plain
+                // click and consumes that click, so in ⌘-click mode the attribute would stop
+                // the caret ever landing inside a URL to edit it.
+                if activation == .click { attributes[.link] = link.url }
+                textView.addAttributes(attributes, range: link.range)
+            }
+        }
+
         private func paint(_ spans: [HighlightSpan], textLength: Int) {
             guard let textView else { return }
             for span in spans {
