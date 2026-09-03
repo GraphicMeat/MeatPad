@@ -30,6 +30,10 @@ struct CardView: View {
 
     @State private var title = ""
     @State private var body_ = ""
+    /// What `commit()` last wrote, so the two `.onChange` handlers below can tell "our own
+    /// write echoing back" from "someone else changed the card" (undo, redo, the ⋯ editor).
+    @State private var committedTitle = ""
+    @State private var committedBody: String?
     @State private var expanded = false
     @State private var titleDebouncer = Debouncer(delay: 0.5)
     @State private var bodyDebouncer = Debouncer(delay: 0.5)
@@ -77,13 +81,14 @@ struct CardView: View {
         .onAppear { load() }
         // The same view instance is reused when a card moves column; reload so drafts follow it.
         .onChange(of: card.id) { _, _ in titleDebouncer.cancel(); bodyDebouncer.cancel(); editing = nil; load() }
-        // The editor writes this very card, so take what it wrote. The inequality guard is
-        // what keeps this from fighting the cell's own field: a commit from here comes back
-        // identical, and a row being typed into is left alone.
-        .onChange(of: card.title) { _, new in if editing != .title, new != title { title = new } }
+        // Our own commits echo back as exactly what we wrote; anything else is an undo, a redo, or
+        // the ⋯ editor writing this card. Take it even while the caret is in the field — otherwise the
+        // stale draft re-commits over it on blur and the undo silently undoes itself.
+        .onChange(of: card.title) { _, new in
+            if new != committedTitle { committedTitle = new; title = new }
+        }
         .onChange(of: card.body) { _, new in
-            let text = new ?? ""
-            if editing != .notes, text != body_ { body_ = text }
+            if new != committedBody { committedBody = new; body_ = new ?? "" }
         }
         // Changing the board setting overrides whatever this card was left on — that is the
         // point of "fold all": one card the user opened earlier must not survive it.
@@ -489,6 +494,8 @@ struct CardView: View {
     private func load() {
         title = card.title
         body_ = card.body ?? ""
+        committedTitle = card.title
+        committedBody = card.body
         expanded = notesOpenByDefault
         refreshSummarizable()
     }
@@ -512,6 +519,11 @@ struct CardView: View {
         // An empty title would be rejected by the store; keep the stored one instead.
         let edited = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? card.title : title
         let editedBody = body_.isEmpty ? nil : body_
+        // Recorded even on the no-op path below: this is what the card's own values are about
+        // to be (or already are), and the `.onChange` handlers above must not mistake either
+        // for an external change and resync the draft over what the user just typed.
+        committedTitle = edited
+        committedBody = editedBody
         // Every write through the store is an undo step, and a blur is not an edit: clicking
         // into a row and back out again must not leave a ⌘Z that restores an identical card.
         guard edited != card.title || editedBody != card.body else { return }
