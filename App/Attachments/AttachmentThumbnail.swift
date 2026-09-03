@@ -9,7 +9,9 @@ struct AttachmentThumbnail: View {
     let size: CGFloat
     @State private var image: NSImage?
 
-    private static let cache = NSCache<NSURL, NSImage>()
+    // Keyed on URL + pixel size: the face (44pt→88px) and the editor (56pt→112px) can both be
+    // on screen for the same URL, and a URL-only key would let whichever decoded first win.
+    private static let cache = NSCache<NSString, NSImage>()
 
     var body: some View {
         ZStack {
@@ -24,7 +26,8 @@ struct AttachmentThumbnail: View {
     }
 
     private static func thumbnail(for url: URL, maxPixels: Int) async -> NSImage? {
-        if let cached = cache.object(forKey: url as NSURL) { return cached }
+        let key = "\(url.absoluteString)@\(maxPixels)" as NSString
+        if let cached = cache.object(forKey: key) { return cached }
         let made = await Task.detached(priority: .utility) { () -> NSImage? in
             guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
             let options: [CFString: Any] = [
@@ -35,7 +38,7 @@ struct AttachmentThumbnail: View {
             guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
             return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
         }.value
-        if let made { cache.setObject(made, forKey: url as NSURL) }
+        if let made { cache.setObject(made, forKey: key) }
         return made
     }
 }

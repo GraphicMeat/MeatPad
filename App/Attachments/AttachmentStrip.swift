@@ -19,6 +19,13 @@ struct AttachmentStrip: View {
         HStack(spacing: 6) {
             ForEach(Array(shown.enumerated()), id: \.element) { index, url in
                 AttachmentThumbnail(url: url, size: size)
+                    // The identifier and label go on the tile itself, before the overlay is
+                    // attached — a container-level identifier pushes onto every child (this
+                    // repo has hit that before), which would swallow the remove Button's own
+                    // "\(identifier).remove" id and make it unresolvable to UI tests.
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Text("Image"))
+                    .accessibilityIdentifier(identifier)
                     .contentShape(Rectangle())
                     .onTapGesture { preview = url }
                     .overlay(alignment: .topTrailing) {
@@ -39,8 +46,6 @@ struct AttachmentStrip: View {
                         Button("Quick Look") { preview = url }
                         if let onRemove { Button("Remove Image", role: .destructive) { onRemove(index) } }
                     }
-                    .accessibilityLabel(Text("Image"))
-                    .accessibilityIdentifier(identifier)
             }
             if urls.count > shown.count {
                 Text("+\(urls.count - shown.count)")
