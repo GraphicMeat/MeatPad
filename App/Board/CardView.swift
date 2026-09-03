@@ -122,7 +122,14 @@ struct CardView: View {
                     .lineLimit(display.titleLines)
                     .focused($focus, equals: .title)
                     .onSubmit { focus = nil }
-                    .onAppear { focus = .title }
+                    .onAppear {
+                        // The tap below already set `focus`, but SwiftUI can ignore a focus
+                        // assignment made in the same transaction that inserts this field —
+                        // and `onAppear` still runs inside that transaction. Setting it again
+                        // a turn later, after the transaction has closed, is what actually
+                        // moves first responder.
+                        DispatchQueue.main.async { focus = .title }
+                    }
                     .accessibilityIdentifier("card.title")
             } else {
                 Text(title.isEmpty ? String(localized: "Title") : title)
@@ -131,11 +138,13 @@ struct CardView: View {
                     .lineLimit(display.titleLines)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
-                    .onTapGesture { editing = .title }
-                    // A tap gesture is invisible to VoiceOver, and a Button here would take
-                    // the mouse-down back off `.draggable` — trait plus action, not a Button.
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAction { editing = .title }
+                    .onTapGesture { editing = .title; focus = .title }
+                    // A tap gesture is invisible to VoiceOver, so the row still offers a named
+                    // action — but never the `.isButton` trait: that turns the element into an
+                    // AXButton whose value is always "", so both VoiceOver and a UI test reading
+                    // this row's text get nothing back. Text stays Text; the rotor just grows
+                    // an "Edit" entry.
+                    .accessibilityAction(named: Text("Edit")) { editing = .title; focus = .title }
                     .accessibilityIdentifier("card.title")
             }
             if summarizing {
@@ -376,7 +385,12 @@ struct CardView: View {
                     .lineLimit(1...)
                     .focused($focus, equals: .notes)
                     .newlineOnModifiedReturn()
-                    .onAppear { focus = .notes }
+                    .onAppear {
+                        // Same seam as the title field's onAppear above: the tap sets `focus`
+                        // once, this sets it again after SwiftUI's insert transaction closes,
+                        // which is the assignment that actually lands.
+                        DispatchQueue.main.async { focus = .notes }
+                    }
                     .onChange(of: body_) { _, _ in bodyDebouncer.call { commit() } }
                     .accessibilityIdentifier("card.notes")
             } else {
@@ -386,9 +400,9 @@ struct CardView: View {
                     .lineLimit(expanded ? nil : 1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
-                    .onTapGesture { expanded = true; editing = .notes }
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAction { expanded = true; editing = .notes }
+                    .onTapGesture { expanded = true; editing = .notes; focus = .notes }
+                    // No `.isButton` trait here either — see the title row's comment above.
+                    .accessibilityAction(named: Text("Edit")) { expanded = true; editing = .notes; focus = .notes }
                     .accessibilityIdentifier("card.notes")
             }
             Button {

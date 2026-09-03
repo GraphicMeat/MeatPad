@@ -65,6 +65,7 @@ final class BoardCardFaceUITests: XCTestCase {
         app.typeText(" typed")
         app.staticTexts["Todo"].firstMatch.click()   // blur → commit
         XCTAssertTrue(waitForStoredBody("first line\nsecond line typed"))
+        XCTAssertTrue(app.staticTexts["card.notes"].waitForExistence(timeout: 5), "the row never blurred back to text")
 
         app.typeKey("z", modifierFlags: .command)
 
