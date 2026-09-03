@@ -31,6 +31,7 @@ struct CardView: View {
     @State private var title = ""
     @State private var body_ = ""
     @State private var expanded = false
+    @State private var titleDebouncer = Debouncer(delay: 0.5)
     @State private var bodyDebouncer = Debouncer(delay: 0.5)
     @State private var editingDue = false
     @State private var summarizing = false
@@ -75,7 +76,7 @@ struct CardView: View {
         }
         .onAppear { load() }
         // The same view instance is reused when a card moves column; reload so drafts follow it.
-        .onChange(of: card.id) { _, _ in bodyDebouncer.cancel(); editing = nil; load() }
+        .onChange(of: card.id) { _, _ in titleDebouncer.cancel(); bodyDebouncer.cancel(); editing = nil; load() }
         // The editor writes this very card, so take what it wrote. The inequality guard is
         // what keeps this from fighting the cell's own field: a commit from here comes back
         // identical, and a row being typed into is left alone.
@@ -94,6 +95,7 @@ struct CardView: View {
                 // A blank title is never stored, so put the card's own back — otherwise the
                 // idle row draws its grey placeholder over a card that still has a name.
                 if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { title = card.title }
+                titleDebouncer.cancel()
                 commit()
             }
             if old == .notes, new != .notes { bodyDebouncer.cancel(); commit() }
@@ -130,6 +132,7 @@ struct CardView: View {
                         // moves first responder.
                         DispatchQueue.main.async { focus = .title }
                     }
+                    .onChange(of: title) { _, _ in titleDebouncer.call { commit() } }
                     .accessibilityIdentifier("card.title")
             } else {
                 Text(title.isEmpty ? String(localized: "Title") : title)

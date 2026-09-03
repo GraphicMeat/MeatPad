@@ -118,6 +118,13 @@ struct BoardColumnsView: View {
                     addColumnTile
                 }
                 .padding(16)
+                .contentShape(Rectangle())
+                // AppKit only moves first responder to something that accepts it, so a click on a
+                // column header, the column background, or a card's padding leaves the card field
+                // editing forever — and the face relies on the blur to commit and swap back to text.
+                // An outer tap gives those clicks a job. Inner gestures win, so a click on a card's
+                // title/notes text (which starts editing) or on a button never reaches this.
+                .onTapGesture { NSApp.keyWindow?.makeFirstResponder(nil) }
             }
         }
         .onAppear { store.undoManager = undoManager; canUndo = undoManager?.canUndo ?? false }
