@@ -2107,7 +2107,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "添加"
+            "value" : "附加"
           }
         }
       }
@@ -13281,7 +13281,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Schnellansicht"
+            "value" : "Übersicht"
           }
         },
         "es" : {
@@ -13293,13 +13293,13 @@
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Aperçu rapide"
+            "value" : "Coup d’œil"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Anteprima rapida"
+            "value" : "Visualizzazione rapida"
           }
         },
         "ja" : {
@@ -13311,7 +13311,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "퀵룩"
+            "value" : "훑어보기"
           }
         },
         "pt-BR" : {
@@ -18797,7 +18797,7 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Rückgängig machen"
+            "value" : "Widerrufen"
           }
         },
         "es" : {
