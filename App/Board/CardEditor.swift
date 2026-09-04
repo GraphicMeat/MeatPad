@@ -132,7 +132,7 @@ struct CardEditor: View {
         // card has one, and an empty 0pt target is not a drop target at all.
         .dropDestination(for: CardDrop.self) { drops, _ in
             var handled = false
-            for case .image(let data, let ext) in drops {
+            for case .image(let data, let ext, _) in drops {
                 handled = ((try? store.addAttachment(boardID: boardID, cardID: card.id, data: data, ext: ext)) != nil) || handled
             }
             return handled

@@ -170,6 +170,18 @@ public final class BoardStore: ObservableObject {
         return card
     }
 
+    /// A card made out of a dropped image. One outer undo group around both mutations: the
+    /// user made one gesture, so ⌘Z must take the card and its file away together instead of
+    /// leaving an empty card behind.
+    @discardableResult
+    public func addCard(boardID: UUID, columnID: UUID, title: String, image data: Data, ext: String) throws -> Card {
+        undoManager?.beginUndoGrouping()
+        defer { undoManager?.endUndoGrouping() }
+        let card = try addCard(boardID: boardID, columnID: columnID, title: title)
+        try addAttachment(boardID: boardID, cardID: card.id, data: data, ext: ext)
+        return card
+    }
+
     /// Replaces a card wholesale and stamps `modified`. Callers edit a copy and hand it back.
     public func updateCard(boardID: UUID, card: Card) throws {
         let idx = try boardIndex(boardID)

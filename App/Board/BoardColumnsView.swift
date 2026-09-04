@@ -34,20 +34,20 @@ struct BoardColumnsView: View {
     @State private var addColumnTarget: AddColumnScope?
     /// A multi-item paste waiting on the user's call: split it, or keep it as one card.
     @State private var splitTarget: SplitTarget?
-    /// Where a dragged card would land right now — drives the insertion bar and the column
-    /// highlight, so a drag shows its destination instead of guessing.
+    /// What the live drag would do right now — drives the insertion bar, the column highlight
+    /// and a card's marching ants, so a drag shows its destination instead of guessing.
     @State private var dropTarget: DropTarget?
+    /// The dragged image, decoded once per drag so the hover preview costs nothing per frame.
+    @StateObject private var dragLoader = DragImageLoader()
+    /// Card row frames, each in its own column's coordinate space. `DropInfo` gives a pointer
+    /// position and nothing else — this is what turns it into "over that card" / "in that gap".
+    @State private var rowFrames: [UUID: CGRect] = [:]
 
     private struct SplitTarget {
         let boardID: UUID
         let columnID: UUID
         let text: String
         let drafts: [CardDraft]
-    }
-
-    private struct DropTarget: Equatable {
-        let column: UUID
-        let index: Int
     }
 
     /// A column plus the board that owns it — `boardID` nil means a global column, which is
@@ -236,6 +236,7 @@ struct BoardColumnsView: View {
 
     private func columnView(_ column: BoardColumn) -> some View {
         let items = cards(in: column)
+        let space = "column-\(column.id.uuidString)"
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 if let emoji = column.emoji { Text(emoji) }
@@ -296,9 +297,10 @@ struct BoardColumnsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in
                         insertionBar(for: column, at: index)
-                        cardRow(ref, in: column, at: index, visible: items)
+                        cardRow(ref, in: column, at: index, visible: items, space: space)
                     }
                     insertionBar(for: column, at: items.count)
+                    dropGhost(for: column)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -312,40 +314,88 @@ struct BoardColumnsView: View {
                 .fill(MeatPadGlass.violet.opacity(isTargeting(column) ? 0.10 : 0))
         }
         .animation(.snappy(duration: 0.18), value: dropTarget)
-        // Column-level drop appends; the per-card drop inserts above the card it lands on.
-        // Cards only: the column has no card to hang an image on, so a `.image` payload that
-        // lands on bare column space is refused rather than silently attached somewhere.
-        .dropDestination(for: CardDrop.self) { drops, _ in
-            defer { dropTarget = nil }
-            let ids: [String] = drops.compactMap { drop in
-                if case .card(let id) = drop { return id.uuidString }
-                return nil
-            }
-            guard !ids.isEmpty else { return false }
-            return move(ids, to: column.id, visible: items, at: items.count)
-        } isTargeted: { targeted in
-            if targeted {
-                if dropTarget?.column != column.id { dropTarget = DropTarget(column: column.id, index: items.count) }
-            } else if dropTarget?.column == column.id {
-                dropTarget = nil
-            }
+        // The named space has to sit on the same view as the drop, or `DropInfo.location` and
+        // the row frames below are measured against different origins.
+        .coordinateSpace(name: space)
+        .onDrop(of: [.image, .fileURL, .utf8PlainText, .plainText], delegate: ColumnDropDelegate(
+            column: column.id,
+            rows: rows(of: items),
+            target: $dropTarget,
+            loader: dragLoader,
+            attach: attach,
+            create: newCardBoard.map { owner in { drop in newCard(drop, in: column.id, on: owner) } },
+            moveCards: { ids, index in move(ids, to: column.id, visible: items, at: index) }
+        ))
+    }
+
+    /// The tint belongs to the column only when the column itself is the target — an image
+    /// over a card is announced by that card's ants instead.
+    private func isTargeting(_ column: BoardColumn) -> Bool {
+        switch dropTarget {
+        case .insert(let id, _), .newCard(let id): return id == column.id
+        default: return false
         }
     }
 
-    private func isTargeting(_ column: BoardColumn) -> Bool {
-        dropTarget?.column == column.id
+    /// Only rows whose frame has been measured — an unmeasured one would shift every index
+    /// after it. In practice a column's `VStack` lays all of its rows out at once.
+    private func rows(of items: [CardRef]) -> [BoardDropRow] {
+        items.compactMap { ref in rowFrames[ref.id].map { BoardDropRow(id: ref.id, frame: $0) } }
+    }
+
+    /// The board a dropped image would make a card on. In the all-boards view there is no
+    /// answer unless exactly one board exists, and guessing is worse than refusing.
+    private var newCardBoard: UUID? {
+        board?.id ?? (store.boards.count == 1 ? store.boards[0].id : nil)
+    }
+
+    private func attach(_ cardID: UUID, _ drop: CardDrop) -> Bool {
+        guard case .image(let data, let ext, _) = drop,
+              let owner = store.boards.first(where: { $0.cards.contains { $0.id == cardID } })
+        else { return false }
+        return (try? store.addAttachment(boardID: owner.id, cardID: cardID, data: data, ext: ext)) != nil
+    }
+
+    private func newCard(_ drop: CardDrop, in columnID: UUID, on boardID: UUID) -> Bool {
+        guard case .image(let data, let ext, let name) = drop else { return false }
+        let title = BoardDropPlacement.newCardTitle(fileName: name, fallback: String(localized: "Image"))
+        return (try? store.addCard(boardID: boardID, columnID: columnID, title: title, image: data, ext: ext)) != nil
     }
 
     /// The gap a dropped card would slot into. Zero height until it is the live target, so
     /// the stack doesn't shift around while nothing is being dragged.
     @ViewBuilder
     private func insertionBar(for column: BoardColumn, at index: Int) -> some View {
-        let active = dropTarget == DropTarget(column: column.id, index: index)
+        let active = dropTarget == .insert(column: column.id, index: index)
         Capsule(style: .continuous)
             .fill(MeatPadGlass.violet)
             .frame(height: active ? 3 : 0)
             .opacity(active ? 1 : 0)
             .padding(.vertical, active ? 2 : 0)
+    }
+
+    /// The card an image dropped on bare column space would become — shown where it would
+    /// land, so "nothing happened" stops being the answer to dropping a photo on a column.
+    @ViewBuilder
+    private func dropGhost(for column: BoardColumn) -> some View {
+        if dropTarget == .newCard(column: column.id) {
+            HStack(spacing: 8) {
+                if let thumbnail = dragLoader.image?.thumbnail {
+                    Image(nsImage: thumbnail)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                Text("New card").font(.callout).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(height: 64)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .marchingAnts(true, cornerRadius: 10)
+            .accessibilityIdentifier("column.dropGhost")
+        }
     }
 
     /// Trailing pseudo-column: the only place columns get created, so the header menu stays
@@ -388,7 +438,7 @@ struct BoardColumnsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(otherCards) { ref in
-                        cardRow(ref, in: nil)
+                        cardRow(ref, in: nil, space: Self.otherSpace)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -397,11 +447,25 @@ struct BoardColumnsView: View {
         }
         .frame(width: 280, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .top)
+        .coordinateSpace(name: Self.otherSpace)
+        // Images onto its cards and nothing else: "Other" is a view of several board-only
+        // columns at once, so it has no column a reorder or a new card could mean.
+        .onDrop(of: [.image], delegate: ColumnDropDelegate(
+            column: nil,
+            rows: rows(of: otherCards),
+            target: $dropTarget,
+            loader: dragLoader,
+            attach: attach,
+            create: nil,
+            moveCards: { _, _ in false }
+        ))
     }
+
+    private static let otherSpace = "column-other"
 
     // MARK: - Cards
 
-    private func cardRow(_ ref: CardRef, in column: BoardColumn?, at index: Int = 0, visible: [CardRef] = []) -> some View {
+    private func cardRow(_ ref: CardRef, in column: BoardColumn?, at index: Int = 0, visible: [CardRef] = [], space: String) -> some View {
         CardView(
             store: store,
             boardID: ref.board.id,
@@ -424,29 +488,39 @@ struct BoardColumnsView: View {
                 .padding(.vertical, 6)
                 .background(Capsule().fill(.thinMaterial))
         }
-        // One destination, two payloads: a card id reorders, an image attaches to the card
-        // it was dropped on. Only real columns can take a reorder — "Other" has no single
-        // target column to move into — but an image lands on any card, that one included.
-        .dropDestination(for: CardDrop.self) { drops, _ in
-            defer { dropTarget = nil }
-            var handled = false
-            for drop in drops {
-                switch drop {
-                case .card(let id):
-                    guard let column else { continue }
-                    handled = move([id.uuidString], to: column.id, visible: visible, at: index) || handled
-                case .image(let data, let ext):
-                    handled = ((try? store.addAttachment(boardID: ref.board.id, cardID: ref.card.id, data: data, ext: ext)) != nil) || handled
+        // The column owns the drop — a card only reports where it is, so the column can tell
+        // "over this card" from "in the gap under it".
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(space)) } action: { rowFrames[ref.id] = $0 }
+        .onDisappear { rowFrames[ref.id] = nil }
+        .marchingAnts(dropTarget == .attach(card: ref.card.id), cornerRadius: 10)
+        .overlay(alignment: .topTrailing) { dropBadge(for: ref.card.id) }
+    }
+
+    /// What the card is about to receive. The ants say "this card"; the thumbnail says "this
+    /// image" — between them there is nothing left to guess about an image drop.
+    @ViewBuilder
+    private func dropBadge(for cardID: UUID) -> some View {
+        if dropTarget == .attach(card: cardID), let thumbnail = dragLoader.image?.thumbnail {
+            Image(nsImage: thumbnail)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(.thinMaterial, lineWidth: 1)
                 }
-            }
-            return handled
-        } isTargeted: { targeted in
-            guard let column else { return }
-            if targeted {
-                dropTarget = DropTarget(column: column.id, index: index)
-            } else if dropTarget == DropTarget(column: column.id, index: index) {
-                dropTarget = nil
-            }
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "plus.circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, MeatPadGlass.violet)
+                        .font(.caption)
+                        .offset(x: 3, y: 3)
+                }
+                .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+                .padding(6)
+                .allowsHitTesting(false)
+                .accessibilityIdentifier("card.dropPreview")
         }
     }
 

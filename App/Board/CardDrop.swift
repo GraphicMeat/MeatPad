@@ -10,18 +10,21 @@ import UniformTypeIdentifiers
 /// throw — a silent no-op drop instead of falling through to the image representations.
 enum CardDrop: Transferable {
     case card(UUID)
-    case image(Data, ext: String)
+    /// `name` is the dropped file's stem, which names the card an image drop creates. Only a
+    /// file drag has one — a browser or pasteboard image arrives as bare bytes.
+    case image(Data, ext: String, name: String?)
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(importedContentType: .image) { received in
             let type = UTType(filenameExtension: received.file.pathExtension)
             let ext = type?.preferredFilenameExtension ?? received.file.pathExtension.lowercased()
             // The received file is temporary: read it here, inside the import, or it is gone.
-            return .image(try Data(contentsOf: received.file), ext: ext)
+            return .image(try Data(contentsOf: received.file), ext: ext,
+                          name: received.file.deletingPathExtension().lastPathComponent)
         }
-        DataRepresentation(importedContentType: .png) { .image($0, ext: "png") }
-        DataRepresentation(importedContentType: .jpeg) { .image($0, ext: "jpeg") }
-        DataRepresentation(importedContentType: .tiff) { .image($0, ext: "tiff") }
+        DataRepresentation(importedContentType: .png) { .image($0, ext: "png", name: nil) }
+        DataRepresentation(importedContentType: .jpeg) { .image($0, ext: "jpeg", name: nil) }
+        DataRepresentation(importedContentType: .tiff) { .image($0, ext: "tiff", name: nil) }
         ProxyRepresentation(importing: { (id: String) in
             guard let uuid = UUID(uuidString: id) else { throw CocoaError(.coderInvalidValue) }
             return CardDrop.card(uuid)

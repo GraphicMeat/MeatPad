@@ -798,6 +798,28 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: url), Data([5]))
     }
 
+    func testAddCardWithAnImageUndoesAsOneStep() throws {
+        let store = try makeStore()
+        let undo = undoable(store)
+        let board = try store.createBoard(name: "b")
+        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id,
+                                     title: "shot", image: Data([9]), ext: "png")
+
+        let name = try XCTUnwrap(store.boards[0].cards.first?.attachments?.first)
+        let url = store.attachmentURL(cardID: card.id, name: name)
+        XCTAssertEqual(try Data(contentsOf: url), Data([9]))
+
+        // One undo, not two: the card and the file it was dropped as are one user action.
+        undo.undo()
+        XCTAssertTrue(store.boards[0].cards.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+
+        undo.redo()
+        XCTAssertEqual(store.boards[0].cards.map(\.title), ["shot"])
+        XCTAssertEqual(store.boards[0].cards[0].attachments, [name])
+        XCTAssertEqual(try Data(contentsOf: url), Data([9]))
+    }
+
     func testDeleteBoardRemovesEveryCardsFiles() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "b")
