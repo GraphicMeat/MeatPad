@@ -13,3 +13,6 @@ App/Info.plist
 tmp/
 MeatPadKit/Package.resolved
 .xcodegen-stamp
+
+# Serena MCP workspace — local only
+.serena/
