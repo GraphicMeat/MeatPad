@@ -25,7 +25,7 @@ struct MeatPadApp: App {
             }
         }
         .commands {
-            CommandGroup(after: .appInfo) { CheckForUpdatesCommand() }
+            AppInfoCommands()
             CommandGroup(replacing: .newItem) {
                 Button("New Note") { createNote() }
                     .keyboardShortcut("n", modifiers: .command)
@@ -207,6 +207,19 @@ private struct NotesBrowserCommands: View {
 
 /// Check for Updates…, routed to Sparkle's shared updater controller. Disabled in DEBUG so
 /// dev builds can't trigger a feed check or offer to install over themselves.
+/// The app menu's top block. One `Commands` type rather than two groups spelled out at the
+/// call site: `@CommandsBuilder` takes ten items and the block is already full.
+private struct AppInfoCommands: Commands {
+    var body: some Commands {
+        // Replaced, not decorated: the stock item shows the standard panel with no options,
+        // and the studio's mark and link ride in on the credits field.
+        CommandGroup(replacing: .appInfo) {
+            Button("About MeatPad") { AboutPanel.show() }
+        }
+        CommandGroup(after: .appInfo) { CheckForUpdatesCommand() }
+    }
+}
+
 private struct CheckForUpdatesCommand: View {
     var body: some View {
         Button("Check for Updates…") {

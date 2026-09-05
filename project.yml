@@ -104,7 +104,7 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "14.0"
-        NSHumanReadableCopyright: "© 2026 Rokas"
+        NSHumanReadableCopyright: "© 2026 Graphic Meat"
         SUFeedURL: https://github.com/GraphicMeat/MeatPad/releases/latest/download/appcast.xml
         SUEnableAutomaticChecks: true
         SUPublicEDKey: "9OobPkT0p5WGp0wf2aSbADivVllEKZaz0gKhElMocU0="
