@@ -282,12 +282,7 @@ struct BoardColumnsView: View {
 
     /// An attachment tile's own double-click (Quick Look) wins over presenting the card.
     private func isAttachmentTile(_ event: NSEvent) -> Bool {
-        var view = event.window?.contentView?.hitTest(event.locationInWindow)
-        while let current = view {
-            if current is DoubleClickCatcherView { return true }
-            view = current.superview
-        }
-        return false
+        DoubleClickCatcherView.catcher(for: event) != nil
     }
 
     @ViewBuilder
@@ -301,29 +296,29 @@ struct BoardColumnsView: View {
                         .contentShape(Rectangle())
                         .onTapGesture { presentedCard = nil }
                         .accessibilityIdentifier("board.present.backdrop")
-                    VStack(spacing: 14) {
-                        ScrollView {
-                            CardView(
-                                store: store,
-                                boardID: ref.board.id,
-                                card: ref.card,
-                                boardBadge: nil,
-                                isDone: columnIsDone(ref),
-                                isSelected: false,
-                                display: .full
-                            )
-                            .environment(\.cardScale, presentScale)
-                            .frame(width: min(280 * presentScale, geometry.size.width - 80))
-                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { presentedHeight = $0 }
-                        }
-                        .scrollBounceBehavior(.basedOnSize)
-                        // A ScrollView takes all the height it is offered, which would pin the
-                        // card to the top; sized to its content it sits centred, and only a
-                        // card taller than the window scrolls.
-                        .frame(height: min(presentedHeight, geometry.size.height - 100))
-                        presentControls
+                    ScrollView {
+                        CardView(
+                            store: store,
+                            boardID: ref.board.id,
+                            card: ref.card,
+                            boardBadge: nil,
+                            isDone: columnIsDone(ref),
+                            isSelected: false,
+                            display: .full
+                        )
+                        .environment(\.cardScale, presentScale)
+                        .frame(width: min(280 * presentScale, geometry.size.width - 80))
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { presentedHeight = $0 }
                     }
+                    .scrollBounceBehavior(.basedOnSize)
+                    // A ScrollView takes all the height it is offered, which would pin the
+                    // card to the top; sized to its content it sits centred, and only a
+                    // card taller than the window scrolls.
+                    .frame(height: min(presentedHeight, geometry.size.height - 100))
                 }
+                // Parked in the corner, not under the card: +/- changes the card's height, and
+                // controls that ride on it walk out from under the cursor between clicks.
+                .overlay(alignment: .bottomTrailing) { presentControls.padding(20) }
             }
             .transition(.opacity)
         }

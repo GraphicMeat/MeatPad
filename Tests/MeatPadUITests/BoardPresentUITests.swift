@@ -53,6 +53,21 @@ final class BoardPresentUITests: XCTestCase {
         XCTAssertTrue(poll { !close.exists }, "Escape left the card presented")
     }
 
+    /// The +/- and close buttons are parked in a corner of the overlay: growing the card must
+    /// not walk them out from under the cursor between two clicks.
+    func testPresentControlsStayPutWhenTheCardGrows() throws {
+        title.doubleClick()
+        let close = app.buttons["board.present.close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "the double click presented nothing")
+        let parked = close.frame
+
+        let grown = widestTitle()
+        app.buttons["board.present.larger"].click()
+        XCTAssertTrue(poll { self.widestTitle() > grown + 1 }, "+ did not grow the card")
+        XCTAssertEqual(close.frame.origin.x, parked.origin.x, accuracy: 1, "the controls moved sideways")
+        XCTAssertEqual(close.frame.origin.y, parked.origin.y, accuracy: 1, "the controls moved with the card")
+    }
+
     func testPresentationModeGrowsCards() throws {
         let toggle = app.buttons["board.presentation"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))

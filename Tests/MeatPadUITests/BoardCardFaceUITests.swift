@@ -129,6 +129,23 @@ final class BoardCardFaceUITests: XCTestCase {
                        "the tile's own double-click presented the card instead")
     }
 
+    /// The presented copy of a card carries the same tiles, and the overlay sits over the
+    /// board's own double-click monitor — Quick Look has to survive both.
+    func testDoubleClickingAnAttachmentInThePresentedCardOpensQuickLook() throws {
+        title.doubleClick()
+        XCTAssertTrue(app.buttons["board.present.close"].waitForExistence(timeout: 5),
+                      "the double click presented nothing")
+        let windows = app.windows.count
+
+        // Two tiles carry the identifier now — the row behind the backdrop and the presented
+        // copy, which is the bigger of the two.
+        let tile = app.descendants(matching: .any).matching(identifier: "card.attachment")
+            .allElementsBoundByIndex.max { $0.frame.width < $1.frame.width }
+        try XCTUnwrap(tile).doubleClick()
+        XCTAssertTrue(poll { self.app.windows.count > windows || self.previewIsUp() },
+                      "the double click opened no Quick Look panel")
+    }
+
     /// QLPreviewPanel is an NSPanel in the app's own process, and it names the file it shows.
     private func previewIsUp() -> Bool {
         app.descendants(matching: .any)
