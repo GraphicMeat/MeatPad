@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 import MeatPadKit
 
@@ -128,14 +129,22 @@ struct CardEditor: View {
         // A popover can go away without warning (click outside, Escape); the debounced text
         // has to land before the view does.
         .onDisappear { flush(commitEdits: true) }
-        // The whole editor takes images, not just the strip: the strip is empty until the
-        // card has one, and an empty 0pt target is not a drop target at all.
-        .dropDestination(for: CardDrop.self) { drops, _ in
-            var handled = false
-            for case .image(let data, let ext, _) in drops {
-                handled = ((try? store.addAttachment(boardID: boardID, cardID: card.id, data: data, ext: ext)) != nil) || handled
+        // The whole editor takes files, not just the strip: the strip is empty until the
+        // card has one, and an empty 0pt target is not a drop target at all. Read off the drag
+        // pasteboard rather than through `CardDrop`, which imports images only.
+        .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in
+            let files = AttachmentImport.files(from: NSPasteboard(name: .drag))
+            if !files.isEmpty {
+                for file in files { attach(file.data, file.ext) }
+                return true
             }
-            return handled
+            guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) })
+            else { return false }
+            _ = provider.loadTransferable(type: CardDrop.self) { result in
+                guard case .success(.file(let data, let ext, _)) = result else { return }
+                Task { @MainActor in attach(data, ext) }
+            }
+            return true
         }
     }
 
@@ -400,26 +409,28 @@ struct CardEditor: View {
             .accessibilityIdentifier("cardEditor.notes")
     }
 
-    // MARK: - Images
+    // MARK: - Attachments
+
+    private func attach(_ data: Data, _ ext: String) {
+        _ = try? store.addAttachment(boardID: boardID, cardID: card.id, data: data, ext: ext)
+    }
 
     /// NSOpenPanel is app-modal, so the popover survives it; if AppKit ever closes the
-    /// popover under the panel, the images still land — the action captured the ids.
+    /// popover under the panel, the files still land — the action captured the ids.
     private var addImageRow: some View {
         Button {
             let panel = NSOpenPanel()
-            panel.allowedContentTypes = [.image]
             panel.allowsMultipleSelection = true
             panel.prompt = String(localized: "Attach")
             guard panel.runModal() == .OK else { return }
             for url in panel.urls {
-                guard let data = try? Data(contentsOf: url),
-                      let ext = UTType(filenameExtension: url.pathExtension)?.preferredFilenameExtension else { continue }
-                _ = try? store.addAttachment(boardID: boardID, cardID: card.id, data: data, ext: ext)
+                guard let data = try? Data(contentsOf: url) else { continue }
+                attach(data, AttachmentImport.ext(of: url))
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "photo").foregroundStyle(.secondary)
-                Text("Add Image…")
+                Image(systemName: "paperclip").foregroundStyle(.secondary)
+                Text("Add File…")
                 Spacer(minLength: 0)
             }
             .contentShape(Rectangle())

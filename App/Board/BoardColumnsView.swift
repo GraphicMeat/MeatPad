@@ -19,6 +19,8 @@ struct BoardColumnsView: View {
     /// Card density. Unlike the label filter this is remembered across launches and shared by
     /// every board — it hides no cards, so nothing can go missing behind it.
     @AppStorage("board.cardDisplay") private var display: CardDisplay = .full
+    /// Everything a step bigger, for showing a board to a room rather than working in it.
+    @AppStorage("board.presentation") private var presentation = false
 
     /// The window's undo manager. Handed to the store on appear so every card edit lands on
     /// the same stack ⌘Z and Edit ▸ Undo already pull from.
@@ -42,6 +44,14 @@ struct BoardColumnsView: View {
     /// Card row frames, each in its own column's coordinate space. `DropInfo` gives a pointer
     /// position and nothing else — this is what turns it into "over that card" / "in that gap".
     @State private var rowFrames: [UUID: CGRect] = [:]
+    /// The card shown big over a blurred board, and how big. Held by id so an edit made while
+    /// it is up re-reads from the store.
+    @State private var presentedCard: UUID?
+    @State private var presentScale: CGFloat = 1.8
+    @State private var presentedHeight: CGFloat = 0
+    /// Which card the pointer is over: the double-click monitor below gets a point, not a view.
+    @State private var hoveredCard: UUID?
+    @State private var clickMonitor: Any?
 
     private struct SplitTarget {
         let boardID: UUID
@@ -83,6 +93,14 @@ struct BoardColumnsView: View {
     }
 
     var body: some View {
+        ZStack {
+            board_
+            if presentedCard != nil { presentOverlay }
+        }
+        .animation(.snappy(duration: 0.18), value: presentedCard != nil)
+    }
+
+    private var board_: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 GlassSearchField(
@@ -103,6 +121,18 @@ struct BoardColumnsView: View {
                 .help(String(localized: "Undo"))
                 .accessibilityLabel(Text("Undo"))
                 .accessibilityIdentifier("board.undo")
+                Button {
+                    presentation.toggle()
+                } label: {
+                    Image(systemName: presentation ? "play.rectangle.fill" : "play.rectangle")
+                }
+                .buttonStyle(.borderless)
+                .help(String(localized: "Presentation Mode"))
+                .accessibilityLabel(Text("Presentation Mode"))
+                // Remembered across launches, so a test (or VoiceOver) has to be able to read
+                // which way the next click goes.
+                .accessibilityValue(presentation ? "on" : "off")
+                .accessibilityIdentifier("board.presentation")
             }
             .padding(.horizontal, 16)
             .padding(.top, 10)
@@ -126,8 +156,17 @@ struct BoardColumnsView: View {
                 // title/notes text (which starts editing) or on a button never reaches this.
                 .onTapGesture { NSApp.keyWindow?.makeFirstResponder(nil) }
             }
+            .environment(\.cardScale, columnScale)
         }
-        .onAppear { store.undoManager = undoManager; canUndo = undoManager?.canUndo ?? false }
+        .onAppear {
+            store.undoManager = undoManager
+            canUndo = undoManager?.canUndo ?? false
+            installDoubleClickMonitor()
+        }
+        .onDisappear {
+            if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+            clickMonitor = nil
+        }
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerCheckpoint)) { note in
             guard let undoManager, note.object as? UndoManager === undoManager else { return }
             canUndo = undoManager.canUndo
@@ -207,6 +246,113 @@ struct BoardColumnsView: View {
         return ColumnRef(id: column.id, boardID: owner, name: column.name, isDone: column.isDone)
     }
 
+    // MARK: - Presenting
+
+    /// How much bigger the whole board draws. The present overlay has a scale of its own —
+    /// a card blown up over the board is not the same gesture as a bigger board.
+    private var columnScale: CGFloat { presentation ? 1.35 : 1 }
+
+    /// Looked up live rather than captured, so an edit made in the overlay redraws it.
+    private var presented: CardRef? {
+        guard let id = presentedCard else { return nil }
+        for board in store.boards where board.cards.contains(where: { $0.id == id }) {
+            guard let card = board.cards.first(where: { $0.id == id }) else { continue }
+            return CardRef(board: board, card: card)
+        }
+        return nil
+    }
+
+    /// A double-click on a card is caught with an AppKit monitor rather than a
+    /// `TapGesture(count: 2)`: the first click on a title or notes row swaps the label for a
+    /// live `NSTextField`, which then takes the second click for its own caret — SwiftUI never
+    /// sees a double tap on the row. The event is returned untouched; this only listens.
+    private func installDoubleClickMonitor() {
+        guard clickMonitor == nil else { return }
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            guard event.clickCount == 2, presentedCard == nil, let id = hoveredCard,
+                  !isAttachmentTile(event)
+            else { return event }
+            // The first click may have opened a field; blur it, or the presented copy and the
+            // row underneath both hold a caret.
+            NSApp.keyWindow?.makeFirstResponder(nil)
+            presentedCard = id
+            return event
+        }
+    }
+
+    /// An attachment tile's own double-click (Quick Look) wins over presenting the card.
+    private func isAttachmentTile(_ event: NSEvent) -> Bool {
+        var view = event.window?.contentView?.hitTest(event.locationInWindow)
+        while let current = view {
+            if current is DoubleClickCatcherView { return true }
+            view = current.superview
+        }
+        return false
+    }
+
+    @ViewBuilder
+    private var presentOverlay: some View {
+        if let ref = presented {
+            GeometryReader { geometry in
+                ZStack {
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                        .overlay(Color.black.opacity(0.25))
+                        .contentShape(Rectangle())
+                        .onTapGesture { presentedCard = nil }
+                        .accessibilityIdentifier("board.present.backdrop")
+                    VStack(spacing: 14) {
+                        ScrollView {
+                            CardView(
+                                store: store,
+                                boardID: ref.board.id,
+                                card: ref.card,
+                                boardBadge: nil,
+                                isDone: columnIsDone(ref),
+                                isSelected: false,
+                                display: .full
+                            )
+                            .environment(\.cardScale, presentScale)
+                            .frame(width: min(280 * presentScale, geometry.size.width - 80))
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { presentedHeight = $0 }
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                        // A ScrollView takes all the height it is offered, which would pin the
+                        // card to the top; sized to its content it sits centred, and only a
+                        // card taller than the window scrolls.
+                        .frame(height: min(presentedHeight, geometry.size.height - 100))
+                        presentControls
+                    }
+                }
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private var presentControls: some View {
+        HStack(spacing: 10) {
+            Button { presentScale = max(1, presentScale - 0.25) } label: {
+                Image(systemName: "minus.magnifyingglass")
+            }
+            .keyboardShortcut("-", modifiers: .command)
+            .help(String(localized: "Smaller"))
+            .accessibilityIdentifier("board.present.smaller")
+            Button { presentScale = min(3, presentScale + 0.25) } label: {
+                Image(systemName: "plus.magnifyingglass")
+            }
+            .keyboardShortcut("=", modifiers: .command)
+            .help(String(localized: "Bigger"))
+            .accessibilityIdentifier("board.present.larger")
+            Button { presentedCard = nil } label: {
+                Image(systemName: "xmark.circle.fill")
+            }
+            .keyboardShortcut(.cancelAction)
+            .help(String(localized: "Close"))
+            .accessibilityIdentifier("board.present.close")
+        }
+        .buttonStyle(GlassIconButtonStyle())
+    }
+
     // MARK: - Columns
 
     private func cards(in column: BoardColumn) -> [CardRef] {
@@ -240,7 +386,10 @@ struct BoardColumnsView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 if let emoji = column.emoji { Text(emoji) }
-                Text(column.name).font(.headline).lineLimit(1)
+                Text(column.name)
+                    .font(.system(size: NSFont.preferredFont(forTextStyle: .headline).pointSize * columnScale,
+                                  weight: .semibold))
+                    .lineLimit(1)
                 if column.isDone {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.caption)
                 }
@@ -271,7 +420,7 @@ struct BoardColumnsView: View {
                         addCard(to: column, in: board)
                     } label: {
                         Image(systemName: "plus")
-                            .font(.caption)
+                            .font(.system(size: NSFont.preferredFont(forTextStyle: .caption1).pointSize * columnScale))
                             .foregroundStyle(.tertiary)
                     }
                     .buttonStyle(.plain)
@@ -283,6 +432,7 @@ struct BoardColumnsView: View {
                         set: { drafts[column.id] = $0 }
                     ), axis: .vertical)
                     .textFieldStyle(.plain)
+                    .font(.system(size: NSFont.preferredFont(forTextStyle: .body).pointSize * columnScale))
                     .lineLimit(1...5)
                     .onSubmit { addCard(to: column, in: board) }
                     .newlineOnModifiedReturn()
@@ -306,7 +456,7 @@ struct BoardColumnsView: View {
             }
             .scrollBounceBehavior(.basedOnSize)
         }
-        .frame(width: 280, alignment: .leading)
+        .frame(width: 280 * columnScale, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .top)
         .padding(.vertical, 4)
         .background {
@@ -350,15 +500,15 @@ struct BoardColumnsView: View {
     }
 
     private func attach(_ cardID: UUID, _ drop: CardDrop) -> Bool {
-        guard case .image(let data, let ext, _) = drop,
+        guard case .file(let data, let ext, _) = drop,
               let owner = store.boards.first(where: { $0.cards.contains { $0.id == cardID } })
         else { return false }
         return (try? store.addAttachment(boardID: owner.id, cardID: cardID, data: data, ext: ext)) != nil
     }
 
     private func newCard(_ drop: CardDrop, in columnID: UUID, on boardID: UUID) -> Bool {
-        guard case .image(let data, let ext, let name) = drop else { return false }
-        let title = BoardDropPlacement.newCardTitle(fileName: name, fallback: String(localized: "Image"))
+        guard case .file(let data, let ext, let name) = drop else { return false }
+        let title = BoardDropPlacement.newCardTitle(fileName: name, fallback: String(localized: "File"))
         return (try? store.addCard(boardID: boardID, columnID: columnID, title: title, image: data, ext: ext)) != nil
     }
 
@@ -428,7 +578,9 @@ struct BoardColumnsView: View {
     private var otherColumn: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Other").font(.headline)
+                Text("Other")
+                    .font(.system(size: NSFont.preferredFont(forTextStyle: .headline).pointSize * columnScale,
+                                  weight: .semibold))
                 Spacer()
                 Text("\(otherCards.count)").font(.caption).foregroundStyle(.secondary)
             }
@@ -445,12 +597,12 @@ struct BoardColumnsView: View {
             }
             .scrollBounceBehavior(.basedOnSize)
         }
-        .frame(width: 280, alignment: .leading)
+        .frame(width: 280 * columnScale, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .top)
         .coordinateSpace(name: Self.otherSpace)
-        // Images onto its cards and nothing else: "Other" is a view of several board-only
+        // Files onto its cards and nothing else: "Other" is a view of several board-only
         // columns at once, so it has no column a reorder or a new card could mean.
-        .onDrop(of: [.image], delegate: ColumnDropDelegate(
+        .onDrop(of: [.image, .fileURL], delegate: ColumnDropDelegate(
             column: nil,
             rows: rows(of: otherCards),
             target: $dropTarget,
@@ -473,9 +625,13 @@ struct BoardColumnsView: View {
             boardBadge: board == nil ? (ref.board.name, store.color(forBoard: ref.board.id)) : nil,
             isDone: column?.isDone ?? columnIsDone(ref),
             isSelected: selectedCard == ref.card.id,
-            display: display
+            display: display,
+            onPresent: { presentedCard = ref.card.id }
         )
         .contentShape(Rectangle())
+        // What the double-click monitor reads: a mouse-down carries a window point, and this
+        // is the only place that knows which card is under it.
+        .onHover { hoveredCard = $0 ? ref.card.id : (hoveredCard == ref.card.id ? nil : hoveredCard) }
         // Simultaneous, not exclusive: a click on the title both selects the card and starts
         // editing — the face's own tap gestures must still fire.
         .simultaneousGesture(TapGesture().onEnded { selectedCard = ref.card.id })

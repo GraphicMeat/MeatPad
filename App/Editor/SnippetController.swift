@@ -62,23 +62,23 @@ final class SnippetTextView: STTextView {
         registerForDraggedTypes(registeredDraggedTypes + [.fileURL, .png, .tiff])
     }
 
-    // ponytail: ImageImport.items reads pasteboard file bytes eagerly, so a hover over a drag
+    // ponytail: AttachmentImport.items reads pasteboard file bytes eagerly, so a hover over a drag
     // carrying many images re-reads them all on every draggingEntered/draggingUpdated call.
     // Fine for the handful of images a person actually drags; upgrade = check pasteboard types
     // only in entered/updated and defer the real read to performDragOperation.
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        if onImageImport != nil, !ImageImport.items(from: sender.draggingPasteboard).isEmpty { return .copy }
+        if onImageImport != nil, !AttachmentImport.items(from: sender.draggingPasteboard).isEmpty { return .copy }
         return super.draggingEntered(sender)
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        if onImageImport != nil, !ImageImport.items(from: sender.draggingPasteboard).isEmpty { return .copy }
+        if onImageImport != nil, !AttachmentImport.items(from: sender.draggingPasteboard).isEmpty { return .copy }
         return super.draggingUpdated(sender)
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         if let onImageImport {
-            let items = ImageImport.items(from: sender.draggingPasteboard)
+            let items = AttachmentImport.items(from: sender.draggingPasteboard)
             if !items.isEmpty, onImageImport(items) { return true }
         }
         return super.performDragOperation(sender)
@@ -87,7 +87,7 @@ final class SnippetTextView: STTextView {
     /// A screenshot on the pasteboard has no string form; text pastes stay text pastes.
     override func paste(_ sender: Any?) {
         if let onImageImport, NSPasteboard.general.string(forType: .string) == nil {
-            let items = ImageImport.items(from: .general)
+            let items = AttachmentImport.items(from: .general)
             if !items.isEmpty, onImageImport(items) { return }
         }
         super.paste(sender)

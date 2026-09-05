@@ -104,6 +104,38 @@ final class BoardCardFaceUITests: XCTestCase {
             atPath: storageRoot.appendingPathComponent("Boards/Attachments/\(cardID.uuidString)/seed.png").path))
     }
 
+    /// Quick Look is a click gesture the tile has to win against the row's drag and the
+    /// board's own double-click — and it must not fire on a single click, which is how a
+    /// card gets selected.
+    func testDoubleClickingAnAttachmentOpensQuickLook() throws {
+        let tile = app.descendants(matching: .any)["card.attachment"].firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 5))
+        let windows = app.windows.count
+
+        tile.click()
+        XCTAssertFalse(poll(timeout: 2) { self.app.windows.count > windows || self.previewIsUp() },
+                       "a single click opened a preview")
+
+        tile.doubleClick()
+        XCTAssertTrue(poll { self.app.windows.count > windows || self.previewIsUp() },
+                      "the double click opened no Quick Look panel")
+    }
+
+    func testDoubleClickingAnAttachmentDoesNotPresentTheCard() throws {
+        let tile = app.descendants(matching: .any)["card.attachment"].firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 5))
+        tile.doubleClick()
+        XCTAssertFalse(app.buttons["board.present.close"].waitForExistence(timeout: 2),
+                       "the tile's own double-click presented the card instead")
+    }
+
+    /// QLPreviewPanel is an NSPanel in the app's own process, and it names the file it shows.
+    private func previewIsUp() -> Bool {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[c] %@ OR title CONTAINS[c] %@", "seed.png", "seed.png"))
+            .count > 0
+    }
+
     // MARK: - Reading the store
 
     private func boardJSON() throws -> [String: Any] {
@@ -116,8 +148,8 @@ final class BoardCardFaceUITests: XCTestCase {
     private func storedTitle() throws -> String { try XCTUnwrap(storedCard()["title"] as? String) }
     private func waitForStoredBody(_ expected: String) -> Bool { poll { (try? self.storedCard()["body"] as? String) == expected } }
     private func waitForStoredColumn(_ id: UUID) -> Bool { poll { (try? self.storedCard()["columnID"] as? String) == id.uuidString } }
-    private func poll(_ condition: () -> Bool) -> Bool {
-        let deadline = Date().addingTimeInterval(10)
+    private func poll(timeout: TimeInterval = 10, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline { if condition() { return true }; usleep(200_000) }
         return false
     }

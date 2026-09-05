@@ -1,9 +1,9 @@
 import SwiftUI
-import ImageIO
+import QuickLookThumbnailing
 
-/// A downsampled image for a fixed square, decoded once per URL. `CGImageSource` makes the
-/// thumbnail without decoding the full bitmap — a 12MP screenshot costs a few ms and a few
-/// hundred KB, not a 48MB decode per card per layout pass.
+/// A thumbnail for a fixed square, made once per URL. Quick Look rather than ImageIO: a card
+/// takes any file now, and `QLThumbnailGenerator` previews images, PDFs and documents alike
+/// and falls back to the file's icon — without ever decoding a 12MP photo at full size.
 struct AttachmentThumbnail: View {
     let url: URL
     let size: CGFloat
@@ -28,17 +28,17 @@ struct AttachmentThumbnail: View {
     private static func thumbnail(for url: URL, maxPixels: Int) async -> NSImage? {
         let key = "\(url.absoluteString)@\(maxPixels)" as NSString
         if let cached = cache.object(forKey: key) { return cached }
-        let made = await Task.detached(priority: .utility) { () -> NSImage? in
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-            let options: [CFString: Any] = [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maxPixels,
-            ]
-            guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
-            return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
-        }.value
-        if let made { cache.setObject(made, forKey: key) }
+        let points = CGFloat(maxPixels) / 2
+        let request = QLThumbnailGenerator.Request(
+            fileAt: url,
+            size: CGSize(width: points, height: points),
+            scale: 2,
+            representationTypes: .all
+        )
+        guard let rep = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request)
+        else { return nil }
+        let made = NSImage(cgImage: rep.cgImage, size: NSSize(width: rep.cgImage.width, height: rep.cgImage.height))
+        cache.setObject(made, forKey: key)
         return made
     }
 }

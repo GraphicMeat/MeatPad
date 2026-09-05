@@ -21,6 +21,8 @@ struct CardView: View {
     /// is a board-wide gesture — but a card can still open its own notes from the ⋯ menu
     /// until the setting next changes.
     let display: CardDisplay
+    /// "Present Card" in the card's menu. nil where the board has nowhere to present it.
+    var onPresent: (() -> Void)? = nil
 
     /// Which of the two text rows currently holds a live field. The face renders a label until
     /// a row is clicked: an `NSTextField` takes every mouse-down for caret placement, which is
@@ -48,6 +50,13 @@ struct CardView: View {
     /// Whether the editor should open straight onto its new-label field.
     @State private var editorLabelForm = false
     @Environment(\.openWindow) private var openWindow
+    /// How much bigger than normal to draw — presentation mode, or the present overlay. Every
+    /// type and tile size below is multiplied by it; at 1 the card is what it always was.
+    @Environment(\.cardScale) private var scale
+
+    private func fontSize(_ style: NSFont.TextStyle) -> CGFloat {
+        NSFont.preferredFont(forTextStyle: style).pointSize * scale
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -60,7 +69,7 @@ struct CardView: View {
             if display != .compact, let names = card.attachments, !names.isEmpty {
                 HairlineDivider()
                 AttachmentStrip(urls: names.map { store.attachmentURL(cardID: card.id, name: $0) },
-                                size: 44, limit: 4, identifier: "card.attachment")
+                                size: 44 * scale, limit: 4, identifier: "card.attachment")
                     .padding(.vertical, 7)
             }
             HairlineDivider()
@@ -126,7 +135,7 @@ struct CardView: View {
                 // a title nothing can render.
                 TextField("Title", text: $title, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.body.weight(.semibold))
+                    .font(.system(size: fontSize(.body), weight: .semibold))
                     .lineLimit(display.titleLines)
                     .focused($focus, equals: .title)
                     .onSubmit { focus = nil }
@@ -143,7 +152,7 @@ struct CardView: View {
             } else {
                 LinkableText(
                     text: faceTitle,
-                    font: .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .body).pointSize, weight: .semibold),
+                    font: .systemFont(ofSize: fontSize(.body), weight: .semibold),
                     color: title.isEmpty ? .secondaryLabelColor : .labelColor,
                     lineLimit: display.titleLines ?? 0
                 )
@@ -173,10 +182,11 @@ struct CardView: View {
                 editorShown = true
             } label: {
                 Image(systemName: "ellipsis.circle")
+                    .font(.system(size: fontSize(.body)))
                     .foregroundStyle(.secondary)
                     // A bare glyph is a 13pt target sitting next to a card that answers
                     // clicks itself — miss it and you select the card instead.
-                    .frame(width: 22, height: 18)
+                    .frame(width: 22 * scale, height: 18 * scale)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -276,6 +286,9 @@ struct CardView: View {
             }
         }
         Button(expanded ? "Hide Notes" : "Show Notes") { expanded.toggle() }
+        if let onPresent {
+            Button("Present Card") { onPresent() }
+        }
         if summarizable {
             Button("Summarize into Title") { summarize() }
         }
@@ -307,10 +320,10 @@ struct CardView: View {
             HStack(spacing: 4) {
                 ForEach(labels) { label in
                     Text(label.name)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 10 * scale, weight: .medium))
                         .lineLimit(1)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
+                        .padding(.horizontal, 6 * scale)
+                        .padding(.vertical, 2 * scale)
                         .background(Capsule().fill(Color(label.color).opacity(0.3)))
                         .overlay(Capsule().strokeBorder(Color(label.color).opacity(0.75)))
                 }
@@ -351,7 +364,7 @@ struct CardView: View {
                         .strikethrough(isDone)
                     Spacer(minLength: 0)
                 }
-                .font(.caption)
+                .font(.system(size: fontSize(.caption1)))
                 .foregroundStyle(dueColor)
                 .contentShape(Rectangle())
             }
@@ -414,7 +427,7 @@ struct CardView: View {
                 // so the column underneath can't be scrolled while the pointer is over it.
                 TextField("Notes", text: $body_, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.callout)
+                    .font(.system(size: fontSize(.callout)))
                     .lineLimit(1...)
                     .focused($focus, equals: .notes)
                     .newlineOnModifiedReturn()
@@ -429,7 +442,7 @@ struct CardView: View {
             } else {
                 LinkableText(
                     text: faceNotes,
-                    font: NSFont.preferredFont(forTextStyle: .callout),
+                    font: .systemFont(ofSize: fontSize(.callout)),
                     color: body_.isEmpty ? .secondaryLabelColor : .labelColor,
                     lineLimit: expanded ? 0 : 1
                 )
@@ -450,10 +463,10 @@ struct CardView: View {
                 expanded.toggle()
             } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 11 * scale, weight: .semibold))
                     .foregroundStyle(.tertiary)
                     .rotationEffect(.degrees(expanded ? 0 : -90))
-                    .frame(width: 22, height: 18)
+                    .frame(width: 22 * scale, height: 18 * scale)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -483,9 +496,9 @@ struct CardView: View {
                 // because a caption2 painted in the palette colour is the first thing to go
                 // unreadable in light appearance.
                 Text(boardBadge.name)
-                    .font(.caption2)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
+                    .font(.system(size: fontSize(.caption2)))
+                    .padding(.horizontal, 6 * scale)
+                    .padding(.vertical, 2 * scale)
                     .background(Capsule().fill(Color(boardBadge.color).opacity(0.3)))
                     .overlay(Capsule().strokeBorder(Color(boardBadge.color).opacity(0.75)))
                     .accessibilityIdentifier("card.boardBadge")
@@ -503,7 +516,7 @@ struct CardView: View {
             } icon: {
                 Image(systemName: "link")
             }
-            .font(.caption2)
+            .font(.system(size: fontSize(.caption2)))
             .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
