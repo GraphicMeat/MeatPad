@@ -58,6 +58,24 @@ final class BoardIconUITests: XCTestCase {
         XCTAssertEqual(icon(plainBoard).value as? String, "none")
     }
 
+    /// All Boards stacks every board's cards into one column, so the badge carries the
+    /// board's icon for the same reason the sidebar row does.
+    func testTheAllBoardsBadgeCarriesTheBoardEmoji() {
+        XCTAssertTrue(badgeIcon(emojiBoard).waitForExistence(timeout: 10), "no badge icon on the emoji board's card")
+        XCTAssertEqual(badgeIcon(emojiBoard).value as? String, "🚀")
+    }
+
+    func testTheAllBoardsBadgeCarriesTheBoardImage() {
+        XCTAssertTrue(badgeIcon(imageBoard).waitForExistence(timeout: 10), "no badge icon on the image board's card")
+        XCTAssertEqual(badgeIcon(imageBoard).value as? String, "image")
+    }
+
+    /// A board with no icon gets no extra glyph in its badge — the name alone, as before.
+    func testTheAllBoardsBadgeOfAnIconlessBoardStaysPlain() {
+        XCTAssertTrue(badgeIcon(emojiBoard).waitForExistence(timeout: 10), "the overview never rendered")
+        XCTAssertFalse(badgeIcon(plainBoard).exists, "the iconless board grew a badge icon")
+    }
+
     /// The whole point of the context menu: pick an emoji, watch the row change.
     func testSettingAnEmojiFromTheContextMenuUpdatesTheRow() throws {
         try setEmoji("🎯", on: plainBoard)
@@ -102,6 +120,12 @@ final class BoardIconUITests: XCTestCase {
 
     private func icon(_ board: UUID) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: "board.icon.\(board.uuidString)").firstMatch
+    }
+
+    /// The icon inside an All Boards card badge, which is a different element from the
+    /// sidebar row's — same board, two places that have to agree.
+    private func badgeIcon(_ board: UUID) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "card.boardBadge.icon.\(board.uuidString)").firstMatch
     }
 
     /// The row's context menu, retried: the menu occasionally does not come up on the first
@@ -172,12 +196,19 @@ final class BoardIconUITests: XCTestCase {
         ]
         try JSONSerialization.data(withJSONObject: index).write(to: boards.appendingPathComponent("boards.json"))
 
+        let stamp = "2026-09-06T09:00:00Z"
         for (id, name, extra) in [
             (emojiBoard, "Emoji Board", ["icon": "🚀"]),
             (imageBoard, "Image Board", ["image": "seed.png"]),
             (plainBoard, "Plain Board", [:]),
         ] as [(UUID, String, [String: Any])] {
-            var board: [String: Any] = ["id": id.uuidString, "name": name, "extraColumns": [], "cards": []]
+            // One card each: the All Boards overview stacks them into one column, and its
+            // badge is the only thing saying which board a card came from.
+            let card: [String: Any] = [
+                "id": UUID().uuidString, "title": name.replacingOccurrences(of: " Board", with: " Card"),
+                "columnID": columnID.uuidString, "created": stamp, "modified": stamp,
+            ]
+            var board: [String: Any] = ["id": id.uuidString, "name": name, "extraColumns": [], "cards": [card]]
             board.merge(extra) { _, new in new }
             try JSONSerialization.data(withJSONObject: board)
                 .write(to: boards.appendingPathComponent("\(id.uuidString).json"))

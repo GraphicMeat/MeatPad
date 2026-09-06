@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import MeatPadKit
 
 /// One card, editable in place — the board is the editor. Rows separated by hairlines, the
@@ -11,10 +12,11 @@ struct CardView: View {
     @ObservedObject var store: BoardStore
     let boardID: UUID
     let card: Card
-    /// Board name badge, shown only in the All Boards overview. Carries the board's own
-    /// colour with it — in a view that stacks four boards into one column, the badge is the
-    /// only thing saying which board a card came from, and four grey badges say it slowly.
-    var boardBadge: (name: String, color: RGBAColor)?
+    /// The board this card came from, badged only in the All Boards overview — in a view that
+    /// stacks four boards into one column, the badge is the only thing saying where a card
+    /// came from. The whole board rather than a name: the badge draws the board's icon too,
+    /// and its colour comes from the store, which four grey badges would not say quickly.
+    var boardBadge: Board?
     let isDone: Bool
     let isSelected: Bool
     /// How much of the card to draw. Owned by the board, not the card — "fold everything"
@@ -494,17 +496,46 @@ struct CardView: View {
             if let boardBadge {
                 // Tinted like a label chip, down to the opacities: the text stays primary
                 // because a caption2 painted in the palette colour is the first thing to go
-                // unreadable in light appearance.
-                Text(boardBadge.name)
-                    .font(.system(size: fontSize(.caption2)))
-                    .padding(.horizontal, 6 * scale)
-                    .padding(.vertical, 2 * scale)
-                    .background(Capsule().fill(Color(boardBadge.color).opacity(0.3)))
-                    .overlay(Capsule().strokeBorder(Color(boardBadge.color).opacity(0.75)))
-                    .accessibilityIdentifier("card.boardBadge")
+                // unreadable in light appearance. The identifier stays on the name, not the
+                // stack: a container identifier takes the children's with it, and the icon
+                // has to stay readable on its own.
+                let color = Color(store.color(forBoard: boardBadge.id))
+                HStack(spacing: 3 * scale) {
+                    badgeIcon(boardBadge)
+                    Text(boardBadge.name)
+                        .accessibilityIdentifier("card.boardBadge")
+                }
+                .font(.system(size: fontSize(.caption2)))
+                .padding(.horizontal, 6 * scale)
+                .padding(.vertical, 2 * scale)
+                .background(Capsule().fill(color.opacity(0.3)))
+                .overlay(Capsule().strokeBorder(color.opacity(0.75)))
             }
         }
         .padding(.vertical, 7)
+    }
+
+    /// The board's own icon, ahead of its name in the badge: image, else emoji, else nothing
+    /// at all — a board with no icon keeps the plain name badge it has always had. Read as
+    /// text for the same reason the sidebar row's is: a thumbnail has no value to read.
+    @ViewBuilder
+    private func badgeIcon(_ board: Board) -> some View {
+        let image = store.boardImageURL(board.id).flatMap { NSImage(contentsOf: $0) }
+        if image != nil || board.icon != nil {
+            Group {
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 10 * scale, height: 10 * scale)
+                        .clipShape(RoundedRectangle(cornerRadius: 2, style: .continuous))
+                } else {
+                    Text(board.icon ?? "")
+                }
+            }
+            .accessibilityRepresentation { Text(image != nil ? "image" : (board.icon ?? "")) }
+            .accessibilityIdentifier("card.boardBadge.icon.\(board.id.uuidString)")
+        }
     }
 
     private var linkChip: some View {

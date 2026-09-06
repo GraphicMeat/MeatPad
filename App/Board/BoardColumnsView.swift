@@ -617,7 +617,7 @@ struct BoardColumnsView: View {
             store: store,
             boardID: ref.board.id,
             card: ref.card,
-            boardBadge: board == nil ? (ref.board.name, store.color(forBoard: ref.board.id)) : nil,
+            boardBadge: board == nil ? ref.board : nil,
             isDone: column?.isDone ?? columnIsDone(ref),
             isSelected: selectedCard == ref.card.id,
             display: display,
