@@ -117,12 +117,59 @@ public final class BoardStore: ObservableObject {
     public func deleteBoard(id: UUID) throws {
         let idx = try boardIndex(id)
         for card in boards[idx].cards { try? attachments.removeAll(for: card.id) }
+        // The board's own icon image lives under its own id, beside its cards' attachments.
+        try? attachments.removeAll(for: id)
         let url = boardURL(id)
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
         boards.removeAll { $0.id == id }
         try saveIndex()
+    }
+
+    // MARK: - Board icon
+
+    /// A board's look is one thing, so an emoji drops whatever image it had — and the file
+    /// with it, because nothing would ever reference it again.
+    public func setBoardIcon(id: UUID, emoji: String) throws {
+        let idx = try boardIndex(id)
+        let trimmed = try validated(emoji)
+        dropBoardImage(at: idx)
+        boards[idx].icon = trimmed
+        try persist(at: idx)
+    }
+
+    /// The same rule from the other side: an image drops the emoji, and the image it replaces.
+    /// The write comes first — a rejected extension must leave the board exactly as it was.
+    public func setBoardImage(id: UUID, data: Data, ext: String) throws {
+        let idx = try boardIndex(id)
+        let name = try attachments.add(data, ext: ext, to: id)
+        dropBoardImage(at: idx)
+        boards[idx].image = name
+        boards[idx].icon = nil
+        try persist(at: idx)
+    }
+
+    /// Back to the default glyph: no emoji, no image, no orphaned file.
+    public func clearBoardIcon(id: UUID) throws {
+        let idx = try boardIndex(id)
+        dropBoardImage(at: idx)
+        boards[idx].icon = nil
+        try persist(at: idx)
+    }
+
+    /// nil for a board with no image, and for an id that isn't a board — the sidebar asks
+    /// this per row and has nothing sensible to draw in either case.
+    public func boardImageURL(_ id: UUID) -> URL? {
+        guard let board = boards.first(where: { $0.id == id }), let name = board.image else { return nil }
+        return attachments.url(name, for: id)
+    }
+
+    /// Forgets the board's image and deletes its file. Best-effort on the file: a board that
+    /// still points at a file it cannot delete is worse than a stray byte on disk.
+    private func dropBoardImage(at idx: Int) {
+        if let name = boards[idx].image { try? attachments.remove(name, from: boards[idx].id) }
+        boards[idx].image = nil
     }
 
     // MARK: - Columns (composition)

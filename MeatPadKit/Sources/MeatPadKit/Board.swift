@@ -120,12 +120,22 @@ public struct Board: Identifiable, Codable, Equatable, Sendable {
     /// Board-specific columns, rendered after the global ones.
     public var extraColumns: [BoardColumn]
     public var cards: [Card]
+    /// The board's own look, one emoji — exactly like `BoardColumn.emoji`. Optional so board
+    /// files written before icons decode unchanged.
+    public var icon: String?
+    /// The board's own look as a picture instead: a file name in the store's
+    /// `AttachmentStore`, owned by the board's id. Never set alongside `icon` — a board has
+    /// one look, and `BoardStore` is what enforces that.
+    public var image: String?
 
-    public init(id: UUID = UUID(), name: String, extraColumns: [BoardColumn] = [], cards: [Card] = []) {
+    public init(id: UUID = UUID(), name: String, extraColumns: [BoardColumn] = [], cards: [Card] = [],
+                icon: String? = nil, image: String? = nil) {
         self.id = id
         self.name = name
         self.extraColumns = extraColumns
         self.cards = cards
+        self.icon = icon
+        self.image = image
     }
 }
 

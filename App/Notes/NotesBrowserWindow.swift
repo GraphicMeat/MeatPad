@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import MeatPadKit
 
 /// Which folder the browser is showing. Raw-string encoded for @SceneStorage.
@@ -87,6 +88,11 @@ struct NotesBrowserWindow: View {
     @State private var boardNameDraft = ""
     @State private var boardRenameTarget: UUID?
     @State private var boardDeleteTarget: UUID?
+    /// The board whose emoji is being typed, and the draft it commits. Its own draft rather
+    /// than `boardNameDraft`: the rename sheet and this one are both one field, and sharing
+    /// the string would leak a half-typed name into the icon.
+    @State private var boardIconTarget: UUID?
+    @State private var boardIconDraft = ""
     /// The card whose inspector fills the detail column while a board is selected.
     @State private var selectedCard: UUID?
     /// Board label filter. Lives here, not in `BoardColumnsView`, because the sidebar counts
@@ -210,6 +216,14 @@ struct NotesBrowserWindow: View {
                 }
             }
         }
+        .sheet(isPresented: boardIconPresented) {
+            NamePromptSheet(title: "Board Emoji", action: "Set", name: $boardIconDraft) {
+                if let id = boardIconTarget {
+                    let emoji = boardIconDraft
+                    runFolderOp { try boardStore.setBoardIcon(id: id, emoji: emoji) }
+                }
+            }
+        }
         .confirmationDialog(
             boardDeleteTitle,
             isPresented: boardDeletePresented,
@@ -289,6 +303,11 @@ struct NotesBrowserWindow: View {
                 boardRow(board)
                     .contextMenu {
                         Button("Rename…") { boardNameDraft = board.name; boardRenameTarget = board.id }
+                        Button("Set Emoji…") { boardIconDraft = board.icon ?? ""; boardIconTarget = board.id }
+                        Button("Choose Image…") { chooseBoardImage(board.id) }
+                        if board.icon != nil || board.image != nil {
+                            Button("Remove Icon") { runFolderOp { try boardStore.clearBoardIcon(id: board.id) } }
+                        }
                         Button("Delete…", role: .destructive) { boardDeleteTarget = board.id }
                     }
             }
@@ -342,16 +361,59 @@ struct NotesBrowserWindow: View {
     /// the pointer the moment a filter matches nothing.
     private func boardRow(_ board: Board) -> some View {
         let count = matchingCards(board)
-        return folderRow(.board(board.id), name: board.name, icon: "rectangle.split.3x1",
-                         count: count, dimmed: boardFilterIsOn && count == 0)
+        return folderRow(.board(board.id), name: board.name, count: count,
+                         dimmed: boardFilterIsOn && count == 0) { boardIcon(board) }
+    }
+
+    /// A board's own look: its image, else its emoji, else the default glyph. The store
+    /// guarantees at most one of the first two, so this is a precedence, not a merge.
+    private func boardIcon(_ board: Board) -> some View {
+        Group {
+            // ponytail: decoded per body pass — a handful of sidebar-sized files. Cache by
+            // name if a board list ever gets long enough to feel it.
+            if let url = boardStore.boardImageURL(board.id), let image = NSImage(contentsOf: url) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 16, height: 16)
+                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            } else if let icon = board.icon {
+                Text(icon)
+            } else {
+                Image(systemName: "rectangle.split.3x1").foregroundStyle(MeatPadGlass.tint.gradient)
+            }
+        }
+        // Represented as plain text: a thumbnail and an SF Symbol carry no value of their
+        // own, so this is what makes "what is this row's icon" readable at all.
+        .accessibilityRepresentation { Text(board.image != nil ? "image" : (board.icon ?? "none")) }
+        .accessibilityIdentifier("board.icon.\(board.id.uuidString)")
+    }
+
+    /// Panel is app-modal, so the sidebar is untouched while it is up; the id was captured
+    /// before it opened, so a board deleted underneath simply fails the store call.
+    private func chooseBoardImage(_ id: UUID) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.prompt = String(localized: "Choose")
+        guard panel.runModal() == .OK, let url = panel.url, let data = try? Data(contentsOf: url) else { return }
+        runFolderOp { try boardStore.setBoardImage(id: id, data: data, ext: AttachmentImport.ext(of: url)) }
     }
 
     private func folderRow(_ value: FolderSelection, name: String, icon: String, count: Int, dimmed: Bool = false) -> some View {
+        folderRow(value, name: name, count: count, dimmed: dimmed) {
+            Image(systemName: icon).foregroundStyle(MeatPadGlass.tint.gradient)
+        }
+    }
+
+    /// Icon and title side by side rather than a `Label`: a `Label`'s icon slot is folded
+    /// into the row's own accessibility element, so a board's icon would have no element of
+    /// its own to read. The fixed icon width is what `Label` was doing for alignment.
+    private func folderRow<Icon: View>(_ value: FolderSelection, name: String, count: Int, dimmed: Bool = false,
+                                       @ViewBuilder icon: () -> Icon) -> some View {
         HStack {
-            Label {
+            HStack(spacing: 6) {
+                icon().frame(width: 16)
                 Text(name).lineLimit(1)
-            } icon: {
-                Image(systemName: icon).foregroundStyle(MeatPadGlass.tint.gradient)
             }
             Spacer()
             Text("\(count)")
@@ -371,6 +433,10 @@ struct NotesBrowserWindow: View {
 
     private var boardDeletePresented: Binding<Bool> {
         Binding(get: { boardDeleteTarget != nil }, set: { if !$0 { boardDeleteTarget = nil } })
+    }
+
+    private var boardIconPresented: Binding<Bool> {
+        Binding(get: { boardIconTarget != nil }, set: { if !$0 { boardIconTarget = nil } })
     }
 
     /// Pulled out of the `confirmationDialog` call: a trailing closure inside string
