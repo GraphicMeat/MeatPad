@@ -138,6 +138,9 @@ public struct Board: Identifiable, Codable, Equatable, Sendable {
     /// `AttachmentStore`, owned by the board's id. Never set alongside `icon` — a board has
     /// one look, and `BoardStore` is what enforces that.
     public var image: String?
+    /// This board's column order as ids, globals and extras mixed. nil = globals then extras.
+    /// Ids not listed (a column added later) append in default order; stale ids are ignored.
+    public var columnOrder: [UUID]? = nil
 
     public init(id: UUID = UUID(), name: String, extraColumns: [BoardColumn] = [], cards: [Card] = [],
                 icon: String? = nil, image: String? = nil) {

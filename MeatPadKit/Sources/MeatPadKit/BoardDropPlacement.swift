@@ -43,4 +43,11 @@ public extension BoardDropPlacement {
         let stem = (trimmed as NSString).deletingPathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
         return stem.isEmpty ? fallback : stem
     }
+
+    /// Where a dragged column lands when dropped over column `over`'s leading or trailing half,
+    /// expressed as the final index `moveColumn` expects (the dragged column is removed first).
+    static func columnIndex(from: Int, over: Int, trailingHalf: Bool) -> Int {
+        let slot = over + (trailingHalf ? 1 : 0)
+        return from < slot ? slot - 1 : slot
+    }
 }

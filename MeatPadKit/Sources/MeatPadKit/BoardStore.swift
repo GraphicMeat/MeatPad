@@ -174,9 +174,16 @@ public final class BoardStore: ObservableObject {
 
     // MARK: - Columns (composition)
 
-    /// Rendered order for a board: the global columns first, then that board's extras.
+    /// Rendered order for a board: the global columns first, then that board's extras, unless
+    /// the board has its own `columnOrder`.
     public func columns(for board: Board) -> [BoardColumn] {
-        globalColumns + board.extraColumns
+        let all = globalColumns + board.extraColumns
+        guard let order = board.columnOrder else { return all }
+        let rank = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        return all.enumerated()
+            .sorted { (rank[$0.element.id] ?? order.count + $0.offset, $0.offset)
+                    < (rank[$1.element.id] ?? order.count + $1.offset, $1.offset) }
+            .map(\.element)
     }
 
     /// A column's cards, already in display order — `board.cards` order IS column order.
@@ -388,6 +395,25 @@ public final class BoardStore: ObservableObject {
         let idx = try boardIndex(boardID)
         boards[idx].extraColumns.append(BoardColumn(name: try validated(name)))
         try persist(at: idx)
+    }
+
+    /// `index` is the column's final position. On a board the whole rendered order is written to
+    /// `columnOrder`; in the All Boards overview (nil) the shared global order itself moves.
+    public func moveColumn(id: UUID, to index: Int, onBoard boardID: UUID?) throws {
+        if let boardID {
+            let idx = try boardIndex(boardID)
+            var ids = columns(for: boards[idx]).map(\.id)
+            guard let from = ids.firstIndex(of: id) else { throw BoardStoreError.columnNotFound(id) }
+            ids.remove(at: from)
+            ids.insert(id, at: max(0, min(index, ids.count)))
+            boards[idx].columnOrder = ids
+            try persist(at: idx)
+        } else {
+            guard let from = globalColumns.firstIndex(where: { $0.id == id }) else { throw BoardStoreError.columnNotFound(id) }
+            let column = globalColumns.remove(at: from)
+            globalColumns.insert(column, at: max(0, min(index, globalColumns.count)))
+            try saveIndex()
+        }
     }
 
     /// `boardID` nil = a global column; otherwise that board's own extra column.

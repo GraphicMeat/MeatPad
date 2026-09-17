@@ -311,6 +311,57 @@ final class BoardStoreTests: XCTestCase {
         }
     }
 
+    // MARK: - column order
+
+    func testMoveColumnOnBoardInterleavesGlobalsAndExtrasWithoutTouchingOtherBoards() throws {
+        let store = try makeStore()
+        let a = try store.createBoard(name: "A")
+        let b = try store.createBoard(name: "B")
+        try store.addExtraColumn(boardID: a.id, name: "Extra")
+        let extra = store.boards[0].extraColumns[0].id
+        try store.moveColumn(id: extra, to: 0, onBoard: a.id)
+        XCTAssertEqual(store.columns(for: store.boards[0]).map(\.name), ["Extra", "Todo", "In Progress", "Done"])
+        XCTAssertEqual(store.columns(for: store.boards[1]).map(\.name), ["Todo", "In Progress", "Done"])
+        XCTAssertEqual(try makeStore().columns(for: try makeStore().boards[0]).map(\.name), ["Extra", "Todo", "In Progress", "Done"])
+        _ = b
+    }
+
+    func testColumnAddedAfterCustomOrderAppendsAndDeletedOneDisappears() throws {
+        let store = try makeStore()
+        let a = try store.createBoard(name: "A")
+        let done = store.globalColumns[2].id
+        try store.moveColumn(id: done, to: 0, onBoard: a.id)
+        try store.addGlobalColumn(name: "Later")
+        try store.deleteColumn(id: store.globalColumns[1].id, boardID: nil)   // In Progress
+        XCTAssertEqual(store.columns(for: store.boards[0]).map(\.name), ["Done", "Todo", "Later"])
+    }
+
+    func testMoveColumnInOverviewReordersGlobalsAndClamps() throws {
+        let store = try makeStore()
+        let todo = store.globalColumns[0].id
+        try store.moveColumn(id: todo, to: 99, onBoard: nil)
+        XCTAssertEqual(store.globalColumns.map(\.name), ["In Progress", "Done", "Todo"])
+        XCTAssertEqual(try makeStore().globalColumns.map(\.name), ["In Progress", "Done", "Todo"])
+    }
+
+    func testMoveUnknownColumnThrows() throws {
+        let store = try makeStore()
+        let a = try store.createBoard(name: "A")
+        XCTAssertThrowsError(try store.moveColumn(id: UUID(), to: 0, onBoard: a.id))
+        XCTAssertThrowsError(try store.moveColumn(id: UUID(), to: 0, onBoard: nil))
+    }
+
+    func testBoardFileWithoutColumnOrderDecodes() throws {
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let id = UUID()
+        let board: [String: Any] = ["id": id.uuidString, "name": "legacy", "extraColumns": [], "cards": []]
+        try JSONSerialization.data(withJSONObject: board)
+            .write(to: tempDir.appendingPathComponent("\(id.uuidString).json"))
+        let store = try makeStore()
+        XCTAssertNil(store.boards.first?.columnOrder)
+        XCTAssertEqual(store.columns(for: store.boards[0]).map(\.name), ["Todo", "In Progress", "Done"])
+    }
+
     // MARK: - note link + due reminders
 
     func testCardForNoteFindsAndMisses() throws {

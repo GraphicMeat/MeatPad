@@ -61,4 +61,15 @@ final class BoardDropPlacementTests: XCTestCase {
         XCTAssertEqual(BoardDropPlacement.newCardTitle(fileName: nil, fallback: "Image"), "Image")
         XCTAssertEqual(BoardDropPlacement.newCardTitle(fileName: "   ", fallback: "Image"), "Image")
     }
+
+    // MARK: - column order
+
+    func testColumnIndexFromDropHalf() {
+        // columns [0,1,2,3]; dragging index 1
+        XCTAssertEqual(BoardDropPlacement.columnIndex(from: 1, over: 3, trailingHalf: true), 3)   // after last
+        XCTAssertEqual(BoardDropPlacement.columnIndex(from: 1, over: 3, trailingHalf: false), 2)  // before 3
+        XCTAssertEqual(BoardDropPlacement.columnIndex(from: 1, over: 0, trailingHalf: false), 0)
+        XCTAssertEqual(BoardDropPlacement.columnIndex(from: 1, over: 0, trailingHalf: true), 1)   // no-op
+        XCTAssertEqual(BoardDropPlacement.columnIndex(from: 2, over: 2, trailingHalf: true), 2)   // over itself
+    }
 }
