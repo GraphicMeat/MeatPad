@@ -15,6 +15,9 @@ struct BoardColumnsView: View {
     /// Free text the cards are filtered to, matched against title and body. Owned by the
     /// window for the same reason as `labelFilter`: the sidebar counts answer to it too.
     @Binding var searchQuery: String
+    /// Whether archived cards show (dimmed) instead of being hidden. Owned by the window for
+    /// the same reason as `labelFilter`/`searchQuery`.
+    @Binding var showArchived: Bool
 
     /// Card density. Unlike the label filter this is remembered across launches and shared by
     /// every board — it hides no cards, so nothing can go missing behind it.
@@ -110,6 +113,16 @@ struct BoardColumnsView: View {
                 )
                 .frame(maxWidth: 260)
                 LabelFilterField(store: store, selected: $labelFilter)
+                Button {
+                    showArchived.toggle()
+                } label: {
+                    Image(systemName: showArchived ? "archivebox.fill" : "archivebox")
+                }
+                .buttonStyle(.borderless)
+                .help(String(localized: "Show Archived Cards"))
+                .accessibilityLabel(Text("Show Archived Cards"))
+                .accessibilityValue(showArchived ? "on" : "off")
+                .accessibilityIdentifier("board.showArchived")
                 displayPicker
                 Button {
                     undoManager?.undo()
@@ -354,12 +367,12 @@ struct BoardColumnsView: View {
         if let board {
             let live = store.boards.first { $0.id == board.id } ?? board
             return store.cards(in: live, column: column.id)
-                .filter { $0.matches(labels: labelFilter, text: searchQuery) }
+                .filter { $0.matches(labels: labelFilter, text: searchQuery, showArchived: showArchived) }
                 .map { CardRef(board: live, card: $0) }
         }
         return store.boards.flatMap { board in
             store.cards(in: board, column: column.id)
-                .filter { $0.matches(labels: labelFilter, text: searchQuery) }
+                .filter { $0.matches(labels: labelFilter, text: searchQuery, showArchived: showArchived) }
                 .map { CardRef(board: board, card: $0) }
         }
     }
@@ -370,7 +383,7 @@ struct BoardColumnsView: View {
         let globals = Set(store.globalColumns.map(\.id))
         return store.boards.flatMap { board in
             board.cards
-                .filter { !globals.contains($0.columnID) && $0.matches(labels: labelFilter, text: searchQuery) }
+                .filter { !globals.contains($0.columnID) && $0.matches(labels: labelFilter, text: searchQuery, showArchived: showArchived) }
                 .map { CardRef(board: board, card: $0) }
         }
     }
@@ -395,6 +408,8 @@ struct BoardColumnsView: View {
                     Button(column.isDone ? "Not a Done Column" : "Mark as Done Column") {
                         try? store.setColumnDone(id: column.id, !column.isDone, boardID: ref(for: column).boardID)
                     }
+                    Button("Archive All Cards") { archiveAll(in: column) }
+                        .disabled(!hasUnarchivedCards(in: column))
                     Divider()
                     Button("Delete…", role: .destructive) { deleteTarget = ref(for: column) }
                 } label: {
@@ -404,6 +419,7 @@ struct BoardColumnsView: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help(String(localized: "Column Actions"))
+                .accessibilityIdentifier("column.actions.\(column.id.uuidString)")
             }
 
             if let board {
@@ -677,6 +693,25 @@ struct BoardColumnsView: View {
 
     private func columnIsDone(_ ref: CardRef) -> Bool {
         store.columns(for: ref.board).first { $0.id == ref.card.columnID }?.isDone ?? false
+    }
+
+    /// This board, or every board in the All Boards overview — live values, not the captured `board`.
+    private var ownerBoards: [Board] {
+        guard let board else { return store.boards }
+        return store.boards.filter { $0.id == board.id }
+    }
+
+    private func hasUnarchivedCards(in column: BoardColumn) -> Bool {
+        ownerBoards.contains { store.cards(in: $0, column: column.id).contains { $0.archived == nil } }
+    }
+
+    private func archiveAll(in column: BoardColumn) {
+        try? store.grouped {
+            for owner in ownerBoards {
+                let ids = store.cards(in: owner, column: column.id).filter { $0.archived == nil }.map(\.id)
+                if !ids.isEmpty { try store.setArchived(boardID: owner.id, cardIDs: ids, true) }
+            }
+        }
     }
 
     /// A card always moves within its own board — in the all-boards view the destination

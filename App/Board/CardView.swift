@@ -86,6 +86,7 @@ struct CardView: View {
         .padding(.vertical, 3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background { cellBackground }
+        .opacity(card.archived != nil ? 0.55 : 1)
         .contextMenu { cardMenu }
         .onHover { hovering = $0 }
         // Calendar's own shape for "pick an exact time": a popover, not a field wedged into
@@ -181,6 +182,12 @@ struct CardView: View {
                     // just grows an "Edit" entry.
                     .accessibilityAction(named: Text("Edit")) { editing = .title; focus = .title }
                     .accessibilityIdentifier("card.title")
+            }
+            if card.archived != nil {
+                Image(systemName: "archivebox")
+                    .font(.system(size: fontSize(.caption1)))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("card.archived")
             }
             if summarizing {
                 ProgressView().controlSize(.mini)
@@ -330,6 +337,9 @@ struct CardView: View {
             Button("Unlink") { update { $0.noteID = nil } }
         }
         Button("Copy Text", action: copyText)
+        Button(card.archived == nil ? "Archive Card" : "Unarchive Card") {
+            try? store.setArchived(boardID: boardID, cardIDs: [card.id], card.archived == nil)
+        }
         Divider()
         Button("Delete Card", role: .destructive) {
             bodyDebouncer.cancel()

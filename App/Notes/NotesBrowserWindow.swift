@@ -101,6 +101,10 @@ struct NotesBrowserWindow: View {
     @State private var labelFilter: Set<UUID> = []
     /// Board card search, session-only for the same reason as `labelFilter`.
     @State private var cardSearch = ""
+    /// Whether archived cards show (dimmed) instead of being hidden. Session-only for the
+    /// same reason as `labelFilter`: an archive filter you forgot you left on is worse than
+    /// retoggling it.
+    @State private var showArchived = false
 
     private var folderFilteredNotes: [Note] {
         if case .trash = folderSelection { return noteStore.trashedNotes }
@@ -350,7 +354,7 @@ struct NotesBrowserWindow: View {
     /// Sidebar counts answer the question the board is currently asking: with a label filter
     /// or a search on, a board reports how many of its cards survive it.
     private func matchingCards(_ board: Board) -> Int {
-        board.cards.filter { $0.matches(labels: labelFilter, text: cardSearch) }.count
+        board.cards.filter { $0.matches(labels: labelFilter, text: cardSearch, showArchived: showArchived) }.count
     }
 
     private var boardFilterIsOn: Bool {
@@ -452,7 +456,7 @@ struct NotesBrowserWindow: View {
 
     private var boardColumns: some View {
         BoardColumnsView(store: boardStore, board: selectedBoard, selectedCard: $selectedCard,
-                         labelFilter: $labelFilter, searchQuery: $cardSearch)
+                         labelFilter: $labelFilter, searchQuery: $cardSearch, showArchived: $showArchived)
     }
 
     @ViewBuilder
