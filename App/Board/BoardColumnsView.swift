@@ -945,20 +945,28 @@ struct BoardColumnsView: View {
     /// in the wrong place. Dropping past the last visible row, or above a card from another board,
     /// appends.
     ///
-    /// `excluding` (the whole batch) skips every moving card when picking the anchor, so a
-    /// selection never anchors on a sibling that is itself about to move. `moving` (just this
-    /// one id) is then dropped from `all` before the anchor's position is read off it: `store
-    /// .moveCard` removes the card first and numbers the destination column's siblings on what's
-    /// left, so the index handed back has to already agree with a column that doesn't contain
-    /// `id` — skip that and a same-column drag lands one slot past the anchor whenever the card
-    /// started out earlier in the column than its anchor (id's own removal shifts everything
-    /// after it down by one). `board` is looked up fresh here since the caller's copy goes stale
-    /// after the first move in a multi-card batch.
+    /// Two cases, because they need different arithmetic:
+    /// - The row literally at `visibleIndex` is NOT itself moving: `store.moveCard` already
+    ///   removes the card being placed before it numbers the destination's siblings, so handing
+    ///   it the anchor's position in the UNFILTERED column (the way a single-card move always
+    ///   has) is correct — `moveCard`'s own clamp is what turns "past the last row" into append.
+    ///   Filtering `all` here double-removes the mover and lands one slot too early.
+    /// - The row literally at `visibleIndex` IS one of the moving cards (dragging part of a
+    ///   selection that includes its own neighbor): there is no real anchor there, so skip ahead
+    ///   to the next non-moving card and resolve its position with every moving card excluded —
+    ///   `all` has to already agree with a column that contains none of them.
     private func storeIndex(visible items: [CardRef], at visibleIndex: Int, column: UUID, board: Board, moving id: UUID, excluding moving: Set<UUID>) -> Int {
         let owner = store.boards.first { $0.id == board.id } ?? board
-        let all = store.cards(in: owner, column: column).filter { $0.id != id }
-        guard visibleIndex < items.count,
-              let anchor = items[visibleIndex...].first(where: { !moving.contains($0.card.id) })?.card.id
+        guard visibleIndex < items.count else {
+            return store.cards(in: owner, column: column).filter { !moving.contains($0.id) }.count
+        }
+        if !moving.contains(items[visibleIndex].card.id) {
+            let anchor = items[visibleIndex].card.id
+            let all = store.cards(in: owner, column: column)
+            return all.firstIndex { $0.id == anchor } ?? all.count
+        }
+        let all = store.cards(in: owner, column: column).filter { !moving.contains($0.id) }
+        guard let anchor = items[visibleIndex...].first(where: { !moving.contains($0.card.id) })?.card.id
         else { return all.count }
         return all.firstIndex { $0.id == anchor } ?? all.count
     }

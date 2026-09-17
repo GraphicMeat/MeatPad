@@ -203,8 +203,14 @@ final class BoardMultiSelectUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: "board.selection.count").firstMatch
     }
 
+    /// Like `BoardCardFaceUITests.faceText`/`BoardColumnOrderUITests.nameText`: an idle `Text`
+    /// row in this app exposes its content via AX `value`, not `label`.
     private func waitForSelectionCount(contains substring: String, timeout: TimeInterval = 5) -> Bool {
-        poll(timeout: timeout) { self.selectionCountElement.exists && self.selectionCountElement.label.contains(substring) }
+        poll(timeout: timeout) {
+            let el = self.selectionCountElement
+            let text = (el.value as? String) ?? el.label
+            return el.exists && text.contains(substring)
+        }
     }
 
     /// Same idiom `BoardDropUITests` drags with: press-and-hold on a card's title (inside its

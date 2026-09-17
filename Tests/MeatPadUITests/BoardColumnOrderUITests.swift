@@ -76,11 +76,17 @@ final class BoardColumnOrderUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: "column.name")
     }
 
+    /// Like `BoardCardFaceUITests.faceText`: an idle `Text` row in this app exposes its
+    /// content via AX `value`, not `label` — confirmed by dumping both mid-test.
+    private func nameText(_ element: XCUIElement) -> String {
+        element.value as? String ?? element.label
+    }
+
     private func header(_ name: String) -> XCUIElement {
         XCTAssertTrue(names.firstMatch.waitForExistence(timeout: 5))
         let all = names.allElementsBoundByIndex
-        guard let element = all.first(where: { $0.label == name }) else {
-            XCTFail("no column named \(name) among \(all.map(\.label))")
+        guard let element = all.first(where: { nameText($0) == name }) else {
+            XCTFail("no column named \(name) among \(all.map(nameText))")
             return names.firstMatch
         }
         return element
@@ -92,7 +98,7 @@ final class BoardColumnOrderUITests: XCTestCase {
         _ = names.firstMatch.waitForExistence(timeout: 5)
         return names.allElementsBoundByIndex
             .sorted { $0.frame.minX < $1.frame.minX }
-            .map(\.label)
+            .map(nameText)
     }
 
     private func columnActionsButton(_ column: UUID) -> XCUIElement {
