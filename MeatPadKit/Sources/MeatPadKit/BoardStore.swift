@@ -304,6 +304,35 @@ public final class BoardStore: ObservableObject {
         registerUndo { try? $0.moveCard(id: id, boardID: boardID, toColumn: fromColumn, index: fromIndex) }
     }
 
+    /// Cards already in the requested state are left alone, so re-archiving keeps the first date.
+    public func setArchived(boardID: UUID, cardIDs: [UUID], _ archived: Bool, now: Date = Date()) throws {
+        let idx = try boardIndex(boardID)
+        let wanted = Set(cardIDs)
+        var previous: [UUID: Date?] = [:]
+        for i in boards[idx].cards.indices where wanted.contains(boards[idx].cards[i].id) {
+            guard (boards[idx].cards[i].archived != nil) != archived else { continue }
+            previous[boards[idx].cards[i].id] = boards[idx].cards[i].archived
+            boards[idx].cards[i].archived = archived ? now : nil
+        }
+        guard !previous.isEmpty else { return }
+        try persist(at: idx)
+        registerUndo { store in
+            guard let i = try? store.boardIndex(boardID) else { return }
+            for c in store.boards[i].cards.indices {
+                if let old = previous[store.boards[i].cards[c].id] { store.boards[i].cards[c].archived = old }
+            }
+            try? store.persist(at: i)
+            store.registerUndo { try? $0.setArchived(boardID: boardID, cardIDs: Array(previous.keys), archived, now: now) }
+        }
+    }
+
+    /// Several card mutations that should undo as one ⌘Z (bulk delete/archive/move).
+    public func grouped(_ body: () throws -> Void) rethrows {
+        undoManager?.beginUndoGrouping()
+        defer { undoManager?.endUndoGrouping() }
+        try body()
+    }
+
     // MARK: - Attachments
 
     @discardableResult
@@ -500,7 +529,7 @@ public final class BoardStore: ObservableObject {
         boards.flatMap { board -> [DueReminder] in
             let doneColumns = Set(columns(for: board).filter(\.isDone).map(\.id))
             return board.cards.compactMap { card in
-                guard let due = card.due, due > now, !doneColumns.contains(card.columnID) else { return nil }
+                guard let due = card.due, due > now, card.archived == nil, !doneColumns.contains(card.columnID) else { return nil }
                 return DueReminder(cardID: card.id, boardID: board.id, title: card.title, due: due)
             }
         }

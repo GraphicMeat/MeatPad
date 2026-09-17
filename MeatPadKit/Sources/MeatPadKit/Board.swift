@@ -78,6 +78,9 @@ public struct Card: Identifiable, Codable, Equatable, Sendable {
     public var attachments: [String]?
     public var created: Date
     public var modified: Date
+    /// When the card was archived. Archived cards keep their column and position and are hidden
+    /// unless the board's Show Archived toggle is on. Optional so older board files decode.
+    public var archived: Date?
 
     public init(id: UUID = UUID(), title: String, body: String? = nil, due: Date? = nil,
                 columnID: UUID, noteID: UUID? = nil, labelIDs: [UUID]? = nil,
@@ -104,11 +107,19 @@ public struct Card: Identifiable, Codable, Equatable, Sendable {
     /// chips already left. Substring, not fuzzy: this is a filter you watch cards fall out of
     /// while typing, and an unrelated card surviving on a fuzzy score reads as a bug.
     /// `localizedStandardContains` is the Finder's rule — case- and diacritic-insensitive.
-    public func matches(labels filter: Set<UUID>, text query: String = "") -> Bool {
+    public func matches(labels filter: Set<UUID>, text query: String = "", showArchived: Bool = false) -> Bool {
+        guard showArchived || archived == nil else { return false }
         guard filter.isEmpty || (labelIDs ?? []).contains(where: { filter.contains($0) }) else { return false }
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return true }
         return title.localizedStandardContains(needle) || body?.localizedStandardContains(needle) == true
+    }
+
+    /// What the card's copy button puts on the pasteboard: the title, then the notes after a
+    /// blank line when there are any.
+    public var clipboardText: String {
+        let notes = (body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return notes.isEmpty ? title : title + "\n\n" + notes
     }
 }
 

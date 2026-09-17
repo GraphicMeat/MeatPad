@@ -841,4 +841,67 @@ final class BoardStoreTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: json).write(to: boardURL)
         XCTAssertNil(try makeStore().boards[0].cards[0].attachments)
     }
+
+    // MARK: - archive
+
+    func testArchivedCardIsHiddenUnlessShowArchived() {
+        var card = Card(title: "a", columnID: UUID())
+        card.archived = Date()
+        XCTAssertFalse(card.matches(labels: []))
+        XCTAssertTrue(card.matches(labels: [], showArchived: true))
+    }
+
+    func testSetArchivedStampsDatePersistsAndUndoes() throws {
+        let store = try makeStore()
+        let undo = UndoManager(); undo.groupsByEvent = false
+        store.undoManager = undo
+        let board = try store.createBoard(name: "B")
+        let col = store.globalColumns[0].id
+        let a = try store.addCard(boardID: board.id, columnID: col, title: "a")
+        let b = try store.addCard(boardID: board.id, columnID: col, title: "b")
+        let now = Date(timeIntervalSince1970: 1_000)
+        try store.setArchived(boardID: board.id, cardIDs: [a.id, b.id], true, now: now)
+        XCTAssertEqual(try makeStore().boards[0].cards.map(\.archived), [now, now])
+        undo.undo()
+        XCTAssertEqual(store.boards[0].cards.map(\.archived), [nil, nil])
+    }
+
+    func testSetArchivedKeepsOriginalDateOfAlreadyArchivedCard() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "B")
+        let a = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "a")
+        let first = Date(timeIntervalSince1970: 1)
+        try store.setArchived(boardID: board.id, cardIDs: [a.id], true, now: first)
+        try store.setArchived(boardID: board.id, cardIDs: [a.id], true, now: Date(timeIntervalSince1970: 2))
+        XCTAssertEqual(store.boards[0].cards[0].archived, first)
+    }
+
+    func testArchivedCardsDoNotRemind() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "B")
+        var a = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "a")
+        a.due = Date().addingTimeInterval(3600)
+        try store.updateCard(boardID: board.id, card: a)
+        try store.setArchived(boardID: board.id, cardIDs: [a.id], true)
+        XCTAssertTrue(store.pendingDueReminders(now: Date()).isEmpty)
+    }
+
+    func testGroupedMutationsUndoAsOneStep() throws {
+        let store = try makeStore()
+        let undo = UndoManager(); undo.groupsByEvent = false
+        store.undoManager = undo
+        let board = try store.createBoard(name: "B")
+        let col = store.globalColumns[0].id
+        let ids = try (0..<3).map { try store.addCard(boardID: board.id, columnID: col, title: "\($0)").id }
+        try store.grouped { for id in ids { try store.deleteCard(boardID: board.id, cardID: id) } }
+        XCTAssertTrue(store.boards[0].cards.isEmpty)
+        undo.undo()
+        XCTAssertEqual(store.boards[0].cards.count, 3)
+    }
+
+    func testClipboardTextIsTitleThenNotes() {
+        XCTAssertEqual(Card(title: "T", body: "  n1\nn2 ", columnID: UUID()).clipboardText, "T\n\nn1\nn2")
+        XCTAssertEqual(Card(title: "T", body: "   ", columnID: UUID()).clipboardText, "T")
+        XCTAssertEqual(Card(title: "T", columnID: UUID()).clipboardText, "T")
+    }
 }
