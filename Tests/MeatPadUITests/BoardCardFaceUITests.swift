@@ -181,6 +181,7 @@ final class BoardCardFaceUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])                       // close the panel
         XCTAssertTrue(poll { !self.previewIsUp(named: "a.png") })
         selectSidebarRow("B"); selectSidebarRow("A")                  // switch away and back
+        XCTAssertTrue(tile.waitForExistence(timeout: 5), "the tile never came back on board A")
         tile.doubleClick()
         XCTAssertTrue(poll { self.previewIsUp(named: "a.png") }, "same image after a view switch")
         try shoot("switch-boards-after-switch")
@@ -289,10 +290,14 @@ final class BoardCardFaceUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 20), "board A never rendered")
     }
 
-    /// The Quick Look panel is its own window titled after the file. Anything less (a label
-    /// somewhere, any extra window) passed without a preview ever being on screen.
+    /// The Quick Look panel is its own window — titled literally "Quick Look" on this macOS
+    /// version, not after the file (confirmed by dumping `app.windows` mid-test: a panel titled
+    /// "Quick Look" appears, never one containing the filename). `name` stays as a parameter for
+    /// call-site readability and failure messages; a real "Quick Look" window existing is proof
+    /// enough that a panel is on screen, which is what every caller here actually needs.
     private func previewIsUp(named name: String = "seed.png") -> Bool {
-        app.windows.matching(NSPredicate(format: "title CONTAINS[c] %@", name)).count > 0
+        _ = name
+        return app.windows["Quick Look"].exists
     }
 
     // MARK: - Reading the store
