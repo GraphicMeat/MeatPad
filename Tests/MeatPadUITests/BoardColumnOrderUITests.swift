@@ -60,7 +60,8 @@ final class BoardColumnOrderUITests: XCTestCase {
         let target = doneMenuButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .withOffset(CGVector(dx: -20, dy: 0))
 
-        header("Todo").press(forDuration: 0.3, thenDragTo: target)
+        let source = header("Todo").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        source.press(forDuration: 0.3, thenDragTo: target)
 
         XCTAssertTrue(poll { self.headerOrder() == ["In Progress", "Done", "Todo"] },
                       "header shows \(headerOrder())")
