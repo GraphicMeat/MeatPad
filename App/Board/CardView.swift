@@ -51,6 +51,10 @@ struct CardView: View {
     @State private var editorShown = false
     /// Whether the editor should open straight onto its new-label field.
     @State private var editorLabelForm = false
+    /// Whether the pointer is over the card — the copy button only earns its space in the
+    /// header while the card is hovered (or right after a copy, so the checkmark is seen).
+    @State private var hovering = false
+    @State private var copied = false
     @Environment(\.openWindow) private var openWindow
     /// How much bigger than normal to draw — presentation mode, or the present overlay. Every
     /// type and tile size below is multiplied by it; at 1 the card is what it always was.
@@ -82,6 +86,7 @@ struct CardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background { cellBackground }
         .contextMenu { cardMenu }
+        .onHover { hovering = $0 }
         // Calendar's own shape for "pick an exact time": a popover, not a field wedged into
         // the card — the card face carries the date, never the picker.
         .popover(isPresented: $editingDue) {
@@ -179,6 +184,20 @@ struct CardView: View {
             if summarizing {
                 ProgressView().controlSize(.mini)
             }
+            Button(action: copyText) {
+                Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
+                    .font(.system(size: fontSize(.body)))
+                    .foregroundStyle(copied ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+                    .frame(width: 22 * scale, height: 18 * scale)
+                    .contentShape(Rectangle())
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .buttonStyle(.plain)
+            .opacity(hovering || copied ? 1 : 0)
+            .help(String(localized: "Copy Title and Notes"))
+            .accessibilityLabel(Text("Copy"))
+            .accessibilityValue(copied ? "copied" : "")
+            .accessibilityIdentifier("card.copy")
             Button {
                 editorLabelForm = false
                 editorShown = true
@@ -210,6 +229,18 @@ struct CardView: View {
 
     private var faceTitle: String {
         title.isEmpty ? String(localized: "Title") : title
+    }
+
+    /// Puts the card's title and notes on the pasteboard and flashes the button's icon green
+    /// for long enough to register as feedback without lingering past the next glance.
+    private func copyText() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(card.clipboardText, forType: .string)
+        copied = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            copied = false
+        }
     }
 
     private var faceNotes: String {
@@ -297,6 +328,7 @@ struct CardView: View {
         if card.noteID != nil {
             Button("Unlink") { update { $0.noteID = nil } }
         }
+        Button("Copy Text", action: copyText)
         Divider()
         Button("Delete Card", role: .destructive) {
             bodyDebouncer.cancel()

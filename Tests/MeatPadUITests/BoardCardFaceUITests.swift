@@ -60,6 +60,19 @@ final class BoardCardFaceUITests: XCTestCase {
         XCTAssertEqual(try storedTitle(), "Alpha!")
     }
 
+    /// Seeded card: title "Alpha", body "first line\nsecond line" — `clipboardText` joins them
+    /// with a blank line between, the same format `MeatPadKitTests` proves for `Card`.
+    func testCopyButtonCopiesTitleAndNotesAndShowsCheckmark() throws {
+        title.hover()
+        let copy = app.buttons["card.copy"].firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 5))
+        NSPasteboard.general.clearContents()
+        copy.click()
+        XCTAssertTrue(poll { NSPasteboard.general.string(forType: .string) == "Alpha\n\nfirst line\nsecond line" })
+        XCTAssertEqual(copy.value as? String, "copied")
+        XCTAssertTrue(poll(timeout: 4) { (copy.value as? String) != "copied" })
+    }
+
     func testDraggingTheTitleMovesTheCardToAnotherColumn() throws {
         let target = app.staticTexts["Doing"].firstMatch
         XCTAssertTrue(target.waitForExistence(timeout: 5))
