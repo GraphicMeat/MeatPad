@@ -1,5 +1,6 @@
 import SwiftUI
 import QuickLook
+import MeatPadKit
 
 /// A row of thumbnails with Quick Look on double-click and, when `onRemove` is given, a hover
 /// ✕ per thumbnail. Shared by the card editor and the note windows so "a file on a thing"
@@ -10,6 +11,12 @@ struct AttachmentStrip: View {
     var limit: Int? = nil
     var identifier = "attachment"
     var onRemove: ((Int) -> Void)? = nil
+    /// The card or note's own title, used to name a dragged-out copy — nil draws the plain
+    /// "Attachment" fallback instead.
+    var dragTitle: String? = nil
+    /// The card or note this strip belongs to, so each one's drag-out copies live in their own
+    /// temp folder (and `ColumnDropDelegate` can tell a card's own drag-out from anyone else's).
+    var owner: UUID? = nil
 
     @State private var preview: URL?
     @State private var hovering: Int?
@@ -26,6 +33,12 @@ struct AttachmentStrip: View {
                     .overlay {
                         DoubleClickCatcher(identifier: identifier, label: String(localized: "Attachment")) { open(url) }
                     }
+                    // SwiftUI's own gesture recognisers claim a mouse-down before a nested
+                    // AppKit view (the catcher) gets a look at it — see `DoubleClickCatcher`'s
+                    // doc — which is the same reason a single click still reaches the row
+                    // underneath. Whether `.onDrag` wins over the card row's own `.draggable`
+                    // for a mouse-down that starts on a tile is unverified without a device run.
+                    .onDrag { exportProvider(url: url, index: index) }
                     .overlay(alignment: .topTrailing) {
                         if let onRemove, hovering == index {
                             Button { onRemove(index) } label: {
@@ -67,5 +80,25 @@ struct AttachmentStrip: View {
     private func open(_ url: URL) {
         preview = nil
         DispatchQueue.main.async { preview = url }
+    }
+
+    /// A drag out of the app never hands out the stored file directly — a Finder drop can move
+    /// it, which would delete it out of the store. Each drag gets its own throwaway copy, named
+    /// after the card/note instead of its on-disk uuid.
+    // ponytail: temp copies are left for the OS to purge; sweep "MeatPad Drags" at launch if it
+    // ever matters.
+    private func exportProvider(url: URL, index: Int) -> NSItemProvider {
+        let name = AttachmentExport.fileName(title: dragTitle ?? "", index: index, ext: url.pathExtension,
+                                             fallback: String(localized: "Attachment"))
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeatPad Drags", isDirectory: true)
+            .appendingPathComponent(owner?.uuidString ?? "none", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let copy = dir.appendingPathComponent(name)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: url, to: copy)
+        } catch { return NSItemProvider() }
+        return NSItemProvider(contentsOf: copy) ?? NSItemProvider()
     }
 }

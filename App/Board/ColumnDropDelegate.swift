@@ -171,6 +171,13 @@ struct ColumnDropDelegate: DropDelegate {
         return true
     }
 
+    /// True when the drag pasteboard's file lives under this card's own drag-out temp folder —
+    /// `AttachmentStrip.exportProvider` names it `MeatPad Drags/<card id>/<uuid>/<file>`.
+    private func isOwnDragOut(of card: UUID) -> Bool {
+        let urls = (NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self]) as? [URL]) ?? []
+        return urls.contains { $0.path.contains("/MeatPad Drags/\(card.uuidString)/") }
+    }
+
     private func apply(_ drop: CardDrop, to placed: DropTarget) -> Bool {
         switch placed {
         case .attach(let card): return attach(card, drop)
@@ -189,6 +196,12 @@ struct ColumnDropDelegate: DropDelegate {
     private func placement(_ info: DropInfo) -> DropTarget? {
         if isFile(info) {
             if case .attach(let id) = BoardDropPlacement.forImage(at: info.location, rows: rows) {
+                // A tile dragged out of its own card and hovered back over that same card is
+                // this card's own drag-out copy re-arriving — no ants, no drop: attaching it
+                // would duplicate the file. (Not `.newCard`: falling through to the bare-space
+                // branch below would turn "drop own tile on own card" into "create a new card
+                // from it", which is worse than doing nothing.)
+                guard !isOwnDragOut(of: id) else { return nil }
                 return .attach(card: id)
             }
             // No ants over bare space we cannot turn into a card.

@@ -75,7 +75,8 @@ struct CardView: View {
             if display != .compact, let names = card.attachments, !names.isEmpty {
                 HairlineDivider()
                 AttachmentStrip(urls: names.map { store.attachmentURL(cardID: card.id, name: $0) },
-                                size: 44 * scale, limit: 4, identifier: "card.attachment")
+                                size: 44 * scale, limit: 4, identifier: "card.attachment",
+                                dragTitle: card.title, owner: card.id)
                     .padding(.vertical, 7)
             }
             HairlineDivider()

@@ -86,7 +86,8 @@ struct CardEditor: View {
                     AttachmentStrip(
                         urls: names.map { store.attachmentURL(cardID: card.id, name: $0) },
                         identifier: "cardEditor.attachment",
-                        onRemove: { index in try? store.removeAttachment(boardID: boardID, cardID: card.id, name: names[index]) }
+                        onRemove: { index in try? store.removeAttachment(boardID: boardID, cardID: card.id, name: names[index]) },
+                        dragTitle: card.title, owner: card.id
                     )
                     .padding(.horizontal, 10)
                     .padding(.vertical, 9)
