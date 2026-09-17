@@ -193,9 +193,12 @@ struct ColumnDropDelegate: DropDelegate {
             guard case .insert(_, let index)? = placed,
                   let provider = info.itemProviders(for: [.utf8PlainText, .plainText]).first
             else { return false }
+            // One id for a lone card, several newline-joined ids for a dragged selection — see
+            // `BoardColumnsView.dragPayload(for:)`.
             _ = provider.loadTransferable(type: String.self) { result in
-                guard case .success(let id) = result else { return }
-                Task { @MainActor in _ = moveCards([id], index) }
+                guard case .success(let payload) = result else { return }
+                let ids = payload.split(separator: "\n").map(String.init)
+                Task { @MainActor in _ = moveCards(ids, index) }
             }
             return true
         }

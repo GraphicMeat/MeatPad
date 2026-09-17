@@ -839,9 +839,10 @@ struct BoardColumnsView: View {
             let kind: BoardSelection.Click = flags.contains(.command) ? .toggle : flags.contains(.shift) ? .extend : .plain
             selection.click(ref.card.id, kind, order: visibleOrder)
         })
-        .draggable(ref.card.id.uuidString) {
-            // A compact chip drags better than a full-card snapshot, and shows what's moving.
-            Text(ref.card.title)
+        .draggable(dragPayload(for: ref)) {
+            // A compact chip drags better than a full-card snapshot, and shows what's moving —
+            // the card's own title, or a count when the card is part of a 2+ selection.
+            Text(dragCount(for: ref) > 1 ? "\(dragCount(for: ref)) Cards" : ref.card.title)
                 .font(.callout.weight(.medium))
                 .lineLimit(1)
                 .padding(.horizontal, 10)
@@ -855,6 +856,16 @@ struct BoardColumnsView: View {
         .marchingAnts(dropTarget == .attach(card: ref.card.id), cornerRadius: 10)
         .overlay(alignment: .topTrailing) { dropBadge(for: ref.card.id) }
     }
+
+    /// The ids a drag started from this card actually carries: the whole selection, in visible
+    /// order, when the card is part of a 2+ selection — otherwise just this one card, selection
+    /// untouched.
+    private func dragIDs(for ref: CardRef) -> [UUID] {
+        guard selection.ids.count > 1, selection.ids.contains(ref.card.id) else { return [ref.card.id] }
+        return selection.ordered(visibleOrder)
+    }
+    private func dragPayload(for ref: CardRef) -> String { dragIDs(for: ref).map(\.uuidString).joined(separator: "\n") }
+    private func dragCount(for ref: CardRef) -> Int { dragIDs(for: ref).count }
 
     /// What the card is about to receive. The ants say "this card"; the thumbnail says "this
     /// image" — between them there is nothing left to guess about an image drop.
@@ -908,16 +919,21 @@ struct BoardColumnsView: View {
     }
 
     /// A card always moves within its own board — in the all-boards view the destination
-    /// column is a global one, which every board shares.
+    /// column is a global one, which every board shares. One or many ids: a multi-card drag
+    /// moves the whole batch as a single `store.grouped` block, so one ⌘Z undoes all of it.
     @discardableResult
     private func move(_ ids: [String], to columnID: UUID, visible items: [CardRef], at visibleIndex: Int) -> Bool {
+        let moving = ids.compactMap(UUID.init(uuidString:))
+        let movingSet = Set(moving)
         var moved = false
         withAnimation(.snappy(duration: 0.22)) {
-            for id in ids.compactMap({ UUID(uuidString: $0) }) {
-                guard let owner = store.boards.first(where: { $0.cards.contains { $0.id == id } }) else { continue }
-                let index = storeIndex(visible: items, at: visibleIndex, column: columnID, board: owner)
-                try? store.moveCard(id: id, boardID: owner.id, toColumn: columnID, index: index)
-                moved = true
+            try? store.grouped {
+                for id in moving {
+                    guard let owner = store.boards.first(where: { $0.cards.contains { $0.id == id } }) else { continue }
+                    let index = storeIndex(visible: items, at: visibleIndex, column: columnID, board: owner, moving: id, excluding: movingSet)
+                    try store.moveCard(id: id, boardID: owner.id, toColumn: columnID, index: index)
+                    moved = true
+                }
             }
         }
         return moved
@@ -928,10 +944,22 @@ struct BoardColumnsView: View {
     /// else to the store — translate through the card the drop landed above, or the card lands
     /// in the wrong place. Dropping past the last visible row, or above a card from another board,
     /// appends.
-    private func storeIndex(visible items: [CardRef], at visibleIndex: Int, column: UUID, board: Board) -> Int {
-        let all = store.cards(in: board, column: column)
-        guard visibleIndex < items.count else { return all.count }
-        let anchor = items[visibleIndex].card.id
+    ///
+    /// `excluding` (the whole batch) skips every moving card when picking the anchor, so a
+    /// selection never anchors on a sibling that is itself about to move. `moving` (just this
+    /// one id) is then dropped from `all` before the anchor's position is read off it: `store
+    /// .moveCard` removes the card first and numbers the destination column's siblings on what's
+    /// left, so the index handed back has to already agree with a column that doesn't contain
+    /// `id` — skip that and a same-column drag lands one slot past the anchor whenever the card
+    /// started out earlier in the column than its anchor (id's own removal shifts everything
+    /// after it down by one). `board` is looked up fresh here since the caller's copy goes stale
+    /// after the first move in a multi-card batch.
+    private func storeIndex(visible items: [CardRef], at visibleIndex: Int, column: UUID, board: Board, moving id: UUID, excluding moving: Set<UUID>) -> Int {
+        let owner = store.boards.first { $0.id == board.id } ?? board
+        let all = store.cards(in: owner, column: column).filter { $0.id != id }
+        guard visibleIndex < items.count,
+              let anchor = items[visibleIndex...].first(where: { !moving.contains($0.card.id) })?.card.id
+        else { return all.count }
         return all.firstIndex { $0.id == anchor } ?? all.count
     }
 

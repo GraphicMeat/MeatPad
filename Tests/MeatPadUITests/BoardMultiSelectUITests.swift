@@ -141,6 +141,58 @@ final class BoardMultiSelectUITests: XCTestCase {
         XCTAssertNotNil(try storedArchived(of: card2ID), "Card 2 never got archived")
     }
 
+    // MARK: - Task 10: dragging a multi-card selection
+
+    /// Dragging one card of a 3-card selection carries the whole selection, in visible order,
+    /// to the drop slot — here across columns, Todo → Done — as one `store.grouped` block, so
+    /// one ⌘Z undoes the whole move.
+    func testDraggingOneOfThreeSelectedCardsMovesAllThreeInOrderWithOneUndo() throws {
+        let card1 = cardElement("Card 1")
+        let card2 = cardElement("Card 2")
+        let card4 = cardElement("Card 4")
+        let card5 = cardElement("Card 5")
+        XCTAssertTrue(card1.waitForExistence(timeout: 5))
+        XCTAssertTrue(card5.waitForExistence(timeout: 5))
+
+        card1.click()
+        XCUIElement.perform(withKeyModifiers: .command) { card2.click() }
+        XCUIElement.perform(withKeyModifiers: .command) { card4.click() }
+        XCTAssertTrue(waitForSelectionCount(contains: "3"), "selection bar never showed 3")
+
+        // Drag from card 2 (one of the three selected) to just above card 5 in Done.
+        center(of: card2).click(forDuration: 0.4, thenDragTo: top(of: card5, minus: 4))
+
+        XCTAssertTrue(poll { (try? self.storedColumnTitles(self.doneColumnID)) == ["Card 1", "Card 2", "Card 4", "Card 5"] },
+                      "Done order is \((try? storedColumnTitles(doneColumnID)) ?? [])")
+        XCTAssertEqual(try storedColumnTitles(todoColumnID), ["Card 3"])
+
+        let undo = app.buttons["board.undo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 5))
+        undo.click()
+
+        XCTAssertTrue(poll { (try? self.storedColumnTitles(self.todoColumnID)) == ["Card 1", "Card 2", "Card 3", "Card 4"] },
+                      "undo did not restore Todo, got \((try? storedColumnTitles(todoColumnID)) ?? [])")
+        XCTAssertEqual(try storedColumnTitles(doneColumnID), ["Card 5"])
+    }
+
+    /// Dropping a 2-card selection just above one of its own members (the two are already
+    /// adjacent) is a no-op for column order.
+    func testDroppingSelectionAboveOneOfItsOwnCardsKeepsOrder() throws {
+        let card2 = cardElement("Card 2")
+        let card3 = cardElement("Card 3")
+        XCTAssertTrue(card2.waitForExistence(timeout: 5))
+        XCTAssertTrue(card3.waitForExistence(timeout: 5))
+
+        card2.click()
+        XCUIElement.perform(withKeyModifiers: .command) { card3.click() }
+        XCTAssertTrue(waitForSelectionCount(contains: "2"), "selection bar never showed 2")
+
+        center(of: card2).click(forDuration: 0.4, thenDragTo: top(of: card3, minus: 4))
+
+        XCTAssertTrue(poll { (try? self.storedColumnTitles(self.todoColumnID)) == ["Card 1", "Card 2", "Card 3", "Card 4"] },
+                      "Todo order changed: \((try? storedColumnTitles(todoColumnID)) ?? [])")
+    }
+
     // MARK: - Driving the board
 
     private func cardElement(_ title: String) -> XCUIElement {
@@ -153,6 +205,16 @@ final class BoardMultiSelectUITests: XCTestCase {
 
     private func waitForSelectionCount(contains substring: String, timeout: TimeInterval = 5) -> Bool {
         poll(timeout: timeout) { self.selectionCountElement.exists && self.selectionCountElement.label.contains(substring) }
+    }
+
+    /// Same idiom `BoardDropUITests` drags with: press-and-hold on a card's title (inside its
+    /// row, so it still starts the row's own `.draggable`), then drag to a coordinate above or
+    /// below another row's midline.
+    private func center(of element: XCUIElement) -> XCUICoordinate {
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+    }
+    private func top(of element: XCUIElement, minus dy: CGFloat) -> XCUICoordinate {
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: -dy))
     }
 
     /// Opens a column's ⋯ menu and returns the requested item, asserting it exists.
@@ -209,6 +271,13 @@ final class BoardMultiSelectUITests: XCTestCase {
 
     private func storedArchived(of id: UUID) throws -> String? {
         try storedCard(id)?["archived"] as? String
+    }
+
+    /// One column's cards, in stored (= rendered) order, by title.
+    private func storedColumnTitles(_ columnID: UUID) throws -> [String] {
+        try storedCards()
+            .filter { $0["columnID"] as? String == columnID.uuidString }
+            .compactMap { $0["title"] as? String }
     }
 
     // MARK: - Seeding
