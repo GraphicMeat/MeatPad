@@ -172,8 +172,23 @@ struct ColumnDropDelegate: DropDelegate {
             let trailingHalf = columnTarget?.trailing ?? (info.location.x > width / 2)
             let order = columnOrder
             let move = moveColumn
-            _ = provider.loadObject(ofClass: NSString.self) { reading, _ in
-                guard let idString = reading as? String, let id = UUID(uuidString: idString),
+            // `NSItemProvider(item:typeIdentifier:)` archives an `NSString` via `NSSecureCoding`
+            // for a `public.data`-conforming custom UTI, and promises it back as a temp file
+            // holding that archive (an NSKeyedArchiver binary plist, "bplist00" — confirmed by
+            // dumping the raw bytes), not the string's own UTF-8 text and not the string handed
+            // back directly. Unarchive it the same way it was archived.
+            _ = provider.loadItem(forTypeIdentifier: UTType.meatpadColumn.identifier) { reading, _ in
+                let idString: String?
+                switch reading {
+                case let url as URL:
+                    idString = (try? Data(contentsOf: url))
+                        .flatMap { try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSString.self, from: $0) as String? }
+                case let string as String:
+                    idString = string
+                default:
+                    idString = nil
+                }
+                guard let idString, let id = UUID(uuidString: idString),
                       let fromIndex = order.firstIndex(of: id)
                 else { return }
                 let index = BoardDropPlacement.columnIndex(from: fromIndex, over: columnIndex, trailingHalf: trailingHalf)
