@@ -24,7 +24,7 @@ struct AttachmentStrip: View {
                     // the row: a container-level identifier pushes onto every child (this
                     // repo has hit that before) and would swallow "\(identifier).remove".
                     .overlay {
-                        DoubleClickCatcher(identifier: identifier, label: String(localized: "Attachment")) { preview = url }
+                        DoubleClickCatcher(identifier: identifier, label: String(localized: "Attachment")) { open(url) }
                     }
                     .overlay(alignment: .topTrailing) {
                         if let onRemove, hovering == index {
@@ -41,7 +41,7 @@ struct AttachmentStrip: View {
                     }
                     .onHover { hovering = $0 ? index : (hovering == index ? nil : hovering) }
                     .contextMenu {
-                        Button("Quick Look") { preview = url }
+                        Button("Quick Look") { open(url) }
                         if let onRemove { Button("Remove Attachment", role: .destructive) { onRemove(index) } }
                     }
             }
@@ -53,11 +53,19 @@ struct AttachmentStrip: View {
                     .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(.quaternary.opacity(0.4)))
                     .overlay {
                         DoubleClickCatcher(identifier: "\(identifier).more", label: "+\(urls.count - shown.count)") {
-                            preview = urls[shown.count]
+                            open(urls[shown.count])
                         }
                     }
             }
         }
         .quickLookPreview($preview)
+    }
+
+    /// SwiftUI doesn't always write `nil` back when the Quick Look panel goes away. A switch to
+    /// another view does it, and then the next double-click on the same image assigns the same
+    /// URL and nothing happens. Clearing first makes every open a real change.
+    private func open(_ url: URL) {
+        preview = nil
+        DispatchQueue.main.async { preview = url }
     }
 }

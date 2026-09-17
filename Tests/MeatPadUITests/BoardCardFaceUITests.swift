@@ -11,6 +11,15 @@ final class BoardCardFaceUITests: XCTestCase {
     private let secondColumnID = UUID()
     private let cardID = UUID()
 
+    // Two more boards for the view-switch regression tests below, each with one card and one
+    // attachment, plus a note — so the sidebar has all three row kinds to switch between.
+    private let boardAID = UUID()
+    private let boardBID = UUID()
+    private let cardAID = UUID()
+    private let cardBID = UUID()
+    private let noteID = UUID()
+    private let noteTitle = "Note C"
+
     override func setUpWithError() throws {
         continueAfterFailure = false
         storageRoot = FileManager.default.temporaryDirectory
@@ -110,15 +119,12 @@ final class BoardCardFaceUITests: XCTestCase {
     func testDoubleClickingAnAttachmentOpensQuickLook() throws {
         let tile = app.descendants(matching: .any)["card.attachment"].firstMatch
         XCTAssertTrue(tile.waitForExistence(timeout: 5))
-        let windows = app.windows.count
 
         tile.click()
-        XCTAssertFalse(poll(timeout: 2) { self.app.windows.count > windows || self.previewIsUp() },
-                       "a single click opened a preview")
+        XCTAssertFalse(poll(timeout: 2) { self.previewIsUp() }, "a single click opened a preview")
 
         tile.doubleClick()
-        XCTAssertTrue(poll { self.app.windows.count > windows || self.previewIsUp() },
-                      "the double click opened no Quick Look panel")
+        XCTAssertTrue(poll { self.previewIsUp() }, "the double click opened no Quick Look panel")
     }
 
     func testDoubleClickingAnAttachmentDoesNotPresentTheCard() throws {
@@ -135,22 +141,145 @@ final class BoardCardFaceUITests: XCTestCase {
         title.doubleClick()
         XCTAssertTrue(app.buttons["board.present.close"].waitForExistence(timeout: 5),
                       "the double click presented nothing")
-        let windows = app.windows.count
 
         // Two tiles carry the identifier now — the row behind the backdrop and the presented
         // copy, which is the bigger of the two.
         let tile = app.descendants(matching: .any).matching(identifier: "card.attachment")
             .allElementsBoundByIndex.max { $0.frame.width < $1.frame.width }
         try XCTUnwrap(tile).doubleClick()
-        XCTAssertTrue(poll { self.app.windows.count > windows || self.previewIsUp() },
-                      "the double click opened no Quick Look panel")
+        XCTAssertTrue(poll { self.previewIsUp() }, "the double click opened no Quick Look panel")
     }
 
-    /// QLPreviewPanel is an NSPanel in the app's own process, and it names the file it shows.
-    private func previewIsUp() -> Bool {
-        app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS[c] %@ OR title CONTAINS[c] %@", "seed.png", "seed.png"))
-            .count > 0
+    /// Rokas 2026-09-17: "it worked - then it stopped working after switching between views".
+    /// CAUSE CONFIRMED — H5 (stale binding): `AttachmentStrip`'s `@State preview` doesn't
+    /// always get written back to `nil` when the Quick Look panel closes, so a view switch can
+    /// leave it `== url`; the next double-click assigns the same value and nothing happens.
+    /// Only this one leaves the panel up across the switch — the path where SwiftUI is least
+    /// likely to have written `preview` back to `nil` on its own. The other three below press
+    /// Escape first (a clean close) before switching, so pre-fix they may not reproduce H5;
+    /// this is the one that carries the regression weight.
+    func testQuickLookOpensAgainAfterClosingItAndSwitchingBoards() throws {
+        launchOnBoardA()
+        let tile = app.descendants(matching: .any)["card.attachment"].firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 5))
+        tile.doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp(named: "a.png") }, "first open")
+        try shoot("switch-boards-first-open")
+        app.typeKey(.escape, modifierFlags: [])                       // close the panel
+        XCTAssertTrue(poll { !self.previewIsUp(named: "a.png") })
+        selectSidebarRow("B"); selectSidebarRow("A")                  // switch away and back
+        tile.doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp(named: "a.png") }, "same image after a view switch")
+        try shoot("switch-boards-after-switch")
+    }
+
+    /// This is the one that most directly reproduces H5: the panel is still up when the board
+    /// is left, so nothing ever gets the chance to write `preview` back to `nil` on a clean
+    /// close.
+    func testQuickLookOpensAfterSwitchingViewsWhileThePanelIsStillOpen() throws {
+        launchOnBoardA()
+        let tile = app.descendants(matching: .any)["card.attachment"].firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 5))
+        tile.doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp(named: "a.png") })
+        try shoot("panel-open-first-open")
+        selectSidebarRow("All Boards")                                // leave with the panel up
+        selectSidebarRow("A")
+        if previewIsUp(named: "a.png") { app.typeKey(.escape, modifierFlags: []) }
+        tile.doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp(named: "a.png") }, "after leaving the board with the panel open")
+        try shoot("panel-open-after-switch")
+    }
+
+    /// Compact removes every `AttachmentStrip` from the tree; Full brings it back. The
+    /// `preview` state has to be re-armed by the fix the same way a full view switch is.
+    func testQuickLookOpensAfterCardDisplayCompactAndBack() throws {
+        launchOnBoardA()
+        let tile = app.descendants(matching: .any)["card.attachment"].firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 5))
+        tile.doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp(named: "a.png") })
+        try shoot("card-display-first-open")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(poll { !self.previewIsUp(named: "a.png") })
+
+        selectCardDisplay("Compact")
+        selectCardDisplay("Full")
+
+        XCTAssertTrue(tile.waitForExistence(timeout: 5), "the tile never came back in Full")
+        tile.doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp(named: "a.png") }, "same image after Compact then Full")
+        try shoot("card-display-after-switch")
+    }
+
+    /// The other half of "switching between views": leaving the board entirely for a note and
+    /// coming back, rather than staying inside the board-scoped views above.
+    func testQuickLookOpensAfterSwitchingToANoteAndBackToTheBoard() throws {
+        launchOnBoardA()
+        let tile = app.descendants(matching: .any)["card.attachment"].firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 5))
+        tile.doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp(named: "a.png") })
+        try shoot("board-note-first-open")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(poll { !self.previewIsUp(named: "a.png") })
+
+        selectSidebarRow("Notes")
+        selectSidebarRow(noteTitle)                                   // the note row
+        selectSidebarRow("A")
+
+        XCTAssertTrue(tile.waitForExistence(timeout: 5), "the tile never came back on the board")
+        tile.doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp(named: "a.png") }, "same image after a board-to-note switch")
+        try shoot("board-note-after-switch")
+    }
+
+    /// The runner's own tmp dir, because its sandbox cannot write anywhere else (same pattern
+    /// as `BoardPresentUITests.shoot`). Not just layout sign-off here: if `previewIsUp()`'s
+    /// assumption that the Quick Look window's title contains the filename turns out wrong,
+    /// these are what tells a green-vs-red run apart from a broken assertion.
+    private func shoot(_ name: String) throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("card-face-\(name).png")
+        try XCUIScreen.main.screenshot().pngRepresentation.write(to: url)
+        print("SHOT \(url.path)")
+    }
+
+    // MARK: - Driving the sidebar and card-display control
+
+    /// Every sidebar row — a board, "All Boards", a folder, a note — is a plain `Text`, so one
+    /// query drives them all, the same way `BoardIconUITests`/`BoardLabelUITests` click a row
+    /// by its label.
+    private func selectSidebarRow(_ name: String) {
+        let row = app.staticTexts[name].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "no sidebar row named “\(name)”")
+        row.click()
+    }
+
+    private func selectCardDisplay(_ label: String) {
+        let segment = app.radioButtons[label]
+        XCTAssertTrue(segment.waitForExistence(timeout: 5), "no “\(label)” segment in the card display control")
+        segment.click()
+    }
+
+    /// The shared fixture launches onto the original board (`boardID`) so the six tests above
+    /// stay untouched; the view-switch tests need Board A on screen instead, with its own
+    /// `a.png` tile already resolvable — relaunched the same way `BoardLabelUITests.showAllBoards()`
+    /// switches views.
+    private func launchOnBoardA() {
+        app.terminate()
+        app.launchArguments = [
+            "-meatpad.storageRootOverride", storageRoot.path,
+            "-meatpad.revealBoard", boardAID.uuidString,
+            "-hasSeenFirstRunIntro", "YES",
+        ]
+        app.launch()
+        XCTAssertTrue(title.waitForExistence(timeout: 20), "board A never rendered")
+    }
+
+    /// The Quick Look panel is its own window titled after the file. Anything less (a label
+    /// somewhere, any extra window) passed without a preview ever being on screen.
+    private func previewIsUp(named name: String = "seed.png") -> Bool {
+        app.windows.matching(NSPredicate(format: "title CONTAINS[c] %@", name)).count > 0
     }
 
     // MARK: - Reading the store
@@ -177,7 +306,7 @@ final class BoardCardFaceUITests: XCTestCase {
         let boards = storageRoot.appendingPathComponent("Boards", isDirectory: true)
         try FileManager.default.createDirectory(at: boards, withIntermediateDirectories: true)
         let index: [String: Any] = [
-            "boardOrder": [boardID.uuidString],
+            "boardOrder": [boardID.uuidString, boardAID.uuidString, boardBID.uuidString],
             "globalColumns": [
                 ["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"],
                 ["id": secondColumnID.uuidString, "name": "Doing", "isDone": false, "emoji": "🚧"],
@@ -200,6 +329,32 @@ final class BoardCardFaceUITests: XCTestCase {
         let attachments = boards.appendingPathComponent("Attachments/\(cardID.uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: attachments, withIntermediateDirectories: true)
         try Self.onePixelPNG.write(to: attachments.appendingPathComponent("seed.png"))
+
+        // Two more boards for the view-switch regression tests: one card each, one attachment
+        // (a.png / b.png), so a double-click after switching away and back has a name to prove.
+        for (id, card, name, attachment) in [
+            (boardAID, cardAID, "A", "a.png"),
+            (boardBID, cardBID, "B", "b.png"),
+        ] as [(UUID, UUID, String, String)] {
+            let sideBoard: [String: Any] = [
+                "id": id.uuidString, "name": name, "extraColumns": [],
+                "cards": [[
+                    "id": card.uuidString, "title": "Card \(name)",
+                    "columnID": columnID.uuidString, "created": stamp, "modified": stamp,
+                    "attachments": [attachment],
+                ]],
+            ]
+            try JSONSerialization.data(withJSONObject: sideBoard).write(to: boards.appendingPathComponent("\(id.uuidString).json"))
+            let dir = boards.appendingPathComponent("Attachments/\(card.uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try Self.onePixelPNG.write(to: dir.appendingPathComponent(attachment))
+        }
+
+        // One note, so the sidebar also has a "Notes" row and the note's own row to switch to
+        // and back from — `NoteStore` self-heals a missing JSON sidecar from the `.txt` alone.
+        let notes = storageRoot.appendingPathComponent("Notes", isDirectory: true)
+        try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
+        try Data(noteTitle.utf8).write(to: notes.appendingPathComponent("\(noteID.uuidString).txt"))
     }
 
     /// A 1×1 red PNG — the smallest thing `CGImageSource` will make a thumbnail out of.
