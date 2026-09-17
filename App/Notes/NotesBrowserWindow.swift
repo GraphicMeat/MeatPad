@@ -93,14 +93,19 @@ struct NotesBrowserWindow: View {
     /// the string would leak a half-typed name into the icon.
     @State private var boardIconTarget: UUID?
     @State private var boardIconDraft = ""
-    /// The card whose inspector fills the detail column while a board is selected.
-    @State private var selectedCard: UUID?
+    /// Which board cards are selected — the inspector fills for one, the bulk bar for several.
+    /// Named apart from `selection` above (the note list's), not a redeclaration of it.
+    @State private var cardSelection = BoardSelection()
     /// Board label filter. Lives here, not in `BoardColumnsView`, because the sidebar counts
     /// answer to it too. Session-only on purpose: a filter you forgot you left on is worse
     /// than retyping it.
     @State private var labelFilter: Set<UUID> = []
     /// Board card search, session-only for the same reason as `labelFilter`.
     @State private var cardSearch = ""
+    /// Whether archived cards show (dimmed) instead of being hidden. Session-only for the
+    /// same reason as `labelFilter`: an archive filter you forgot you left on is worse than
+    /// retoggling it.
+    @State private var showArchived = false
 
     private var folderFilteredNotes: [Note] {
         if case .trash = folderSelection { return noteStore.trashedNotes }
@@ -167,7 +172,7 @@ struct NotesBrowserWindow: View {
         .onChange(of: folderSelection) { _, _ in
             selection = []
             // A reveal sets board and card together; clearing here would undo it.
-            if appModel.pendingBoardReveal == nil { selectedCard = nil }
+            if appModel.pendingBoardReveal == nil { cardSelection.clear() }
         }
         .onAppear { consumeBoardReveal() }
         .onChange(of: appModel.pendingBoardReveal) { _, _ in consumeBoardReveal() }
@@ -325,7 +330,7 @@ struct NotesBrowserWindow: View {
     private func consumeBoardReveal() {
         guard let reveal = appModel.pendingBoardReveal else { return }
         folderSelection = reveal.boardID.map { .board($0) } ?? .allBoards
-        selectedCard = reveal.cardID
+        if let cardID = reveal.cardID { cardSelection.select(cardID) } else { cardSelection.clear() }
         appModel.pendingBoardReveal = nil
     }
 
@@ -350,7 +355,7 @@ struct NotesBrowserWindow: View {
     /// Sidebar counts answer the question the board is currently asking: with a label filter
     /// or a search on, a board reports how many of its cards survive it.
     private func matchingCards(_ board: Board) -> Int {
-        board.cards.filter { $0.matches(labels: labelFilter, text: cardSearch) }.count
+        board.cards.filter { $0.matches(labels: labelFilter, text: cardSearch, showArchived: showArchived) }.count
     }
 
     private var boardFilterIsOn: Bool {
@@ -451,8 +456,8 @@ struct NotesBrowserWindow: View {
     }
 
     private var boardColumns: some View {
-        BoardColumnsView(store: boardStore, board: selectedBoard, selectedCard: $selectedCard,
-                         labelFilter: $labelFilter, searchQuery: $cardSearch)
+        BoardColumnsView(store: boardStore, board: selectedBoard, selection: $cardSelection,
+                         labelFilter: $labelFilter, searchQuery: $cardSearch, showArchived: $showArchived)
     }
 
     @ViewBuilder
@@ -539,7 +544,7 @@ struct NotesBrowserWindow: View {
         if let existing {
             Button("Reveal in Board") {
                 folderSelection = .board(existing.board.id)
-                selectedCard = existing.card.id
+                cardSelection.select(existing.card.id)
             }
         } else if !boardStore.boards.isEmpty {
             Menu("Send to Board") {

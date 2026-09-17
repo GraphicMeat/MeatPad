@@ -12,7 +12,8 @@ struct NoteAttachmentsBar: View {
             AttachmentStrip(
                 urls: names.map { store.attachmentURL(id: noteID, name: $0) },
                 identifier: "note.attachment",
-                onRemove: { try? store.removeAttachment(id: noteID, name: names[$0]) }
+                onRemove: { try? store.removeAttachment(id: noteID, name: names[$0]) },
+                dragTitle: note.title, owner: noteID
             )
             .padding(.horizontal, 12)
             .padding(.vertical, 8)

@@ -3,14 +3,20 @@ import XCTest
 /// Card reordering is positional now: the column reads the pointer's y and inserts there.
 /// Only a real drag can prove that — the arithmetic is unit-tested, the wiring is not.
 ///
-/// Image drops are not here: XCUITest has no external drag source, so a Finder or browser
-/// image drag cannot be simulated, and faking one would test the fake.
+/// Image drops from outside the app are not here: XCUITest has no external drag source, so a
+/// Finder or browser image drag cannot be simulated, and faking one would test the fake. The
+/// attachment drag-out test below is the exception — its source is a tile inside the app, not
+/// an external one, so a real press-drag can drive it.
 final class BoardDropUITests: XCTestCase {
     private var app: XCUIApplication!
     private var storageRoot: URL!
     private let boardID = UUID()
     private let columnID = UUID()
     private let secondColumnID = UUID()
+    // A dedicated pair in the Doing column for the attachment drag-out test below: card A
+    // carries the seeded attachment, card B is the drop target.
+    private let cardA = UUID()
+    private let cardB = UUID()
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -63,6 +69,24 @@ final class BoardDropUITests: XCTestCase {
         XCTAssertEqual(storedOrder(), ["Alpha", "Gamma"])
     }
 
+    /// Task 6: a tile drags out as a copy named after its card. Dropping it on another card
+    /// must attach the copy there, leave card A's own attachment in place, and leave card A
+    /// itself in place — today's press-drag on a tile moves the whole card instead.
+    func testDraggingAnAttachmentOntoAnotherCardCopiesItAndLeavesTheSourceCardInPlace() throws {
+        let tile = app.descendants(matching: .any)["card.attachment"].firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 5), "card A never drew its attachment tile")
+        let target = card("Card B")
+
+        tile.press(forDuration: 0.3, thenDragTo: target)
+
+        XCTAssertTrue(poll { (self.storedCard(self.cardB)?["attachments"] as? [String])?.count == 1 },
+                      "the attachment never landed on card B")
+        XCTAssertEqual((storedCard(cardA)?["attachments"] as? [String])?.count, 1,
+                       "card A lost its own attachment")
+        XCTAssertEqual(storedCardOrder(), [cardA.uuidString, cardB.uuidString],
+                       "card A moved instead of staying in place")
+    }
+
     // MARK: - Reading the board
 
     private var titles: XCUIElementQuery {
@@ -94,14 +118,17 @@ final class BoardDropUITests: XCTestCase {
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1)).withOffset(CGVector(dx: 0, dy: dy))
     }
 
-    /// What the column actually draws, top to bottom. Read once after a settle: a polling loop
-    /// here hands back the cached accessibility snapshot.
+    /// What the Todo column actually draws, top to bottom. Read once after a settle: a polling
+    /// loop here hands back the cached accessibility snapshot. Filtered to the reorder fixture's
+    /// three titles — the Doing column now also carries the attachment-drag fixture's own two
+    /// cards, which are not part of what these reorder assertions are about.
     private func shownOrder() -> [String] {
         usleep(1_500_000)
         _ = titles.firstMatch.waitForExistence(timeout: 5)
         return titles.allElementsBoundByIndex
             .sorted { $0.frame.minY < $1.frame.minY }
             .map(faceText)
+            .filter { ["Alpha", "Beta", "Gamma"].contains($0) }
     }
 
     private func boardJSON() -> [String: Any] {
@@ -120,6 +147,18 @@ final class BoardDropUITests: XCTestCase {
     }
     private func storedColumn(_ title: String) -> String? {
         storedCards().first { $0["title"] as? String == title }?["columnID"] as? String
+    }
+    /// One card's stored JSON, by id.
+    private func storedCard(_ id: UUID) -> [String: Any]? {
+        storedCards().first { $0["id"] as? String == id.uuidString }
+    }
+    /// The Doing column's card ids, in stored order — the column the attachment-drag fixture
+    /// below lives in, so "card A did not move" can be checked without pulling in the Todo
+    /// column's own cards.
+    private func storedCardOrder() -> [String] {
+        storedCards()
+            .filter { $0["columnID"] as? String == secondColumnID.uuidString }
+            .compactMap { $0["id"] as? String }
     }
     private func poll(_ condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(10)
@@ -147,9 +186,26 @@ final class BoardDropUITests: XCTestCase {
                 "columnID": columnID.uuidString, "created": stamp, "modified": stamp,
             ]
         }
+        // Two more cards in the Doing column, for the attachment drag-out test: card A carries
+        // the seeded attachment, card B is the drop target.
+        let dragCards: [[String: Any]] = [
+            ["id": cardA.uuidString, "title": "Card A", "columnID": secondColumnID.uuidString,
+             "created": stamp, "modified": stamp, "attachments": ["seed.png"]],
+            ["id": cardB.uuidString, "title": "Card B", "columnID": secondColumnID.uuidString,
+             "created": stamp, "modified": stamp],
+        ]
         let board: [String: Any] = [
-            "id": boardID.uuidString, "name": "Test Board", "extraColumns": [], "cards": cards,
+            "id": boardID.uuidString, "name": "Test Board", "extraColumns": [], "cards": cards + dragCards,
         ]
         try JSONSerialization.data(withJSONObject: board).write(to: boards.appendingPathComponent("\(boardID.uuidString).json"))
+
+        // The file has to exist too, or the tile draws nothing to grab a drag from.
+        let attachments = boards.appendingPathComponent("Attachments/\(cardA.uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: attachments, withIntermediateDirectories: true)
+        try Self.onePixelPNG.write(to: attachments.appendingPathComponent("seed.png"))
     }
+
+    /// A 1×1 red PNG — the smallest thing `CGImageSource` will make a thumbnail out of.
+    private static let onePixelPNG = Data(base64Encoded:
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==")!
 }

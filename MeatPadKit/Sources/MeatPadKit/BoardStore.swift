@@ -174,9 +174,16 @@ public final class BoardStore: ObservableObject {
 
     // MARK: - Columns (composition)
 
-    /// Rendered order for a board: the global columns first, then that board's extras.
+    /// Rendered order for a board: the global columns first, then that board's extras, unless
+    /// the board has its own `columnOrder`.
     public func columns(for board: Board) -> [BoardColumn] {
-        globalColumns + board.extraColumns
+        let all = globalColumns + board.extraColumns
+        guard let order = board.columnOrder else { return all }
+        let rank = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        return all.enumerated()
+            .sorted { (rank[$0.element.id] ?? order.count + $0.offset, $0.offset)
+                    < (rank[$1.element.id] ?? order.count + $1.offset, $1.offset) }
+            .map(\.element)
     }
 
     /// A column's cards, already in display order — `board.cards` order IS column order.
@@ -304,6 +311,35 @@ public final class BoardStore: ObservableObject {
         registerUndo { try? $0.moveCard(id: id, boardID: boardID, toColumn: fromColumn, index: fromIndex) }
     }
 
+    /// Cards already in the requested state are left alone, so re-archiving keeps the first date.
+    public func setArchived(boardID: UUID, cardIDs: [UUID], _ archived: Bool, now: Date = Date()) throws {
+        let idx = try boardIndex(boardID)
+        let wanted = Set(cardIDs)
+        var previous: [UUID: Date?] = [:]
+        for i in boards[idx].cards.indices where wanted.contains(boards[idx].cards[i].id) {
+            guard (boards[idx].cards[i].archived != nil) != archived else { continue }
+            previous[boards[idx].cards[i].id] = boards[idx].cards[i].archived
+            boards[idx].cards[i].archived = archived ? now : nil
+        }
+        guard !previous.isEmpty else { return }
+        try persist(at: idx)
+        registerUndo { store in
+            guard let i = try? store.boardIndex(boardID) else { return }
+            for c in store.boards[i].cards.indices {
+                if let old = previous[store.boards[i].cards[c].id] { store.boards[i].cards[c].archived = old }
+            }
+            try? store.persist(at: i)
+            store.registerUndo { try? $0.setArchived(boardID: boardID, cardIDs: Array(previous.keys), archived, now: now) }
+        }
+    }
+
+    /// Several card mutations that should undo as one ⌘Z (bulk delete/archive/move).
+    public func grouped(_ body: () throws -> Void) rethrows {
+        undoManager?.beginUndoGrouping()
+        defer { undoManager?.endUndoGrouping() }
+        try body()
+    }
+
     // MARK: - Attachments
 
     @discardableResult
@@ -359,6 +395,25 @@ public final class BoardStore: ObservableObject {
         let idx = try boardIndex(boardID)
         boards[idx].extraColumns.append(BoardColumn(name: try validated(name)))
         try persist(at: idx)
+    }
+
+    /// `index` is the column's final position. On a board the whole rendered order is written to
+    /// `columnOrder`; in the All Boards overview (nil) the shared global order itself moves.
+    public func moveColumn(id: UUID, to index: Int, onBoard boardID: UUID?) throws {
+        if let boardID {
+            let idx = try boardIndex(boardID)
+            var ids = columns(for: boards[idx]).map(\.id)
+            guard let from = ids.firstIndex(of: id) else { throw BoardStoreError.columnNotFound(id) }
+            ids.remove(at: from)
+            ids.insert(id, at: max(0, min(index, ids.count)))
+            boards[idx].columnOrder = ids
+            try persist(at: idx)
+        } else {
+            guard let from = globalColumns.firstIndex(where: { $0.id == id }) else { throw BoardStoreError.columnNotFound(id) }
+            let column = globalColumns.remove(at: from)
+            globalColumns.insert(column, at: max(0, min(index, globalColumns.count)))
+            try saveIndex()
+        }
     }
 
     /// `boardID` nil = a global column; otherwise that board's own extra column.
@@ -500,7 +555,7 @@ public final class BoardStore: ObservableObject {
         boards.flatMap { board -> [DueReminder] in
             let doneColumns = Set(columns(for: board).filter(\.isDone).map(\.id))
             return board.cards.compactMap { card in
-                guard let due = card.due, due > now, !doneColumns.contains(card.columnID) else { return nil }
+                guard let due = card.due, due > now, card.archived == nil, !doneColumns.contains(card.columnID) else { return nil }
                 return DueReminder(cardID: card.id, boardID: board.id, title: card.title, due: due)
             }
         }

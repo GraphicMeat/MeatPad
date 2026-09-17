@@ -11,6 +11,13 @@ enum DropTarget: Equatable {
     case newCard(column: UUID)
 }
 
+extension UTType {
+    /// The column-drag payload — declared in project.yml's `UTExportedTypeDeclarations` so
+    /// `hasItemsConforming(to:)` can tell a column drag apart from a card drag (plain text) or
+    /// a file drag (image/file URL) synchronously, before either drop branch runs.
+    static let meatpadColumn = UTType(exportedAs: "com.thecoldzero.meatpad.column")
+}
+
 /// The dragged file, decoded once for the whole drag: `DropInfo` hands out item providers on
 /// every mouse move, and decoding a photo per frame is exactly the "chunky" the board had.
 struct DragImage {
@@ -101,26 +108,47 @@ struct ColumnDropDelegate: DropDelegate {
     /// nil when there is no single board to put a new card on (all-boards with 0 or 2+ boards).
     let create: ((CardDrop) -> Bool)?
     let moveCards: ([String], Int) -> Bool
+    /// This column's own index among `columnOrder`, and that full rendered order — both nil /
+    /// empty on the views that take no column drops ("Other", the add-column tile), which
+    /// simply omit `.meatpadColumn` from their own `onDrop` type list and so never reach this
+    /// branch at all.
+    let columnIndex: Int?
+    let columnOrder: [UUID]
+    let width: CGFloat
+    @Binding var columnTarget: (id: UUID, trailing: Bool)?
+    let moveColumn: (UUID, Int) -> Void
 
     private func isFile(_ info: DropInfo) -> Bool { info.hasItemsConforming(to: [.fileURL, .image]) }
+    private func isColumnDrag(_ info: DropInfo) -> Bool { info.hasItemsConforming(to: [.meatpadColumn]) }
 
-    /// Files anywhere; card ids only where a reorder means something.
+    /// Files anywhere; card ids only where a reorder means something; a column drag only
+    /// where this instance is itself a real column.
     func validateDrop(info: DropInfo) -> Bool {
+        if isColumnDrag(info) { return columnIndex != nil }
         if isFile(info) { return true }
         return column != nil && !info.itemProviders(for: [.utf8PlainText, .plainText]).isEmpty
     }
 
-    func dropEntered(info: DropInfo) { update(info) }
+    func dropEntered(info: DropInfo) {
+        if isColumnDrag(info) { updateColumnTarget(info); return }
+        update(info)
+    }
 
     /// Bare space that cannot become a card (the "Other" column, all-boards with several
     /// boards) says so with the cursor instead of accepting a drop that then does nothing.
     func dropUpdated(info: DropInfo) -> DropProposal? {
+        if isColumnDrag(info) {
+            guard columnIndex != nil else { return DropProposal(operation: .forbidden) }
+            updateColumnTarget(info)
+            return DropProposal(operation: .move)
+        }
         update(info)
         guard target != nil else { return DropProposal(operation: .forbidden) }
         return DropProposal(operation: isFile(info) ? .copy : .move)
     }
 
     func dropExited(info: DropInfo) {
+        if isColumnDrag(info) { columnTarget = nil; return }
         switch target {
         case .insert(let c, _), .newCard(let c): if c == column { target = nil }
         case .attach(let card): if rows.contains(where: { $0.id == card }) { target = nil }
@@ -128,7 +156,46 @@ struct ColumnDropDelegate: DropDelegate {
         }
     }
 
+    /// Which edge of this column a hovered column drag would land on — the leading/trailing
+    /// half of `width`, same halfway rule a card reorder uses on the y axis.
+    private func updateColumnTarget(_ info: DropInfo) {
+        guard let column else { return }
+        columnTarget = (id: column, trailing: info.location.x > width / 2)
+    }
+
     func performDrop(info: DropInfo) -> Bool {
+        if isColumnDrag(info) {
+            defer { columnTarget = nil }
+            guard let columnIndex,
+                  let provider = info.itemProviders(for: [.meatpadColumn]).first
+            else { return false }
+            let trailingHalf = columnTarget?.trailing ?? (info.location.x > width / 2)
+            let order = columnOrder
+            let move = moveColumn
+            // `NSItemProvider(item:typeIdentifier:)` archives an `NSString` via `NSSecureCoding`
+            // for a `public.data`-conforming custom UTI, and promises it back as a temp file
+            // holding that archive (an NSKeyedArchiver binary plist, "bplist00" — confirmed by
+            // dumping the raw bytes), not the string's own UTF-8 text and not the string handed
+            // back directly. Unarchive it the same way it was archived.
+            _ = provider.loadItem(forTypeIdentifier: UTType.meatpadColumn.identifier) { reading, _ in
+                let idString: String?
+                switch reading {
+                case let url as URL:
+                    idString = (try? Data(contentsOf: url))
+                        .flatMap { try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSString.self, from: $0) as String? }
+                case let string as String:
+                    idString = string
+                default:
+                    idString = nil
+                }
+                guard let idString, let id = UUID(uuidString: idString),
+                      let fromIndex = order.firstIndex(of: id)
+                else { return }
+                let index = BoardDropPlacement.columnIndex(from: fromIndex, over: columnIndex, trailingHalf: trailingHalf)
+                Task { @MainActor in move(id, index) }
+            }
+            return true
+        }
         // SwiftUI/AppKit still deliver a `dropEntered`/`dropUpdated` for THIS drag after the
         // drop — the synchronous store write below rebuilds the view and the delegate
         // mid-session — and there is no `dropExited` after a drop to undo it, so the ants and
@@ -141,9 +208,12 @@ struct ColumnDropDelegate: DropDelegate {
             guard case .insert(_, let index)? = placed,
                   let provider = info.itemProviders(for: [.utf8PlainText, .plainText]).first
             else { return false }
+            // One id for a lone card, several newline-joined ids for a dragged selection — see
+            // `BoardColumnsView.dragPayload(for:)`.
             _ = provider.loadTransferable(type: String.self) { result in
-                guard case .success(let id) = result else { return }
-                Task { @MainActor in _ = moveCards([id], index) }
+                guard case .success(let payload) = result else { return }
+                let ids = payload.split(separator: "\n").map(String.init)
+                Task { @MainActor in _ = moveCards(ids, index) }
             }
             return true
         }
@@ -171,6 +241,13 @@ struct ColumnDropDelegate: DropDelegate {
         return true
     }
 
+    /// True when the drag pasteboard's file lives under this card's own drag-out temp folder —
+    /// `AttachmentStrip.exportProvider` names it `MeatPad Drags/<card id>/<uuid>/<file>`.
+    private func isOwnDragOut(of card: UUID) -> Bool {
+        let urls = (NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self]) as? [URL]) ?? []
+        return urls.contains { $0.path.contains("/MeatPad Drags/\(card.uuidString)/") }
+    }
+
     private func apply(_ drop: CardDrop, to placed: DropTarget) -> Bool {
         switch placed {
         case .attach(let card): return attach(card, drop)
@@ -189,6 +266,12 @@ struct ColumnDropDelegate: DropDelegate {
     private func placement(_ info: DropInfo) -> DropTarget? {
         if isFile(info) {
             if case .attach(let id) = BoardDropPlacement.forImage(at: info.location, rows: rows) {
+                // A tile dragged out of its own card and hovered back over that same card is
+                // this card's own drag-out copy re-arriving — no ants, no drop: attaching it
+                // would duplicate the file. (Not `.newCard`: falling through to the bare-space
+                // branch below would turn "drop own tile on own card" into "create a new card
+                // from it", which is worse than doing nothing.)
+                guard !isOwnDragOut(of: id) else { return nil }
                 return .attach(card: id)
             }
             // No ants over bare space we cannot turn into a card.

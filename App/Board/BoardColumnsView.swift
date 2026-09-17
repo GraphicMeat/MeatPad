@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import MeatPadKit
 
 /// The columns for one board, or for every board at once ("All Boards"). In the all-boards
@@ -8,13 +9,18 @@ struct BoardColumnsView: View {
     @ObservedObject var store: BoardStore
     /// nil = the All Boards overview.
     let board: Board?
-    @Binding var selectedCard: UUID?
+    /// Which cards are selected — click/⌘-click/⇧-click on a row, "Select All Cards" in a
+    /// column menu, and ⌘A/Esc/⌫/⌦ from the keyboard monitor below all write through this.
+    @Binding var selection: BoardSelection
     /// Labels the board is filtered to. Empty = show everything. Owned by the window so the
     /// sidebar can grey out the boards this filter empties.
     @Binding var labelFilter: Set<UUID>
     /// Free text the cards are filtered to, matched against title and body. Owned by the
     /// window for the same reason as `labelFilter`: the sidebar counts answer to it too.
     @Binding var searchQuery: String
+    /// Whether archived cards show (dimmed) instead of being hidden. Owned by the window for
+    /// the same reason as `labelFilter`/`searchQuery`.
+    @Binding var showArchived: Bool
 
     /// Card density. Unlike the label filter this is remembered across launches and shared by
     /// every board — it hides no cards, so nothing can go missing behind it.
@@ -39,6 +45,10 @@ struct BoardColumnsView: View {
     /// What the live drag would do right now — drives the insertion bar, the column highlight
     /// and a card's marching ants, so a drag shows its destination instead of guessing.
     @State private var dropTarget: DropTarget?
+    /// Which column a live column-header drag is hovering, and which half of it — drives the
+    /// 3pt edge ghost. A separate binding from `dropTarget`: a column drag never shows a card
+    /// ghost or the marching ants, so it needs no shared state with those.
+    @State private var columnDropTarget: (id: UUID, trailing: Bool)?
     /// The dragged image, decoded once per drag so the hover preview costs nothing per frame.
     @StateObject private var dragLoader = DragImageLoader()
     /// Card row frames, each in its own column's coordinate space. `DropInfo` gives a pointer
@@ -52,6 +62,19 @@ struct BoardColumnsView: View {
     /// Which card the pointer is over: the double-click monitor below gets a point, not a view.
     @State private var hoveredCard: UUID?
     @State private var clickMonitor: Any?
+    /// Esc/⌫/⌦/⌘A, installed and removed alongside `clickMonitor`.
+    @State private var keyMonitor: Any?
+    /// This view's hosting window, so the key monitor can ignore events meant for another
+    /// window. Captured once via `BoardWindowAccessor`; a plain `NSWindow?` would work too, but
+    /// the accessor is the same seam `NoteWindow` uses for its own window-scoped work.
+    @State private var hostWindow: NSWindow?
+    /// `visibleOrder` snapshotted on every change. The keyboard monitor's closure is installed
+    /// once in `.onAppear` and never rebuilt, so it captures a frozen copy of `board` (a plain
+    /// `let`) — reading `visibleOrder` from inside it would silently answer for whichever board
+    /// was showing when the monitor was installed. This is `@State`, whose storage stays live
+    /// across renders, so the monitor reads through it instead. Named apart from the unrelated
+    /// local `order` (column order) inside `columnView(_:)`.
+    @State private var selectableOrder: [UUID] = []
 
     private struct SplitTarget {
         let boardID: UUID
@@ -92,6 +115,18 @@ struct BoardColumnsView: View {
         board.map { store.columns(for: $0) } ?? store.globalColumns
     }
 
+    /// Every visible card, left-to-right by column and top-to-bottom within it, then "Other" —
+    /// what a ⇧-click extends across and what ⌘A selects.
+    private var visibleOrder: [UUID] {
+        renderedColumns.flatMap { cards(in: $0).map(\.card.id) } + (board == nil ? otherCards.map(\.card.id) : [])
+    }
+
+    /// Every card on every board, filters aside — what a selection is pruned against when a
+    /// card is deleted out from under it.
+    private var allCardIDs: Set<UUID> {
+        Set(store.boards.flatMap { $0.cards.map(\.id) })
+    }
+
     var body: some View {
         ZStack {
             board_
@@ -110,6 +145,16 @@ struct BoardColumnsView: View {
                 )
                 .frame(maxWidth: 260)
                 LabelFilterField(store: store, selected: $labelFilter)
+                Button {
+                    showArchived.toggle()
+                } label: {
+                    Image(systemName: showArchived ? "archivebox.fill" : "archivebox")
+                }
+                .buttonStyle(.borderless)
+                .help(String(localized: "Show Archived Cards"))
+                .accessibilityLabel(Text("Show Archived Cards"))
+                .accessibilityValue(showArchived ? "on" : "off")
+                .accessibilityIdentifier("board.showArchived")
                 displayPicker
                 Button {
                     undoManager?.undo()
@@ -154,19 +199,32 @@ struct BoardColumnsView: View {
                 // editing forever — and the face relies on the blur to commit and swap back to text.
                 // An outer tap gives those clicks a job. Inner gestures win, so a click on a card's
                 // title/notes text (which starts editing) or on a button never reaches this.
-                .onTapGesture { NSApp.keyWindow?.makeFirstResponder(nil) }
+                .onTapGesture {
+                    NSApp.keyWindow?.makeFirstResponder(nil)
+                    // A card's own row uses `.simultaneousGesture`, which never blocks this
+                    // ancestor gesture — so a plain click on a card would reach here too and
+                    // wipe the selection it just made. `hoveredCard` is what tells the two apart.
+                    if hoveredCard == nil { selection.clear() }
+                }
             }
             .environment(\.cardScale, columnScale)
         }
+        .background(BoardWindowAccessor(onWindow: { hostWindow = $0 }))
+        .overlay(alignment: .bottom) { selectionBar }
         .onAppear {
             store.undoManager = undoManager
             canUndo = undoManager?.canUndo ?? false
             installDoubleClickMonitor()
+            installKeyMonitor()
         }
         .onDisappear {
             if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
             clickMonitor = nil
+            if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+            keyMonitor = nil
         }
+        .onChange(of: visibleOrder, initial: true) { _, new in selectableOrder = new }
+        .onChange(of: allCardIDs) { _, ids in selection.prune(keeping: ids) }
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerCheckpoint)) { note in
             guard let undoManager, note.object as? UndoManager === undoManager else { return }
             canUndo = undoManager.canUndo
@@ -285,6 +343,96 @@ struct BoardColumnsView: View {
         DoubleClickCatcherView.catcher(for: event) != nil
     }
 
+    /// Esc clears the selection, ⌫/⌦ deletes it, ⌘A selects every visible card — all gated on
+    /// this board's own window being key, no card presented, and the first responder not being
+    /// a text field/view, so Delete in a card's title never touches the selection.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.window === hostWindow, presentedCard == nil,
+                  !(event.window?.firstResponder is NSText)
+            else { return event }
+            let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            switch (event.keyCode, mods) {
+            case (53, _) where !selection.ids.isEmpty:
+                selection.clear(); return nil
+            case (51, []) where !selection.ids.isEmpty, (117, []) where !selection.ids.isEmpty:
+                deleteSelected(); return nil
+            case (0, .command):
+                selection.selectAll(selectableOrder); return nil
+            default:
+                return event
+            }
+        }
+    }
+
+    /// Bulk delete, grouped so it undoes as one ⌘Z. Snapshots `store.boards` up front —
+    /// `deleteCard` mutates the live store as the loop runs, but each `owner` here is already a
+    /// value-type copy, so iterating its `cards` is unaffected by the deletes alongside it.
+    private func deleteSelected() {
+        let ids = selection.ids
+        try? store.grouped {
+            for owner in store.boards {
+                for card in owner.cards where ids.contains(card.id) {
+                    try store.deleteCard(boardID: owner.id, cardID: card.id)
+                }
+            }
+        }
+        selection.clear()
+    }
+
+    /// Whether every currently-selected card is archived — decides the bar's Archive/Unarchive
+    /// label and which way it toggles.
+    private var allSelectedArchived: Bool {
+        let ids = selection.ids
+        let selected = store.boards.flatMap(\.cards).filter { ids.contains($0.id) }
+        return !selected.isEmpty && selected.allSatisfy { $0.archived != nil }
+    }
+
+    private func archiveSelected() {
+        let ids = selection.ids
+        let archiving = !allSelectedArchived
+        try? store.grouped {
+            for owner in store.boards {
+                let ownIDs = owner.cards.filter { ids.contains($0.id) }.map(\.id)
+                if !ownIDs.isEmpty { try store.setArchived(boardID: owner.id, cardIDs: ownIDs, archiving) }
+            }
+        }
+    }
+
+    /// 2+ selected cards, pinned bottom-centre over the board — count, Archive/Unarchive,
+    /// Delete, and a close button. Never over the present overlay: this lives on `board_`, not
+    /// `body`'s outer `ZStack`.
+    @ViewBuilder
+    private var selectionBar: some View {
+        if selection.ids.count >= 2 {
+            HStack(spacing: 14) {
+                Text("\(selection.ids.count) Selected")
+                    .font(.callout.weight(.medium))
+                    .accessibilityIdentifier("board.selection.count")
+                Button(allSelectedArchived ? "Unarchive" : "Archive", action: archiveSelected)
+                    .accessibilityIdentifier("board.selection.archive")
+                Button("Delete", role: .destructive, action: deleteSelected)
+                    .accessibilityIdentifier("board.selection.delete")
+                Button {
+                    selection.clear()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .help(String(localized: "Clear Selection"))
+                .accessibilityLabel(Text("Clear Selection"))
+                .accessibilityIdentifier("board.selection.clear")
+            }
+            .buttonStyle(.borderless)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.thinMaterial, in: Capsule())
+            .shadow(color: .black.opacity(0.2), radius: 8, y: 2)
+            .padding(.bottom, 16)
+        }
+    }
+
     @ViewBuilder
     private var presentOverlay: some View {
         if let ref = presented {
@@ -354,12 +502,12 @@ struct BoardColumnsView: View {
         if let board {
             let live = store.boards.first { $0.id == board.id } ?? board
             return store.cards(in: live, column: column.id)
-                .filter { $0.matches(labels: labelFilter, text: searchQuery) }
+                .filter { $0.matches(labels: labelFilter, text: searchQuery, showArchived: showArchived) }
                 .map { CardRef(board: live, card: $0) }
         }
         return store.boards.flatMap { board in
             store.cards(in: board, column: column.id)
-                .filter { $0.matches(labels: labelFilter, text: searchQuery) }
+                .filter { $0.matches(labels: labelFilter, text: searchQuery, showArchived: showArchived) }
                 .map { CardRef(board: board, card: $0) }
         }
     }
@@ -370,7 +518,7 @@ struct BoardColumnsView: View {
         let globals = Set(store.globalColumns.map(\.id))
         return store.boards.flatMap { board in
             board.cards
-                .filter { !globals.contains($0.columnID) && $0.matches(labels: labelFilter, text: searchQuery) }
+                .filter { !globals.contains($0.columnID) && $0.matches(labels: labelFilter, text: searchQuery, showArchived: showArchived) }
                 .map { CardRef(board: board, card: $0) }
         }
     }
@@ -378,6 +526,9 @@ struct BoardColumnsView: View {
     private func columnView(_ column: BoardColumn) -> some View {
         let items = cards(in: column)
         let space = "column-\(column.id.uuidString)"
+        let order = renderedColumns.map(\.id)
+        let index = order.firstIndex(of: column.id)
+        let columnWidth = 280 * columnScale
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 if let emoji = column.emoji { Text(emoji) }
@@ -385,6 +536,7 @@ struct BoardColumnsView: View {
                     .font(.system(size: NSFont.preferredFont(forTextStyle: .headline).pointSize * columnScale,
                                   weight: .semibold))
                     .lineLimit(1)
+                    .accessibilityIdentifier("column.name")
                 if column.isDone {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.caption)
                 }
@@ -395,6 +547,14 @@ struct BoardColumnsView: View {
                     Button(column.isDone ? "Not a Done Column" : "Mark as Done Column") {
                         try? store.setColumnDone(id: column.id, !column.isDone, boardID: ref(for: column).boardID)
                     }
+                    Button("Move Left") { moveColumn(column.id, to: (index ?? 0) - 1) }
+                        .disabled((index ?? 0) == 0)
+                    Button("Move Right") { moveColumn(column.id, to: (index ?? 0) + 1) }
+                        .disabled((index ?? 0) == order.count - 1)
+                    Button("Archive All Cards") { archiveAll(in: column) }
+                        .disabled(!hasUnarchivedCards(in: column))
+                    Button("Select All Cards") { selection.selectAll(items.map(\.card.id)) }
+                        .disabled(items.isEmpty)
                     Divider()
                     Button("Delete…", role: .destructive) { deleteTarget = ref(for: column) }
                 } label: {
@@ -404,6 +564,13 @@ struct BoardColumnsView: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help(String(localized: "Column Actions"))
+                .accessibilityIdentifier("column.actions.\(column.id.uuidString)")
+            }
+            // Dragging the header itself reorders the column — a plain `.onDrag` (not
+            // `.draggable`) because the payload is a raw id string under the dedicated
+            // `.meatpadColumn` type, not something `Transferable` needs to know about.
+            .onDrag {
+                NSItemProvider(item: column.id.uuidString as NSString, typeIdentifier: UTType.meatpadColumn.identifier)
             }
 
             if let board {
@@ -451,26 +618,56 @@ struct BoardColumnsView: View {
             }
             .scrollBounceBehavior(.basedOnSize)
         }
-        .frame(width: 280 * columnScale, alignment: .leading)
+        .frame(width: columnWidth, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .top)
         .padding(.vertical, 4)
         .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(MeatPadGlass.violet.opacity(isTargeting(column) ? 0.10 : 0))
         }
+        .overlay(alignment: .leading) { columnMoveGhost(column, trailing: false) }
+        .overlay(alignment: .trailing) { columnMoveGhost(column, trailing: true) }
         .animation(.snappy(duration: 0.18), value: dropTarget)
+        .animation(.snappy(duration: 0.18), value: columnDropTarget?.id)
         // The named space has to sit on the same view as the drop, or `DropInfo.location` and
         // the row frames below are measured against different origins.
         .coordinateSpace(name: space)
-        .onDrop(of: [.image, .fileURL, .utf8PlainText, .plainText], delegate: ColumnDropDelegate(
+        .onDrop(of: [.image, .fileURL, .utf8PlainText, .plainText, .meatpadColumn], delegate: ColumnDropDelegate(
             column: column.id,
             rows: rows(of: items),
             target: $dropTarget,
             loader: dragLoader,
             attach: attach,
             create: newCardBoard.map { owner in { drop in newCard(drop, in: column.id, on: owner) } },
-            moveCards: { ids, index in move(ids, to: column.id, visible: items, at: index) }
+            moveCards: { ids, index in move(ids, to: column.id, visible: items, at: index) },
+            columnIndex: index,
+            columnOrder: order,
+            width: columnWidth,
+            columnTarget: $columnDropTarget,
+            moveColumn: { id, index in moveColumn(id, to: index) }
         ))
+    }
+
+    /// The 3pt accent edge shown on the hovered column, on whichever half the pointer is over —
+    /// the only feedback a column drag gives before it drops.
+    @ViewBuilder
+    private func columnMoveGhost(_ column: BoardColumn, trailing: Bool) -> some View {
+        if columnDropTarget?.id == column.id, columnDropTarget?.trailing == trailing {
+            Capsule(style: .continuous)
+                .fill(MeatPadGlass.violet)
+                .frame(width: 3)
+                .padding(.vertical, 6)
+                .accessibilityIdentifier("column.moveGhost")
+        }
+    }
+
+    /// Shared by the header drag and the "Move Left"/"Move Right" menu items — both just ask
+    /// the store to put the column at a final index, board-scoped in the board view, global in
+    /// the all-boards overview.
+    private func moveColumn(_ id: UUID, to index: Int) {
+        withAnimation(.snappy(duration: 0.22)) {
+            try? store.moveColumn(id: id, to: index, onBoard: board?.id)
+        }
     }
 
     /// The tint belongs to the column only when the column itself is the target — an image
@@ -604,7 +801,14 @@ struct BoardColumnsView: View {
             loader: dragLoader,
             attach: attach,
             create: nil,
-            moveCards: { _, _ in false }
+            moveCards: { _, _ in false },
+            // No `.meatpadColumn` in this view's `onDrop` type list above, so the delegate's
+            // column-drag branch is never reached here — these are unused placeholders.
+            columnIndex: nil,
+            columnOrder: [],
+            width: 0,
+            columnTarget: $columnDropTarget,
+            moveColumn: { _, _ in }
         ))
     }
 
@@ -619,7 +823,7 @@ struct BoardColumnsView: View {
             card: ref.card,
             boardBadge: board == nil ? ref.board : nil,
             isDone: column?.isDone ?? columnIsDone(ref),
-            isSelected: selectedCard == ref.card.id,
+            isSelected: selection.ids.contains(ref.card.id),
             display: display,
             onPresent: { presentedCard = ref.card.id }
         )
@@ -628,11 +832,17 @@ struct BoardColumnsView: View {
         // is the only place that knows which card is under it.
         .onHover { hoveredCard = $0 ? ref.card.id : (hoveredCard == ref.card.id ? nil : hoveredCard) }
         // Simultaneous, not exclusive: a click on the title both selects the card and starts
-        // editing — the face's own tap gestures must still fire.
-        .simultaneousGesture(TapGesture().onEnded { selectedCard = ref.card.id })
-        .draggable(ref.card.id.uuidString) {
-            // A compact chip drags better than a full-card snapshot, and shows what's moving.
-            Text(ref.card.title)
+        // editing — the face's own tap gestures must still fire. Finder rules for the kind:
+        // ⌘ toggles, ⇧ extends over the visible order, anything else replaces the selection.
+        .simultaneousGesture(TapGesture().onEnded {
+            let flags = NSEvent.modifierFlags
+            let kind: BoardSelection.Click = flags.contains(.command) ? .toggle : flags.contains(.shift) ? .extend : .plain
+            selection.click(ref.card.id, kind, order: visibleOrder)
+        })
+        .draggable(dragPayload(for: ref)) {
+            // A compact chip drags better than a full-card snapshot, and shows what's moving —
+            // the card's own title, or a count when the card is part of a 2+ selection.
+            Text(dragCount(for: ref) > 1 ? "\(dragCount(for: ref)) Cards" : ref.card.title)
                 .font(.callout.weight(.medium))
                 .lineLimit(1)
                 .padding(.horizontal, 10)
@@ -646,6 +856,16 @@ struct BoardColumnsView: View {
         .marchingAnts(dropTarget == .attach(card: ref.card.id), cornerRadius: 10)
         .overlay(alignment: .topTrailing) { dropBadge(for: ref.card.id) }
     }
+
+    /// The ids a drag started from this card actually carries: the whole selection, in visible
+    /// order, when the card is part of a 2+ selection — otherwise just this one card, selection
+    /// untouched.
+    private func dragIDs(for ref: CardRef) -> [UUID] {
+        guard selection.ids.count > 1, selection.ids.contains(ref.card.id) else { return [ref.card.id] }
+        return selection.ordered(visibleOrder)
+    }
+    private func dragPayload(for ref: CardRef) -> String { dragIDs(for: ref).map(\.uuidString).joined(separator: "\n") }
+    private func dragCount(for ref: CardRef) -> Int { dragIDs(for: ref).count }
 
     /// What the card is about to receive. The ants say "this card"; the thumbnail says "this
     /// image" — between them there is nothing left to guess about an image drop.
@@ -679,17 +899,41 @@ struct BoardColumnsView: View {
         store.columns(for: ref.board).first { $0.id == ref.card.columnID }?.isDone ?? false
     }
 
+    /// This board, or every board in the All Boards overview — live values, not the captured `board`.
+    private var ownerBoards: [Board] {
+        guard let board else { return store.boards }
+        return store.boards.filter { $0.id == board.id }
+    }
+
+    private func hasUnarchivedCards(in column: BoardColumn) -> Bool {
+        ownerBoards.contains { store.cards(in: $0, column: column.id).contains { $0.archived == nil } }
+    }
+
+    private func archiveAll(in column: BoardColumn) {
+        try? store.grouped {
+            for owner in ownerBoards {
+                let ids = store.cards(in: owner, column: column.id).filter { $0.archived == nil }.map(\.id)
+                if !ids.isEmpty { try store.setArchived(boardID: owner.id, cardIDs: ids, true) }
+            }
+        }
+    }
+
     /// A card always moves within its own board — in the all-boards view the destination
-    /// column is a global one, which every board shares.
+    /// column is a global one, which every board shares. One or many ids: a multi-card drag
+    /// moves the whole batch as a single `store.grouped` block, so one ⌘Z undoes all of it.
     @discardableResult
     private func move(_ ids: [String], to columnID: UUID, visible items: [CardRef], at visibleIndex: Int) -> Bool {
+        let moving = ids.compactMap(UUID.init(uuidString:))
+        let movingSet = Set(moving)
         var moved = false
         withAnimation(.snappy(duration: 0.22)) {
-            for id in ids.compactMap({ UUID(uuidString: $0) }) {
-                guard let owner = store.boards.first(where: { $0.cards.contains { $0.id == id } }) else { continue }
-                let index = storeIndex(visible: items, at: visibleIndex, column: columnID, board: owner)
-                try? store.moveCard(id: id, boardID: owner.id, toColumn: columnID, index: index)
-                moved = true
+            try? store.grouped {
+                for id in moving {
+                    guard let owner = store.boards.first(where: { $0.cards.contains { $0.id == id } }) else { continue }
+                    let index = storeIndex(visible: items, at: visibleIndex, column: columnID, board: owner, moving: id, excluding: movingSet)
+                    try store.moveCard(id: id, boardID: owner.id, toColumn: columnID, index: index)
+                    moved = true
+                }
             }
         }
         return moved
@@ -700,10 +944,30 @@ struct BoardColumnsView: View {
     /// else to the store — translate through the card the drop landed above, or the card lands
     /// in the wrong place. Dropping past the last visible row, or above a card from another board,
     /// appends.
-    private func storeIndex(visible items: [CardRef], at visibleIndex: Int, column: UUID, board: Board) -> Int {
-        let all = store.cards(in: board, column: column)
-        guard visibleIndex < items.count else { return all.count }
-        let anchor = items[visibleIndex].card.id
+    ///
+    /// Two cases, because they need different arithmetic:
+    /// - The row literally at `visibleIndex` is NOT itself moving: `store.moveCard` already
+    ///   removes the card being placed before it numbers the destination's siblings, so handing
+    ///   it the anchor's position in the UNFILTERED column (the way a single-card move always
+    ///   has) is correct — `moveCard`'s own clamp is what turns "past the last row" into append.
+    ///   Filtering `all` here double-removes the mover and lands one slot too early.
+    /// - The row literally at `visibleIndex` IS one of the moving cards (dragging part of a
+    ///   selection that includes its own neighbor): there is no real anchor there, so skip ahead
+    ///   to the next non-moving card and resolve its position with every moving card excluded —
+    ///   `all` has to already agree with a column that contains none of them.
+    private func storeIndex(visible items: [CardRef], at visibleIndex: Int, column: UUID, board: Board, moving id: UUID, excluding moving: Set<UUID>) -> Int {
+        let owner = store.boards.first { $0.id == board.id } ?? board
+        guard visibleIndex < items.count else {
+            return store.cards(in: owner, column: column).filter { !moving.contains($0.id) }.count
+        }
+        if !moving.contains(items[visibleIndex].card.id) {
+            let anchor = items[visibleIndex].card.id
+            let all = store.cards(in: owner, column: column)
+            return all.firstIndex { $0.id == anchor } ?? all.count
+        }
+        let all = store.cards(in: owner, column: column).filter { !moving.contains($0.id) }
+        guard let anchor = items[visibleIndex...].first(where: { !moving.contains($0.card.id) })?.card.id
+        else { return all.count }
         return all.firstIndex { $0.id == anchor } ?? all.count
     }
 
@@ -735,4 +999,21 @@ struct BoardColumnsView: View {
         drafts[target.columnID] = ""
         splitTarget = nil
     }
+}
+
+/// Bridges to the hosting NSWindow so the keyboard monitor can ignore key events meant for a
+/// different window. Same technique as `NoteWindow`'s own `WindowAccessor` (that one is
+/// private to its file, hence a second copy here rather than a shared one).
+private struct BoardWindowAccessor: NSViewRepresentable {
+    var onWindow: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let window = view.window { onWindow(window) }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }

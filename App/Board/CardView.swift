@@ -51,6 +51,10 @@ struct CardView: View {
     @State private var editorShown = false
     /// Whether the editor should open straight onto its new-label field.
     @State private var editorLabelForm = false
+    /// Whether the pointer is over the card — the copy button only earns its space in the
+    /// header while the card is hovered (or right after a copy, so the checkmark is seen).
+    @State private var hovering = false
+    @State private var copied = false
     @Environment(\.openWindow) private var openWindow
     /// How much bigger than normal to draw — presentation mode, or the present overlay. Every
     /// type and tile size below is multiplied by it; at 1 the card is what it always was.
@@ -71,7 +75,8 @@ struct CardView: View {
             if display != .compact, let names = card.attachments, !names.isEmpty {
                 HairlineDivider()
                 AttachmentStrip(urls: names.map { store.attachmentURL(cardID: card.id, name: $0) },
-                                size: 44 * scale, limit: 4, identifier: "card.attachment")
+                                size: 44 * scale, limit: 4, identifier: "card.attachment",
+                                dragTitle: card.title, owner: card.id)
                     .padding(.vertical, 7)
             }
             HairlineDivider()
@@ -81,7 +86,9 @@ struct CardView: View {
         .padding(.vertical, 3)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background { cellBackground }
+        .opacity(card.archived != nil ? 0.55 : 1)
         .contextMenu { cardMenu }
+        .onHover { hovering = $0 }
         // Calendar's own shape for "pick an exact time": a popover, not a field wedged into
         // the card — the card face carries the date, never the picker.
         .popover(isPresented: $editingDue) {
@@ -176,9 +183,29 @@ struct CardView: View {
                     .accessibilityAction(named: Text("Edit")) { editing = .title; focus = .title }
                     .accessibilityIdentifier("card.title")
             }
+            if card.archived != nil {
+                Image(systemName: "archivebox")
+                    .font(.system(size: fontSize(.caption1)))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("card.archived")
+            }
             if summarizing {
                 ProgressView().controlSize(.mini)
             }
+            Button(action: copyText) {
+                Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
+                    .font(.system(size: fontSize(.body)))
+                    .foregroundStyle(copied ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+                    .frame(width: 22 * scale, height: 18 * scale)
+                    .contentShape(Rectangle())
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .buttonStyle(.plain)
+            .opacity(hovering || copied ? 1 : 0)
+            .help(String(localized: "Copy Title and Notes"))
+            .accessibilityLabel(Text("Copy"))
+            .accessibilityValue(copied ? "copied" : "")
+            .accessibilityIdentifier("card.copy")
             Button {
                 editorLabelForm = false
                 editorShown = true
@@ -212,6 +239,18 @@ struct CardView: View {
         title.isEmpty ? String(localized: "Title") : title
     }
 
+    /// Puts the card's title and notes on the pasteboard and flashes the button's icon green
+    /// for long enough to register as feedback without lingering past the next glance.
+    private func copyText() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(card.clipboardText, forType: .string)
+        copied = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            copied = false
+        }
+    }
+
     private var faceNotes: String {
         body_.isEmpty ? String(localized: "Add Notes") : (expanded ? body_ : firstLine)
     }
@@ -219,8 +258,16 @@ struct CardView: View {
     /// "Click this row to edit it" — as a layer BEHIND the text rather than a gesture on it.
     /// `LinkableText` hands back every click that didn't land on a link, and this is what
     /// catches them; a gesture on the text itself would swallow the link clicks too.
+    ///
+    /// A ⌘/⇧-click is a selection gesture, not an edit one — the board's row-level tap
+    /// (`.simultaneousGesture` in `BoardColumnsView.cardRow`) still fires either way, so this
+    /// only has to skip starting the field. The `.accessibilityAction(named: "Edit")` handlers
+    /// at the two call sites are unaffected — VoiceOver has no modifier keys to hold.
     private func editTapLayer(_ begin: @escaping () -> Void) -> some View {
-        Color.clear.contentShape(Rectangle()).onTapGesture(perform: begin)
+        Color.clear.contentShape(Rectangle()).onTapGesture {
+            guard NSEvent.modifierFlags.intersection([.command, .shift]).isEmpty else { return }
+            begin()
+        }
     }
 
     /// A field that has just taken focus selects everything; a click on a title means
@@ -296,6 +343,10 @@ struct CardView: View {
         }
         if card.noteID != nil {
             Button("Unlink") { update { $0.noteID = nil } }
+        }
+        Button("Copy Text", action: copyText)
+        Button(card.archived == nil ? "Archive Card" : "Unarchive Card") {
+            try? store.setArchived(boardID: boardID, cardIDs: [card.id], card.archived == nil)
         }
         Divider()
         Button("Delete Card", role: .destructive) {
