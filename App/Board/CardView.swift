@@ -258,8 +258,16 @@ struct CardView: View {
     /// "Click this row to edit it" — as a layer BEHIND the text rather than a gesture on it.
     /// `LinkableText` hands back every click that didn't land on a link, and this is what
     /// catches them; a gesture on the text itself would swallow the link clicks too.
+    ///
+    /// A ⌘/⇧-click is a selection gesture, not an edit one — the board's row-level tap
+    /// (`.simultaneousGesture` in `BoardColumnsView.cardRow`) still fires either way, so this
+    /// only has to skip starting the field. The `.accessibilityAction(named: "Edit")` handlers
+    /// at the two call sites are unaffected — VoiceOver has no modifier keys to hold.
     private func editTapLayer(_ begin: @escaping () -> Void) -> some View {
-        Color.clear.contentShape(Rectangle()).onTapGesture(perform: begin)
+        Color.clear.contentShape(Rectangle()).onTapGesture {
+            guard NSEvent.modifierFlags.intersection([.command, .shift]).isEmpty else { return }
+            begin()
+        }
     }
 
     /// A field that has just taken focus selects everything; a click on a title means

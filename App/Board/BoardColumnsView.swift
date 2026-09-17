@@ -9,7 +9,9 @@ struct BoardColumnsView: View {
     @ObservedObject var store: BoardStore
     /// nil = the All Boards overview.
     let board: Board?
-    @Binding var selectedCard: UUID?
+    /// Which cards are selected — click/⌘-click/⇧-click on a row, "Select All Cards" in a
+    /// column menu, and ⌘A/Esc/⌫/⌦ from the keyboard monitor below all write through this.
+    @Binding var selection: BoardSelection
     /// Labels the board is filtered to. Empty = show everything. Owned by the window so the
     /// sidebar can grey out the boards this filter empties.
     @Binding var labelFilter: Set<UUID>
@@ -60,6 +62,19 @@ struct BoardColumnsView: View {
     /// Which card the pointer is over: the double-click monitor below gets a point, not a view.
     @State private var hoveredCard: UUID?
     @State private var clickMonitor: Any?
+    /// Esc/⌫/⌦/⌘A, installed and removed alongside `clickMonitor`.
+    @State private var keyMonitor: Any?
+    /// This view's hosting window, so the key monitor can ignore events meant for another
+    /// window. Captured once via `BoardWindowAccessor`; a plain `NSWindow?` would work too, but
+    /// the accessor is the same seam `NoteWindow` uses for its own window-scoped work.
+    @State private var hostWindow: NSWindow?
+    /// `visibleOrder` snapshotted on every change. The keyboard monitor's closure is installed
+    /// once in `.onAppear` and never rebuilt, so it captures a frozen copy of `board` (a plain
+    /// `let`) — reading `visibleOrder` from inside it would silently answer for whichever board
+    /// was showing when the monitor was installed. This is `@State`, whose storage stays live
+    /// across renders, so the monitor reads through it instead. Named apart from the unrelated
+    /// local `order` (column order) inside `columnView(_:)`.
+    @State private var selectableOrder: [UUID] = []
 
     private struct SplitTarget {
         let boardID: UUID
@@ -98,6 +113,18 @@ struct BoardColumnsView: View {
 
     private var renderedColumns: [BoardColumn] {
         board.map { store.columns(for: $0) } ?? store.globalColumns
+    }
+
+    /// Every visible card, left-to-right by column and top-to-bottom within it, then "Other" —
+    /// what a ⇧-click extends across and what ⌘A selects.
+    private var visibleOrder: [UUID] {
+        renderedColumns.flatMap { cards(in: $0).map(\.card.id) } + (board == nil ? otherCards.map(\.card.id) : [])
+    }
+
+    /// Every card on every board, filters aside — what a selection is pruned against when a
+    /// card is deleted out from under it.
+    private var allCardIDs: Set<UUID> {
+        Set(store.boards.flatMap { $0.cards.map(\.id) })
     }
 
     var body: some View {
@@ -172,19 +199,32 @@ struct BoardColumnsView: View {
                 // editing forever — and the face relies on the blur to commit and swap back to text.
                 // An outer tap gives those clicks a job. Inner gestures win, so a click on a card's
                 // title/notes text (which starts editing) or on a button never reaches this.
-                .onTapGesture { NSApp.keyWindow?.makeFirstResponder(nil) }
+                .onTapGesture {
+                    NSApp.keyWindow?.makeFirstResponder(nil)
+                    // A card's own row uses `.simultaneousGesture`, which never blocks this
+                    // ancestor gesture — so a plain click on a card would reach here too and
+                    // wipe the selection it just made. `hoveredCard` is what tells the two apart.
+                    if hoveredCard == nil { selection.clear() }
+                }
             }
             .environment(\.cardScale, columnScale)
         }
+        .background(BoardWindowAccessor(onWindow: { hostWindow = $0 }))
+        .overlay(alignment: .bottom) { selectionBar }
         .onAppear {
             store.undoManager = undoManager
             canUndo = undoManager?.canUndo ?? false
             installDoubleClickMonitor()
+            installKeyMonitor()
         }
         .onDisappear {
             if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
             clickMonitor = nil
+            if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+            keyMonitor = nil
         }
+        .onChange(of: visibleOrder, initial: true) { _, new in selectableOrder = new }
+        .onChange(of: allCardIDs) { _, ids in selection.prune(keeping: ids) }
         .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerCheckpoint)) { note in
             guard let undoManager, note.object as? UndoManager === undoManager else { return }
             canUndo = undoManager.canUndo
@@ -301,6 +341,96 @@ struct BoardColumnsView: View {
     /// An attachment tile's own double-click (Quick Look) wins over presenting the card.
     private func isAttachmentTile(_ event: NSEvent) -> Bool {
         DoubleClickCatcherView.catcher(for: event) != nil
+    }
+
+    /// Esc clears the selection, ⌫/⌦ deletes it, ⌘A selects every visible card — all gated on
+    /// this board's own window being key, no card presented, and the first responder not being
+    /// a text field/view, so Delete in a card's title never touches the selection.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.window === hostWindow, presentedCard == nil,
+                  !(event.window?.firstResponder is NSText)
+            else { return event }
+            let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            switch (event.keyCode, mods) {
+            case (53, _) where !selection.ids.isEmpty:
+                selection.clear(); return nil
+            case (51, []) where !selection.ids.isEmpty, (117, []) where !selection.ids.isEmpty:
+                deleteSelected(); return nil
+            case (0, .command):
+                selection.selectAll(selectableOrder); return nil
+            default:
+                return event
+            }
+        }
+    }
+
+    /// Bulk delete, grouped so it undoes as one ⌘Z. Snapshots `store.boards` up front —
+    /// `deleteCard` mutates the live store as the loop runs, but each `owner` here is already a
+    /// value-type copy, so iterating its `cards` is unaffected by the deletes alongside it.
+    private func deleteSelected() {
+        let ids = selection.ids
+        try? store.grouped {
+            for owner in store.boards {
+                for card in owner.cards where ids.contains(card.id) {
+                    try store.deleteCard(boardID: owner.id, cardID: card.id)
+                }
+            }
+        }
+        selection.clear()
+    }
+
+    /// Whether every currently-selected card is archived — decides the bar's Archive/Unarchive
+    /// label and which way it toggles.
+    private var allSelectedArchived: Bool {
+        let ids = selection.ids
+        let selected = store.boards.flatMap(\.cards).filter { ids.contains($0.id) }
+        return !selected.isEmpty && selected.allSatisfy { $0.archived != nil }
+    }
+
+    private func archiveSelected() {
+        let ids = selection.ids
+        let archiving = !allSelectedArchived
+        try? store.grouped {
+            for owner in store.boards {
+                let ownIDs = owner.cards.filter { ids.contains($0.id) }.map(\.id)
+                if !ownIDs.isEmpty { try store.setArchived(boardID: owner.id, cardIDs: ownIDs, archiving) }
+            }
+        }
+    }
+
+    /// 2+ selected cards, pinned bottom-centre over the board — count, Archive/Unarchive,
+    /// Delete, and a close button. Never over the present overlay: this lives on `board_`, not
+    /// `body`'s outer `ZStack`.
+    @ViewBuilder
+    private var selectionBar: some View {
+        if selection.ids.count >= 2 {
+            HStack(spacing: 14) {
+                Text("\(selection.ids.count) Selected")
+                    .font(.callout.weight(.medium))
+                    .accessibilityIdentifier("board.selection.count")
+                Button(allSelectedArchived ? "Unarchive" : "Archive", action: archiveSelected)
+                    .accessibilityIdentifier("board.selection.archive")
+                Button("Delete", role: .destructive, action: deleteSelected)
+                    .accessibilityIdentifier("board.selection.delete")
+                Button {
+                    selection.clear()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .help(String(localized: "Clear Selection"))
+                .accessibilityLabel(Text("Clear Selection"))
+                .accessibilityIdentifier("board.selection.clear")
+            }
+            .buttonStyle(.borderless)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.thinMaterial, in: Capsule())
+            .shadow(color: .black.opacity(0.2), radius: 8, y: 2)
+            .padding(.bottom, 16)
+        }
     }
 
     @ViewBuilder
@@ -423,6 +553,8 @@ struct BoardColumnsView: View {
                         .disabled((index ?? 0) == order.count - 1)
                     Button("Archive All Cards") { archiveAll(in: column) }
                         .disabled(!hasUnarchivedCards(in: column))
+                    Button("Select All Cards") { selection.selectAll(items.map(\.card.id)) }
+                        .disabled(items.isEmpty)
                     Divider()
                     Button("Delete…", role: .destructive) { deleteTarget = ref(for: column) }
                 } label: {
@@ -691,7 +823,7 @@ struct BoardColumnsView: View {
             card: ref.card,
             boardBadge: board == nil ? ref.board : nil,
             isDone: column?.isDone ?? columnIsDone(ref),
-            isSelected: selectedCard == ref.card.id,
+            isSelected: selection.ids.contains(ref.card.id),
             display: display,
             onPresent: { presentedCard = ref.card.id }
         )
@@ -700,8 +832,13 @@ struct BoardColumnsView: View {
         // is the only place that knows which card is under it.
         .onHover { hoveredCard = $0 ? ref.card.id : (hoveredCard == ref.card.id ? nil : hoveredCard) }
         // Simultaneous, not exclusive: a click on the title both selects the card and starts
-        // editing — the face's own tap gestures must still fire.
-        .simultaneousGesture(TapGesture().onEnded { selectedCard = ref.card.id })
+        // editing — the face's own tap gestures must still fire. Finder rules for the kind:
+        // ⌘ toggles, ⇧ extends over the visible order, anything else replaces the selection.
+        .simultaneousGesture(TapGesture().onEnded {
+            let flags = NSEvent.modifierFlags
+            let kind: BoardSelection.Click = flags.contains(.command) ? .toggle : flags.contains(.shift) ? .extend : .plain
+            selection.click(ref.card.id, kind, order: visibleOrder)
+        })
         .draggable(ref.card.id.uuidString) {
             // A compact chip drags better than a full-card snapshot, and shows what's moving.
             Text(ref.card.title)
@@ -826,4 +963,21 @@ struct BoardColumnsView: View {
         drafts[target.columnID] = ""
         splitTarget = nil
     }
+}
+
+/// Bridges to the hosting NSWindow so the keyboard monitor can ignore key events meant for a
+/// different window. Same technique as `NoteWindow`'s own `WindowAccessor` (that one is
+/// private to its file, hence a second copy here rather than a shared one).
+private struct BoardWindowAccessor: NSViewRepresentable {
+    var onWindow: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let window = view.window { onWindow(window) }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
