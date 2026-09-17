@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import MeatPadKit
 
 /// The columns for one board, or for every board at once ("All Boards"). In the all-boards
@@ -42,6 +43,10 @@ struct BoardColumnsView: View {
     /// What the live drag would do right now — drives the insertion bar, the column highlight
     /// and a card's marching ants, so a drag shows its destination instead of guessing.
     @State private var dropTarget: DropTarget?
+    /// Which column a live column-header drag is hovering, and which half of it — drives the
+    /// 3pt edge ghost. A separate binding from `dropTarget`: a column drag never shows a card
+    /// ghost or the marching ants, so it needs no shared state with those.
+    @State private var columnDropTarget: (id: UUID, trailing: Bool)?
     /// The dragged image, decoded once per drag so the hover preview costs nothing per frame.
     @StateObject private var dragLoader = DragImageLoader()
     /// Card row frames, each in its own column's coordinate space. `DropInfo` gives a pointer
@@ -391,6 +396,9 @@ struct BoardColumnsView: View {
     private func columnView(_ column: BoardColumn) -> some View {
         let items = cards(in: column)
         let space = "column-\(column.id.uuidString)"
+        let order = renderedColumns.map(\.id)
+        let index = order.firstIndex(of: column.id)
+        let columnWidth = 280 * columnScale
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 if let emoji = column.emoji { Text(emoji) }
@@ -398,6 +406,7 @@ struct BoardColumnsView: View {
                     .font(.system(size: NSFont.preferredFont(forTextStyle: .headline).pointSize * columnScale,
                                   weight: .semibold))
                     .lineLimit(1)
+                    .accessibilityIdentifier("column.name")
                 if column.isDone {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.caption)
                 }
@@ -408,6 +417,10 @@ struct BoardColumnsView: View {
                     Button(column.isDone ? "Not a Done Column" : "Mark as Done Column") {
                         try? store.setColumnDone(id: column.id, !column.isDone, boardID: ref(for: column).boardID)
                     }
+                    Button("Move Left") { moveColumn(column.id, to: (index ?? 0) - 1) }
+                        .disabled((index ?? 0) == 0)
+                    Button("Move Right") { moveColumn(column.id, to: (index ?? 0) + 1) }
+                        .disabled((index ?? 0) == order.count - 1)
                     Button("Archive All Cards") { archiveAll(in: column) }
                         .disabled(!hasUnarchivedCards(in: column))
                     Divider()
@@ -420,6 +433,12 @@ struct BoardColumnsView: View {
                 .fixedSize()
                 .help(String(localized: "Column Actions"))
                 .accessibilityIdentifier("column.actions.\(column.id.uuidString)")
+            }
+            // Dragging the header itself reorders the column — a plain `.onDrag` (not
+            // `.draggable`) because the payload is a raw id string under the dedicated
+            // `.meatpadColumn` type, not something `Transferable` needs to know about.
+            .onDrag {
+                NSItemProvider(item: column.id.uuidString as NSString, typeIdentifier: UTType.meatpadColumn.identifier)
             }
 
             if let board {
@@ -467,26 +486,56 @@ struct BoardColumnsView: View {
             }
             .scrollBounceBehavior(.basedOnSize)
         }
-        .frame(width: 280 * columnScale, alignment: .leading)
+        .frame(width: columnWidth, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .top)
         .padding(.vertical, 4)
         .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(MeatPadGlass.violet.opacity(isTargeting(column) ? 0.10 : 0))
         }
+        .overlay(alignment: .leading) { columnMoveGhost(column, trailing: false) }
+        .overlay(alignment: .trailing) { columnMoveGhost(column, trailing: true) }
         .animation(.snappy(duration: 0.18), value: dropTarget)
+        .animation(.snappy(duration: 0.18), value: columnDropTarget?.id)
         // The named space has to sit on the same view as the drop, or `DropInfo.location` and
         // the row frames below are measured against different origins.
         .coordinateSpace(name: space)
-        .onDrop(of: [.image, .fileURL, .utf8PlainText, .plainText], delegate: ColumnDropDelegate(
+        .onDrop(of: [.image, .fileURL, .utf8PlainText, .plainText, .meatpadColumn], delegate: ColumnDropDelegate(
             column: column.id,
             rows: rows(of: items),
             target: $dropTarget,
             loader: dragLoader,
             attach: attach,
             create: newCardBoard.map { owner in { drop in newCard(drop, in: column.id, on: owner) } },
-            moveCards: { ids, index in move(ids, to: column.id, visible: items, at: index) }
+            moveCards: { ids, index in move(ids, to: column.id, visible: items, at: index) },
+            columnIndex: index,
+            columnOrder: order,
+            width: columnWidth,
+            columnTarget: $columnDropTarget,
+            moveColumn: { id, index in moveColumn(id, to: index) }
         ))
+    }
+
+    /// The 3pt accent edge shown on the hovered column, on whichever half the pointer is over —
+    /// the only feedback a column drag gives before it drops.
+    @ViewBuilder
+    private func columnMoveGhost(_ column: BoardColumn, trailing: Bool) -> some View {
+        if columnDropTarget?.id == column.id, columnDropTarget?.trailing == trailing {
+            Capsule(style: .continuous)
+                .fill(MeatPadGlass.violet)
+                .frame(width: 3)
+                .padding(.vertical, 6)
+                .accessibilityIdentifier("column.moveGhost")
+        }
+    }
+
+    /// Shared by the header drag and the "Move Left"/"Move Right" menu items — both just ask
+    /// the store to put the column at a final index, board-scoped in the board view, global in
+    /// the all-boards overview.
+    private func moveColumn(_ id: UUID, to index: Int) {
+        withAnimation(.snappy(duration: 0.22)) {
+            try? store.moveColumn(id: id, to: index, onBoard: board?.id)
+        }
     }
 
     /// The tint belongs to the column only when the column itself is the target — an image
@@ -620,7 +669,14 @@ struct BoardColumnsView: View {
             loader: dragLoader,
             attach: attach,
             create: nil,
-            moveCards: { _, _ in false }
+            moveCards: { _, _ in false },
+            // No `.meatpadColumn` in this view's `onDrop` type list above, so the delegate's
+            // column-drag branch is never reached here — these are unused placeholders.
+            columnIndex: nil,
+            columnOrder: [],
+            width: 0,
+            columnTarget: $columnDropTarget,
+            moveColumn: { _, _ in }
         ))
     }
 
