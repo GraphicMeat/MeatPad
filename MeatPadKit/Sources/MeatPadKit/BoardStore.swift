@@ -5,6 +5,7 @@ public enum BoardStoreError: Error, Equatable {
     case cardNotFound(UUID)
     case columnNotFound(UUID)
     case labelNotFound(UUID)
+    case trashEntryNotFound(UUID)
     case invalidName
     case lastColumn
 }
@@ -37,6 +38,11 @@ public final class BoardStore: ObservableObject {
 
     /// Labels every board's cards can carry, in creation order.
     @Published public private(set) var labels: [CardLabel] = []
+
+    /// Every deleted card/column/board from every board, newest first — one flat list so a
+    /// single "Board Trash" view can show and restore across boards, the way `NoteStore`
+    /// shows one Trash for every note regardless of folder.
+    @Published public private(set) var trash: [TrashEntry] = []
 
     /// Fixed so a fresh board's Todo/In Progress/Done share an id with every other board's —
     /// that's what lets the All Boards overview pool cards into one "Todo" bucket without a
@@ -102,6 +108,7 @@ public final class BoardStore: ObservableObject {
         let index = Self.loadIndex(from: rootURL.appendingPathComponent("boards.json"))
         labels = index?.labels ?? []
         boards = Self.loadBoards(from: rootURL, order: index?.boardOrder ?? [])
+        trash = Self.loadTrash(from: rootURL.appendingPathComponent("trash.json"))
         // If a board's own file failed to persist below (disk full, permissions, an external
         // volume), the legacy key has to survive on disk so the next launch retries it —
         // there is no backup and no undo for a column mutation, so losing this once is losing
@@ -191,11 +198,13 @@ public final class BoardStore: ObservableObject {
         try persist(at: idx)
     }
 
+    /// Trashes the whole board — cards, columns, icon image and all — rather than deleting it.
+    /// Every attachment file (the board's own icon, every card's) is left on disk exactly like
+    /// a trashed card's; only purging the trash entry removes them.
     public func deleteBoard(id: UUID) throws {
         let idx = try boardIndex(id)
-        for card in boards[idx].cards { try? attachments.removeAll(for: card.id) }
-        // The board's own icon image lives under its own id, beside its cards' attachments.
-        try? attachments.removeAll(for: id)
+        let board = boards[idx]
+        try appendToTrash(TrashEntry(kind: .board, boardID: id, boardName: board.name, board: board))
         let url = boardURL(id)
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
@@ -327,34 +336,31 @@ public final class BoardStore: ObservableObject {
         registerUndo { try? $0.updateCard(boardID: boardID, card: previous) }
     }
 
+    /// Trashes the card rather than deleting it outright: it moves to `trash`, restorable from
+    /// the Board Trash view or by ⌘Z, either of which lands on the same `uncard` below. Its
+    /// attachment files are left exactly where they are — `AttachmentStore` doesn't know or
+    /// care whether a card is live or trashed, only purging a trash entry removes them.
     public func deleteCard(boardID: UUID, cardID: UUID) throws {
         let idx = try boardIndex(boardID)
         guard let cardIdx = boards[idx].cards.firstIndex(where: { $0.id == cardID }) else {
             throw BoardStoreError.cardNotFound(cardID)
         }
         let card = boards[idx].cards[cardIdx]
-        // Snapshotted before the files are gone — the undo has nowhere else to read them from.
-        let files: [(String, Data)] = (card.attachments ?? []).compactMap { name in
-            attachments.data(name, for: cardID).map { (name, $0) }
-        }
+        try appendToTrash(TrashEntry(kind: .card, boardID: boardID, boardName: boards[idx].name, card: card))
         boards[idx].cards.remove(at: cardIdx)
         try persist(at: idx)
-        // Best-effort: the card is already gone from the board, and a failed cleanup here
-        // (permissions, a Quick Look handle on one of the files, an external volume) must not
-        // cost the undo step below — the files snapshotted above are what makes it whole again.
-        try? attachments.removeAll(for: cardID)
-        registerUndo { $0.restore(card, boardID: boardID, at: cardIdx, files: files) }
+        registerUndo { $0.uncard(card, boardID: boardID, at: cardIdx) }
     }
 
-    /// The inverse of `deleteCard`: the card goes back where it was in the flat array, which
-    /// is also where it was in its column. Registers the delete as its own inverse. `files`
-    /// are the attachment bytes the card carried, snapshotted by the delete since the
-    /// `AttachmentStore` no longer has them.
-    private func restore(_ card: Card, boardID: UUID, at index: Int, files: [(String, Data)] = []) {
+    /// The inverse of `deleteCard`: the card goes back where it was in the flat array, which is
+    /// also where it was in its column, and its trash entry disappears. Registers the delete
+    /// as its own inverse.
+    private func uncard(_ card: Card, boardID: UUID, at index: Int) {
         guard let idx = try? boardIndex(boardID) else { return }
-        for (name, data) in files { try? attachments.write(data, name: name, to: card.id) }
         boards[idx].cards.insert(card, at: min(index, boards[idx].cards.count))
         try? persist(at: idx)
+        trash.removeAll { $0.kind == .card && $0.card?.id == card.id }
+        try? saveTrash()
         registerUndo { try? $0.deleteCard(boardID: boardID, cardID: card.id) }
     }
 
@@ -489,15 +495,21 @@ public final class BoardStore: ObservableObject {
     }
 
     /// Deleting a column never deletes work: its cards move to that board's own first
-    /// remaining column. That last column on a board is the fallback, so it cannot itself be
-    /// removed — a board always shows at least one column.
+    /// remaining column, visibly, right away — and the column plus a snapshot of exactly which
+    /// cards were in it goes to `trash`, so restoring can move those same cards back rather
+    /// than leaving a restored column empty. That last column on a board is the fallback, so
+    /// it cannot itself be removed — a board always shows at least one column.
     public func deleteColumn(id: UUID, boardID: UUID) throws {
         let idx = try boardIndex(boardID)
-        guard boards[idx].extraColumns.contains(where: { $0.id == id }) else {
+        guard let colIdx = boards[idx].extraColumns.firstIndex(where: { $0.id == id }) else {
             throw BoardStoreError.columnNotFound(id)
         }
         guard boards[idx].extraColumns.count > 1 else { throw BoardStoreError.lastColumn }
-        boards[idx].extraColumns.removeAll { $0.id == id }
+        let column = boards[idx].extraColumns[colIdx]
+        let cardsInColumn = boards[idx].cards.filter { $0.columnID == id }
+        try appendToTrash(TrashEntry(kind: .column, boardID: boardID, boardName: boards[idx].name,
+                                      column: column, columnCards: cardsInColumn))
+        boards[idx].extraColumns.remove(at: colIdx)
         reassignCards(from: id, boardIndex: idx)
         try persist(at: idx)
     }
@@ -516,6 +528,95 @@ public final class BoardStore: ObservableObject {
         }
         change(&boards[idx].extraColumns[colIdx])
         try persist(at: idx)
+    }
+
+    // MARK: - Trash
+
+    /// Puts a trashed card, column or board back. A card whose stored column no longer exists
+    /// on the board (that column was itself deleted after this card was trashed) lands in the
+    /// board's first column instead of carrying a dangling id. Returns `false` rather than
+    /// throwing when the origin board is gone too (a `.board` entry restores regardless — it
+    /// has no "origin" beyond itself) — the trash row disables Restore on that, this is the
+    /// last-resort guard if it's pressed anyway.
+    @discardableResult
+    public func restoreFromTrash(id: UUID) throws -> Bool {
+        guard let entryIdx = trash.firstIndex(where: { $0.id == id }) else {
+            throw BoardStoreError.trashEntryNotFound(id)
+        }
+        let entry = trash[entryIdx]
+        // Decide first, without changing anything: `false` here must mean nothing happened,
+        // not "removed from trash but the board never got it back."
+        switch entry.kind {
+        case .card:
+            guard entry.card != nil, boards.contains(where: { $0.id == entry.boardID }) else { return false }
+        case .column:
+            guard entry.column != nil, boards.contains(where: { $0.id == entry.boardID }) else { return false }
+        case .board:
+            guard let board = entry.board, !boards.contains(where: { $0.id == board.id }) else { return false }
+        }
+        // The entry's removal is what has to survive a crash between here and the mutation
+        // below — restoring twice (a duplicate card) is worse than a retry finding it still
+        // in trash.
+        try removeFromTrash(id: id)
+        switch entry.kind {
+        case .card:
+            guard var card = entry.card, let idx = try? boardIndex(entry.boardID) else { return false }
+            if !boards[idx].extraColumns.contains(where: { $0.id == card.columnID }) {
+                card.columnID = boards[idx].extraColumns.first?.id ?? card.columnID
+            }
+            boards[idx].cards.append(card)
+            try persist(at: idx)
+        case .column:
+            guard let column = entry.column, let idx = try? boardIndex(entry.boardID) else { return false }
+            boards[idx].extraColumns.append(column)
+            let restoredCardIDs = Set((entry.columnCards ?? []).map(\.id))
+            for cardIdx in boards[idx].cards.indices where restoredCardIDs.contains(boards[idx].cards[cardIdx].id) {
+                boards[idx].cards[cardIdx].columnID = column.id
+            }
+            try persist(at: idx)
+        case .board:
+            guard let board = entry.board else { return false }
+            boards.append(board)
+            try write(board)
+            try saveIndex()
+        }
+        return true
+    }
+
+    /// Forgets one trash entry for good. The entry's removal persists before its attachment
+    /// files (if any) are cleaned up — a failed cleanup should leave nothing pointing at the
+    /// missing files, not an entry that still claims to hold them.
+    public func purgeTrashEntry(id: UUID) throws {
+        guard let entryIdx = trash.firstIndex(where: { $0.id == id }) else {
+            throw BoardStoreError.trashEntryNotFound(id)
+        }
+        let entry = trash[entryIdx]
+        try removeFromTrash(id: id)
+        purgeAttachments(of: entry)
+    }
+
+    public func emptyTrash() throws {
+        let entries = trash
+        trash = []
+        try saveTrash()
+        for entry in entries { purgeAttachments(of: entry) }
+    }
+
+    /// A trashed card's or board's files are never touched until this point. A trashed
+    /// *column*'s cards are the one exception: `deleteColumn` reassigns them to the fallback
+    /// column and they stay live on the board, so their files are never this function's to
+    /// remove — only the column's own definition (name/emoji/id) was ever trashed.
+    private func purgeAttachments(of entry: TrashEntry) {
+        switch entry.kind {
+        case .card:
+            if let card = entry.card { try? attachments.removeAll(for: card.id) }
+        case .column:
+            break
+        case .board:
+            guard let board = entry.board else { return }
+            for card in board.cards { try? attachments.removeAll(for: card.id) }
+            try? attachments.removeAll(for: board.id)
+        }
     }
 
     // MARK: - Labels
@@ -620,6 +721,10 @@ public final class BoardStore: ObservableObject {
         rootURL.appendingPathComponent("boards.json")
     }
 
+    private var trashURL: URL {
+        rootURL.appendingPathComponent("trash.json")
+    }
+
     private func boardURL(_ id: UUID) -> URL {
         rootURL.appendingPathComponent(id.uuidString).appendingPathExtension("json")
     }
@@ -639,6 +744,13 @@ public final class BoardStore: ObservableObject {
     private static func loadIndex(from url: URL) -> Index? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? decoder.decode(Index.self, from: data)
+    }
+
+    /// Missing or corrupt reads as empty trash rather than failing the whole store — the same
+    /// self-healing stance `loadBoards` takes on a bad board file.
+    private static func loadTrash(from url: URL) -> [TrashEntry] {
+        guard let data = try? Data(contentsOf: url) else { return [] }
+        return (try? decoder.decode([TrashEntry].self, from: data)) ?? []
     }
 
     /// Self-healing: a corrupt board file is skipped, an id in the order with no file on
@@ -663,6 +775,31 @@ public final class BoardStore: ObservableObject {
     private func saveIndex(legacyGlobalColumns: [BoardColumn]? = nil) throws {
         let index = Index(boardOrder: boards.map(\.id), globalColumns: legacyGlobalColumns, labels: labels)
         try Self.encoder.encode(index).write(to: indexURL, options: .atomic)
+    }
+
+    private func saveTrash() throws {
+        try Self.encoder.encode(trash).write(to: trashURL, options: .atomic)
+    }
+
+    /// Records `entry` to disk *before* it becomes visible in memory (and before the caller's
+    /// destructive mutation runs): if the write fails, `trash` never changes and the caller's
+    /// `try` stops the delete from happening at all — the recovery record has to exist before
+    /// the thing it recovers can be destroyed, not after.
+    private func appendToTrash(_ entry: TrashEntry) throws {
+        var updated = trash
+        updated.insert(entry, at: 0)
+        try Self.encoder.encode(updated).write(to: trashURL, options: .atomic)
+        trash = updated
+    }
+
+    /// The restore/purge-side mirror of `appendToTrash`: persists the entry's removal before
+    /// the caller does anything with what it held, so a failed write leaves the entry in
+    /// trash (annoying) rather than the entry gone and its effect never applied (data lost).
+    private func removeFromTrash(id: UUID) throws {
+        var updated = trash
+        updated.removeAll { $0.id == id }
+        try Self.encoder.encode(updated).write(to: trashURL, options: .atomic)
+        trash = updated
     }
 
     private func write(_ board: Board) throws {

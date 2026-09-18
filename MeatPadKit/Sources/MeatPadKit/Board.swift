@@ -157,6 +157,62 @@ public struct Board: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// A card, column or whole board someone deleted, kept around for recovery — the board
+/// equivalent of `NoteStore`'s trashed notes, except there is no per-item file to move: one
+/// `trash.json` in `BoardStore`'s root holds every entry from every board, so a single "Board
+/// Trash" view can list and restore across all of them.
+///
+/// Only one of `card`/`column`/`board` is ever set, matching `kind` — a flat struct instead of
+/// an enum-with-payload so it stays a plain `Codable` value like every other model here.
+/// Attachment files for a trashed card (or a trashed column/board's cards) are never deleted
+/// at trash time — only when the entry is purged — so restoring finds them exactly where a
+/// live card's would be.
+public struct TrashEntry: Identifiable, Codable, Equatable, Sendable {
+    public enum Kind: String, Codable, Sendable { case card, column, board }
+
+    public var id: UUID
+    public var kind: Kind
+    public var deletedAt: Date
+    /// Where this came from — for `.board`, the deleted board's own id, so a restore can put
+    /// it back in the same slot in spirit (appended, since board order is otherwise a flat
+    /// list with no meaningful "original position" to restore).
+    public var boardID: UUID
+    /// Snapshotted at delete time so a trash row can say "from Marketing" even if the board
+    /// itself no longer exists (only possible for `.card`/`.column`, whose board was deleted
+    /// out from under them after they were trashed).
+    public var boardName: String
+    public var card: Card?
+    public var column: BoardColumn?
+    /// `.column` only: the cards that were sitting in it, exactly as they were — restoring
+    /// re-creates the column and moves these specific cards (by id, if still on the board)
+    /// back into it.
+    public var columnCards: [Card]?
+    public var board: Board?
+
+    public init(kind: Kind, boardID: UUID, boardName: String, card: Card? = nil,
+                column: BoardColumn? = nil, columnCards: [Card]? = nil, board: Board? = nil,
+                id: UUID = UUID(), deletedAt: Date = Date()) {
+        self.id = id
+        self.kind = kind
+        self.deletedAt = deletedAt
+        self.boardID = boardID
+        self.boardName = boardName
+        self.card = card
+        self.column = column
+        self.columnCards = columnCards
+        self.board = board
+    }
+
+    /// One line for a trash row: the name of whatever got deleted.
+    public var title: String {
+        switch kind {
+        case .card: return card?.title ?? ""
+        case .column: return column?.name ?? ""
+        case .board: return board?.name ?? ""
+        }
+    }
+}
+
 /// How much of every card the board draws. A view setting rather than a filter — it hides
 /// nothing, it only decides how tall a card is allowed to be — and it is remembered across
 /// launches, because density is a preference and not a search you'd forget you left on.

@@ -11,6 +11,7 @@ enum FolderSelection: Hashable, RawRepresentable {
     case trash
     case allBoards
     case board(UUID)
+    case boardTrash
 
     var rawValue: String {
         switch self {
@@ -20,6 +21,7 @@ enum FolderSelection: Hashable, RawRepresentable {
         case .trash: return "trash"
         case .allBoards: return "boards"
         case .board(let id): return "b:\(id.uuidString)"
+        case .boardTrash: return "boardTrash"
         }
     }
 
@@ -29,6 +31,7 @@ enum FolderSelection: Hashable, RawRepresentable {
         case "default": self = .defaultFolder
         case "trash": self = .trash
         case "boards": self = .allBoards
+        case "boardTrash": self = .boardTrash
         default:
             if rawValue.hasPrefix("f:") {
                 self = .folder(String(rawValue.dropFirst(2)))
@@ -46,10 +49,11 @@ enum FolderSelection: Hashable, RawRepresentable {
         return nil
     }
 
-    /// True while the window is showing a board rather than notes.
+    /// True while the window is showing a board (or Board Trash) rather than notes — the
+    /// layout these share (sidebar + one detail pane, no middle list) is the same either way.
     var isBoard: Bool {
         switch self {
-        case .allBoards, .board: return true
+        case .allBoards, .board, .boardTrash: return true
         default: return false
         }
     }
@@ -112,7 +116,7 @@ struct NotesBrowserWindow: View {
         var notes = noteStore.notes
         switch folderSelection {
         // Board selections don't list notes at all — the middle column shows the board.
-        case .all, .trash, .allBoards, .board: break
+        case .all, .trash, .allBoards, .board, .boardTrash: break
         case .defaultFolder:
             // Unknown-folder notes (folder name absent from folders.json) fall back here.
             notes = notes.filter { $0.folder == nil || !noteStore.folders.contains($0.folder!) }
@@ -153,7 +157,7 @@ struct NotesBrowserWindow: View {
                 NavigationSplitView {
                     folderSidebar
                 } detail: {
-                    boardColumns
+                    boardDetail
                 }
             } else {
                 NavigationSplitView {
@@ -242,8 +246,6 @@ struct NotesBrowserWindow: View {
                     }
                 }
             }
-        } message: {
-            Text("This can’t be undone.")
         }
         .confirmationDialog(
             "Delete “\(deleteTarget ?? "")”? Its notes move to the trash.",
@@ -320,6 +322,7 @@ struct NotesBrowserWindow: View {
                 boardNameDraft = ""
                 newBoardShown = true
             }
+            folderRow(.boardTrash, name: String(localized: "Board Trash"), icon: "trash", count: boardStore.trash.count)
         }
         .scrollContentBackground(.hidden)
         .navigationSplitViewColumnWidth(min: 150, ideal: 180)
@@ -448,16 +451,21 @@ struct NotesBrowserWindow: View {
     /// interpolation blows past the type-checker's budget in that position.
     private var boardDeleteTitle: String {
         let name = boardStore.boards.first(where: { $0.id == boardDeleteTarget })?.name ?? ""
-        return String(localized: "Delete “\(name)”? Its cards are deleted with it.")
+        return String(localized: "Delete “\(name)”? It moves to Board Trash with its cards.")
     }
 
     private var selectedBoard: Board? {
         folderSelection.boardID.flatMap { id in boardStore.boards.first { $0.id == id } }
     }
 
-    private var boardColumns: some View {
-        BoardColumnsView(store: boardStore, board: selectedBoard, selection: $cardSelection,
-                         labelFilter: $labelFilter, searchQuery: $cardSearch, showArchived: $showArchived)
+    @ViewBuilder
+    private var boardDetail: some View {
+        if folderSelection == .boardTrash {
+            BoardTrashView(store: boardStore)
+        } else {
+            BoardColumnsView(store: boardStore, board: selectedBoard, selection: $cardSelection,
+                             labelFilter: $labelFilter, searchQuery: $cardSearch, showArchived: $showArchived)
+        }
     }
 
     @ViewBuilder

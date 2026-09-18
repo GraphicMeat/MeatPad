@@ -412,6 +412,129 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(store.columns(for: store.boards[0]).map(\.name), ["Todo", "In Progress", "Done"])
     }
 
+    // MARK: - trash
+
+    func testDeletingACardTrashesItNewestFirst() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        let first = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "first")
+        let second = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "second")
+        try store.deleteCard(boardID: board.id, cardID: first.id)
+        try store.deleteCard(boardID: board.id, cardID: second.id)
+
+        XCTAssertEqual(store.trash.map(\.kind), [.card, .card])
+        XCTAssertEqual(store.trash.map(\.card?.title), ["second", "first"])
+        XCTAssertEqual(try makeStore().trash.map(\.card?.title), ["second", "first"])
+    }
+
+    func testRestoringATrashedCardPutsItBackOnItsBoard() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        let card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "x")
+        try store.deleteCard(boardID: board.id, cardID: card.id)
+
+        try store.restoreFromTrash(id: store.trash[0].id)
+        XCTAssertEqual(store.boards[0].cards.map(\.id), [card.id])
+        XCTAssertTrue(store.trash.isEmpty)
+    }
+
+    /// A card whose stored column was itself deleted (and trashed separately) after this card
+    /// was trashed lands in the board's first column instead of a dangling id.
+    func testRestoringACardWhoseColumnIsGoneLandsInTheFirstColumn() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        try store.addExtraColumn(boardID: board.id, name: "Extra")
+        let extra = store.boards[0].extraColumns[3].id
+        let card = try store.addCard(boardID: board.id, columnID: extra, title: "x")
+        try store.deleteCard(boardID: board.id, cardID: card.id)
+        try store.deleteColumn(id: extra, boardID: board.id)
+
+        try store.restoreFromTrash(id: store.trash.first { $0.kind == .card }!.id)
+        XCTAssertEqual(store.boards[0].cards.first { $0.id == card.id }?.columnID, store.boards[0].extraColumns[0].id)
+    }
+
+    /// Deleting a column snapshots which cards were in it — restoring re-creates the column
+    /// and moves those same cards back, undoing the reassign-to-fallback the delete did live.
+    func testDeletingAColumnTrashesItWithItsCardsAndRestoreMovesThemBack() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        try store.addExtraColumn(boardID: board.id, name: "Blocked")
+        let blocked = store.boards[0].extraColumns[3].id
+        let card = try store.addCard(boardID: board.id, columnID: blocked, title: "x")
+        try store.deleteColumn(id: blocked, boardID: board.id)
+
+        XCTAssertEqual(store.boards[0].cards.first?.columnID, store.boards[0].extraColumns[0].id)
+        let entry = store.trash[0]
+        XCTAssertEqual(entry.kind, .column)
+        XCTAssertEqual(entry.column?.name, "Blocked")
+        XCTAssertEqual(entry.columnCards?.map(\.id), [card.id])
+
+        try store.restoreFromTrash(id: entry.id)
+        XCTAssertEqual(store.boards[0].extraColumns.map(\.name), ["Todo", "In Progress", "Done", "Blocked"])
+        XCTAssertEqual(store.boards[0].cards.first { $0.id == card.id }?.columnID, store.boards[0].extraColumns[3].id)
+    }
+
+    func testDeletingABoardTrashesItAndRestoreBringsItBackWithItsCards() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        let card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "x")
+        try store.deleteBoard(id: board.id)
+
+        XCTAssertTrue(store.boards.isEmpty)
+        XCTAssertEqual(store.trash[0].kind, .board)
+        XCTAssertEqual(store.trash[0].board?.cards.map(\.id), [card.id])
+
+        try store.restoreFromTrash(id: store.trash[0].id)
+        XCTAssertEqual(store.boards.map(\.id), [board.id])
+        XCTAssertEqual(store.boards[0].cards.map(\.id), [card.id])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("\(board.id.uuidString).json").path))
+    }
+
+    func testPurgingATrashEntryRemovesItAndItsFilesForGood() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        let card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "x")
+        _ = try store.addAttachment(boardID: board.id, cardID: card.id, data: Data([1]), ext: "png")
+        try store.deleteCard(boardID: board.id, cardID: card.id)
+        let entryID = store.trash[0].id
+        let url = tempDir.appendingPathComponent("Attachments/\(card.id.uuidString)")
+
+        try store.purgeTrashEntry(id: entryID)
+        XCTAssertTrue(store.trash.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertThrowsError(try store.restoreFromTrash(id: entryID))
+    }
+
+    /// A deleted column's cards were reassigned to the fallback and are still live on the
+    /// board — purging that trash entry must only forget the column's own definition, never
+    /// touch the cards' (still-live) attachment files.
+    func testPurgingADeletedColumnLeavesItsStillLiveCardsFilesAlone() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        try store.addExtraColumn(boardID: board.id, name: "Blocked")
+        let blocked = store.boards[0].extraColumns[3].id
+        let card = try store.addCard(boardID: board.id, columnID: blocked, title: "x")
+        let name = try store.addAttachment(boardID: board.id, cardID: card.id, data: Data([1]), ext: "png")
+        let url = store.attachmentURL(cardID: card.id, name: name)
+        try store.deleteColumn(id: blocked, boardID: board.id)
+
+        try store.purgeTrashEntry(id: store.trash[0].id)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertEqual(store.boards[0].cards.first { $0.id == card.id }?.attachments, [name])
+    }
+
+    func testEmptyTrashPurgesEveryEntry() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        let card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "x")
+        try store.deleteCard(boardID: board.id, cardID: card.id)
+        try store.deleteBoard(id: try store.createBoard(name: "b").id)
+
+        try store.emptyTrash()
+        XCTAssertTrue(store.trash.isEmpty)
+        XCTAssertTrue(try makeStore().trash.isEmpty)
+    }
+
     // MARK: - note link + due reminders
 
     func testCardForNoteFindsAndMisses() throws {
@@ -897,7 +1020,10 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: url), Data([7]))
     }
 
-    func testDeleteCardRemovesItsFilesAndUndoRestoresThem() throws {
+    /// Deleting a card trashes it — its files stay on disk (the trash entry needs them, and so
+    /// would a later Restore from the Board Trash view) until the entry is purged, not until
+    /// the delete itself. Undo just pops the trash entry and puts the card back.
+    func testDeleteCardKeepsItsFilesInTrashAndUndoRestoresThem() throws {
         let store = try makeStore()
         let undo = undoable(store)
         let board = try store.createBoard(name: "b")
@@ -906,11 +1032,13 @@ final class BoardStoreTests: XCTestCase {
         let url = store.attachmentURL(cardID: card.id, name: name)
 
         try store.deleteCard(boardID: board.id, cardID: card.id)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertEqual(store.trash.map(\.card?.id), [card.id])
 
         undo.undo()
         XCTAssertEqual(store.boards[0].cards[0].attachments, [name])
         XCTAssertEqual(try Data(contentsOf: url), Data([5]))
+        XCTAssertTrue(store.trash.isEmpty)
     }
 
     func testAddCardWithAnImageUndoesAsOneStep() throws {
@@ -935,12 +1063,18 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: url), Data([9]))
     }
 
-    func testDeleteBoardRemovesEveryCardsFiles() throws {
+    /// Deleting a board trashes it too — its cards' files survive until the trash entry is
+    /// purged, exactly like a trashed card's.
+    func testDeleteBoardKeepsEveryCardsFilesInTrash() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "b")
         let card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "c")
         _ = try store.addAttachment(boardID: board.id, cardID: card.id, data: Data([5]), ext: "png")
         try store.deleteBoard(id: board.id)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("Attachments/\(card.id.uuidString)").path))
+        XCTAssertEqual(store.trash.map(\.board?.id), [board.id])
+
+        try store.purgeTrashEntry(id: store.trash[0].id)
         XCTAssertFalse(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("Attachments/\(card.id.uuidString)").path))
     }
 

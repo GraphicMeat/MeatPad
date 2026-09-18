@@ -254,7 +254,7 @@ struct BoardColumnsView: View {
                 }
             }
         } message: {
-            Text("Its cards move to \(fallbackColumnName(after: deleteTarget)).")
+            Text("Its cards move to \(fallbackColumnName(after: deleteTarget)). The column moves to Board Trash.")
         }
         .confirmationDialog(
             Text("Add \(splitTarget?.drafts.count ?? 0) cards?"),
