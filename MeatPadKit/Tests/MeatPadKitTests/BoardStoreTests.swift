@@ -21,19 +21,26 @@ final class BoardStoreTests: XCTestCase {
 
     // MARK: - init
 
-    func testInitCreatesRootAndSeedsGlobalColumns() throws {
+    func testInitCreatesRootAndSeedsNewBoardsWithDefaultColumns() throws {
         let store = try makeStore()
         var isDir: ObjCBool = false
         XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.path, isDirectory: &isDir))
         XCTAssertTrue(isDir.boolValue)
-        XCTAssertEqual(store.globalColumns.map(\.name), ["Todo", "In Progress", "Done"])
-        XCTAssertEqual(store.globalColumns.map(\.isDone), [false, false, true])
         XCTAssertTrue(store.boards.isEmpty)
+
+        let board = try store.createBoard(name: "a")
+        XCTAssertEqual(board.extraColumns.map(\.name), ["Todo", "In Progress", "Done"])
+        XCTAssertEqual(board.extraColumns.map(\.isDone), [false, false, true])
     }
 
-    func testSeededColumnsPersistAcrossReload() throws {
-        let ids = try makeStore().globalColumns.map(\.id)
-        XCTAssertEqual(try makeStore().globalColumns.map(\.id), ids)
+    func testDefaultColumnIdsAreStableSoAllBoardsCanPoolByThem() throws {
+        let store = try makeStore()
+        let a = try store.createBoard(name: "a")
+        let b = try store.createBoard(name: "b")
+        // Same three ids on every board — what lets the All Boards overview pool cards from
+        // different boards' "Todo" into one bucket without a shared, mutable column list.
+        XCTAssertEqual(a.extraColumns.map(\.id), b.extraColumns.map(\.id))
+        XCTAssertEqual(a.extraColumns.map(\.id), try makeStore().boards[0].extraColumns.map(\.id))
     }
 
     // MARK: - boards
@@ -138,7 +145,7 @@ final class BoardStoreTests: XCTestCase {
     func testAddCardLandsInColumnAndPersists() throws {
         let store = try makeStore()
         let board = try makeBoard(store)
-        let todo = store.globalColumns[0]
+        let todo = board.extraColumns[0]
         let card = try store.addCard(boardID: board.id, columnID: todo.id, title: "ship it")
 
         XCTAssertEqual(card.title, "ship it")
@@ -150,7 +157,7 @@ final class BoardStoreTests: XCTestCase {
     func testAddCardRejectsEmptyTitleAndUnknownColumn() throws {
         let store = try makeStore()
         let board = try makeBoard(store)
-        XCTAssertThrowsError(try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: " ")) {
+        XCTAssertThrowsError(try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: " ")) {
             XCTAssertEqual($0 as? BoardStoreError, .invalidName)
         }
         let unknown = UUID()
@@ -162,7 +169,7 @@ final class BoardStoreTests: XCTestCase {
     func testUpdateCardBumpsModifiedAndPersists() throws {
         let store = try makeStore()
         let board = try makeBoard(store)
-        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "a")
+        var card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "a")
         let before = card.modified
         card.title = "b"
         card.body = "detail"
@@ -180,7 +187,7 @@ final class BoardStoreTests: XCTestCase {
     func testDeleteCardRemovesItEverywhere() throws {
         let store = try makeStore()
         let board = try makeBoard(store)
-        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "a")
+        let card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "a")
         try store.deleteCard(boardID: board.id, cardID: card.id)
 
         XCTAssertTrue(store.boards[0].cards.isEmpty)
@@ -190,8 +197,8 @@ final class BoardStoreTests: XCTestCase {
     func testMoveCardChangesColumnAndPosition() throws {
         let store = try makeStore()
         let board = try makeBoard(store)
-        let todo = store.globalColumns[0].id
-        let doing = store.globalColumns[1].id
+        let todo = board.extraColumns[0].id
+        let doing = board.extraColumns[1].id
         let a = try store.addCard(boardID: board.id, columnID: todo, title: "a")
         _ = try store.addCard(boardID: board.id, columnID: todo, title: "b")
         _ = try store.addCard(boardID: board.id, columnID: doing, title: "c")
@@ -208,7 +215,7 @@ final class BoardStoreTests: XCTestCase {
     func testMoveCardWithinSameColumnReorders() throws {
         let store = try makeStore()
         let board = try makeBoard(store)
-        let todo = store.globalColumns[0].id
+        let todo = board.extraColumns[0].id
         let a = try store.addCard(boardID: board.id, columnID: todo, title: "a")
         _ = try store.addCard(boardID: board.id, columnID: todo, title: "b")
         _ = try store.addCard(boardID: board.id, columnID: todo, title: "c")
@@ -220,28 +227,69 @@ final class BoardStoreTests: XCTestCase {
     func testMoveCardRejectsUnknownColumnAndCard() throws {
         let store = try makeStore()
         let board = try makeBoard(store)
-        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "a")
+        let card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "a")
         let unknownColumn = UUID()
         XCTAssertThrowsError(try store.moveCard(id: card.id, boardID: board.id, toColumn: unknownColumn, index: 0)) {
             XCTAssertEqual($0 as? BoardStoreError, .columnNotFound(unknownColumn))
         }
         let unknownCard = UUID()
-        XCTAssertThrowsError(try store.moveCard(id: unknownCard, boardID: board.id, toColumn: store.globalColumns[1].id, index: 0)) {
+        XCTAssertThrowsError(try store.moveCard(id: unknownCard, boardID: board.id, toColumn: board.extraColumns[1].id, index: 0)) {
             XCTAssertEqual($0 as? BoardStoreError, .cardNotFound(unknownCard))
         }
     }
 
     // MARK: - column editing
 
-    func testAddGlobalColumnAppearsOnEveryBoardAndPersists() throws {
+    /// The bug this store rewrite fixes: deleting a board's own copy of a once-shared default
+    /// column must never touch any other board's copy, however the same the two look.
+    func testDeletingADefaultColumnOnOneBoardNeverTouchesAnotherBoard() throws {
         let store = try makeStore()
-        _ = try store.createBoard(name: "a")
-        _ = try store.createBoard(name: "b")
-        try store.addGlobalColumn(name: "Review")
+        let a = try store.createBoard(name: "a")
+        let b = try store.createBoard(name: "b")
+        try store.deleteColumn(id: a.extraColumns[0].id, boardID: a.id)
 
-        XCTAssertEqual(store.columns(for: store.boards[0]).map(\.name).last, "Review")
-        XCTAssertEqual(store.columns(for: store.boards[1]).map(\.name).last, "Review")
-        XCTAssertEqual(try makeStore().globalColumns.map(\.name), ["Todo", "In Progress", "Done", "Review"])
+        XCTAssertEqual(store.boards[0].extraColumns.map(\.name), ["In Progress", "Done"])
+        XCTAssertEqual(store.boards[1].extraColumns.map(\.name), ["Todo", "In Progress", "Done"])
+        let reloaded = try makeStore()
+        XCTAssertEqual(reloaded.boards[0].extraColumns.map(\.name), ["In Progress", "Done"])
+        XCTAssertEqual(reloaded.boards[1].extraColumns.map(\.name), ["Todo", "In Progress", "Done"])
+    }
+
+    /// The old shared-column-list format (`globalColumns` in `boards.json`, no per-board
+    /// copies) migrates into every board owning its own columns, remapped onto the fixed
+    /// `defaultColumnTemplate` ids — and a default the user had already deleted (so it's
+    /// missing from the legacy list) comes back structurally, empty, rather than staying gone.
+    func testMigratesLegacyGlobalColumnsIntoEveryBoardAndReseedsAMissingDefault() throws {
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let boardID = UUID()
+        let todoLegacyID = UUID()
+        let doneLegacyID = UUID()
+        let cardID = UUID()
+        let boardJSON: [String: Any] = [
+            "id": boardID.uuidString, "name": "legacy", "extraColumns": [],
+            "cards": [[
+                "id": cardID.uuidString, "title": "x", "columnID": doneLegacyID.uuidString,
+                "created": "2026-01-01T00:00:00Z", "modified": "2026-01-01T00:00:00Z",
+            ]],
+        ]
+        try JSONSerialization.data(withJSONObject: boardJSON)
+            .write(to: tempDir.appendingPathComponent("\(boardID.uuidString).json"))
+        let indexJSON: [String: Any] = [
+            "boardOrder": [boardID.uuidString],
+            "globalColumns": [
+                ["id": todoLegacyID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"],
+                ["id": doneLegacyID.uuidString, "name": "Shipped", "isDone": true, "emoji": "✅"],
+            ],
+        ]
+        try JSONSerialization.data(withJSONObject: indexJSON).write(to: tempDir.appendingPathComponent("boards.json"))
+
+        let store = try makeStore()
+        let board = store.boards[0]
+        XCTAssertEqual(board.extraColumns.map(\.name), ["Todo", "In Progress", "Shipped"])
+        // The card that was sitting in the renamed "Shipped" (legacy Done) column follows it.
+        XCTAssertEqual(board.cards.first?.columnID, board.extraColumns[2].id)
+        // Reloading again must not re-run the migration — the legacy key is gone from disk now.
+        XCTAssertEqual(try makeStore().boards[0].extraColumns.map(\.name), ["Todo", "In Progress", "Shipped"])
     }
 
     func testAddExtraColumnIsBoardLocalAndRendersAfterGlobals() throws {
@@ -258,55 +306,57 @@ final class BoardStoreTests: XCTestCase {
     func testRenameColumnKeepsCardMembership() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "a")
-        let todo = store.globalColumns[0].id
+        let todo = board.extraColumns[0].id
         let card = try store.addCard(boardID: board.id, columnID: todo, title: "x")
-        try store.renameColumn(id: todo, to: "Backlog", boardID: nil)
+        try store.renameColumn(id: todo, to: "Backlog", boardID: board.id)
 
-        XCTAssertEqual(store.globalColumns[0].name, "Backlog")
+        XCTAssertEqual(store.boards[0].extraColumns[0].name, "Backlog")
         XCTAssertEqual(store.cards(in: store.boards[0], column: todo).map(\.id), [card.id])
-        XCTAssertEqual(try makeStore().globalColumns[0].name, "Backlog")
+        XCTAssertEqual(try makeStore().boards[0].extraColumns[0].name, "Backlog")
     }
 
     func testSetColumnDoneFlagsAndPersists() throws {
         let store = try makeStore()
-        let todo = store.globalColumns[0].id
-        try store.setColumnDone(id: todo, true, boardID: nil)
+        let board = try store.createBoard(name: "a")
+        let todo = board.extraColumns[0].id
+        try store.setColumnDone(id: todo, true, boardID: board.id)
 
-        XCTAssertTrue(store.globalColumns[0].isDone)
-        XCTAssertTrue(try makeStore().globalColumns[0].isDone)
+        XCTAssertTrue(store.boards[0].extraColumns[0].isDone)
+        XCTAssertTrue(try makeStore().boards[0].extraColumns[0].isDone)
     }
 
-    func testDeleteColumnReassignsItsCardsToFirstGlobalColumn() throws {
+    func testDeleteColumnReassignsItsCardsToTheBoardsFirstRemainingColumn() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "a")
-        let todo = store.globalColumns[0].id
-        let doing = store.globalColumns[1].id
+        let todo = board.extraColumns[0].id
+        let doing = board.extraColumns[1].id
         let card = try store.addCard(boardID: board.id, columnID: doing, title: "x")
-        try store.deleteColumn(id: doing, boardID: nil)
+        try store.deleteColumn(id: doing, boardID: board.id)
 
-        XCTAssertEqual(store.globalColumns.map(\.name), ["Todo", "Done"])
+        XCTAssertEqual(store.boards[0].extraColumns.map(\.name), ["Todo", "Done"])
         XCTAssertEqual(store.cards(in: store.boards[0], column: todo).map(\.id), [card.id])
         XCTAssertEqual(try makeStore().boards[0].cards[0].columnID, todo)
     }
 
-    func testDeleteExtraColumnReassignsToFirstGlobalColumn() throws {
+    func testDeleteExtraColumnReassignsToTheBoardsFirstRemainingColumn() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "a")
         try store.addExtraColumn(boardID: board.id, name: "Blocked")
-        let blocked = store.boards[0].extraColumns[0].id
+        let blocked = store.boards[0].extraColumns[3].id
         let card = try store.addCard(boardID: board.id, columnID: blocked, title: "x")
         try store.deleteColumn(id: blocked, boardID: board.id)
 
-        XCTAssertTrue(store.boards[0].extraColumns.isEmpty)
-        XCTAssertEqual(store.boards[0].cards.first(where: { $0.id == card.id })?.columnID, store.globalColumns[0].id)
+        XCTAssertEqual(store.boards[0].extraColumns.map(\.name), ["Todo", "In Progress", "Done"])
+        XCTAssertEqual(store.boards[0].cards.first(where: { $0.id == card.id })?.columnID, store.boards[0].extraColumns[0].id)
     }
 
-    func testCannotDeleteLastGlobalColumn() throws {
+    func testCannotDeleteABoardsLastColumn() throws {
         let store = try makeStore()
-        try store.deleteColumn(id: store.globalColumns[2].id, boardID: nil)
-        try store.deleteColumn(id: store.globalColumns[1].id, boardID: nil)
+        let board = try store.createBoard(name: "a")
+        try store.deleteColumn(id: board.extraColumns[2].id, boardID: board.id)
+        try store.deleteColumn(id: board.extraColumns[1].id, boardID: board.id)
 
-        XCTAssertThrowsError(try store.deleteColumn(id: store.globalColumns[0].id, boardID: nil)) {
+        XCTAssertThrowsError(try store.deleteColumn(id: board.extraColumns[0].id, boardID: board.id)) {
             XCTAssertEqual($0 as? BoardStoreError, .lastColumn)
         }
     }
@@ -329,26 +379,26 @@ final class BoardStoreTests: XCTestCase {
     func testColumnAddedAfterCustomOrderAppendsAndDeletedOneDisappears() throws {
         let store = try makeStore()
         let a = try store.createBoard(name: "A")
-        let done = store.globalColumns[2].id
+        let done = a.extraColumns[2].id
         try store.moveColumn(id: done, to: 0, onBoard: a.id)
-        try store.addGlobalColumn(name: "Later")
-        try store.deleteColumn(id: store.globalColumns[1].id, boardID: nil)   // In Progress
+        try store.addExtraColumn(boardID: a.id, name: "Later")
+        try store.deleteColumn(id: store.boards[0].extraColumns[1].id, boardID: a.id)   // In Progress
         XCTAssertEqual(store.columns(for: store.boards[0]).map(\.name), ["Done", "Todo", "Later"])
     }
 
-    func testMoveColumnInOverviewReordersGlobalsAndClamps() throws {
+    func testMoveColumnClampsToTheEndsOfTheBoardsOwnOrder() throws {
         let store = try makeStore()
-        let todo = store.globalColumns[0].id
-        try store.moveColumn(id: todo, to: 99, onBoard: nil)
-        XCTAssertEqual(store.globalColumns.map(\.name), ["In Progress", "Done", "Todo"])
-        XCTAssertEqual(try makeStore().globalColumns.map(\.name), ["In Progress", "Done", "Todo"])
+        let board = try store.createBoard(name: "A")
+        let todo = board.extraColumns[0].id
+        try store.moveColumn(id: todo, to: 99, onBoard: board.id)
+        XCTAssertEqual(store.columns(for: store.boards[0]).map(\.name), ["In Progress", "Done", "Todo"])
+        XCTAssertEqual(try makeStore().columns(for: try makeStore().boards[0]).map(\.name), ["In Progress", "Done", "Todo"])
     }
 
     func testMoveUnknownColumnThrows() throws {
         let store = try makeStore()
         let a = try store.createBoard(name: "A")
         XCTAssertThrowsError(try store.moveColumn(id: UUID(), to: 0, onBoard: a.id))
-        XCTAssertThrowsError(try store.moveColumn(id: UUID(), to: 0, onBoard: nil))
     }
 
     func testBoardFileWithoutColumnOrderDecodes() throws {
@@ -367,7 +417,7 @@ final class BoardStoreTests: XCTestCase {
     func testCardForNoteFindsAndMisses() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "a")
-        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "x")
+        var card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "x")
         let noteID = UUID()
         card.noteID = noteID
         try store.updateCard(boardID: board.id, card: card)
@@ -380,8 +430,8 @@ final class BoardStoreTests: XCTestCase {
     func testPendingDueRemindersSkipsPastDoneAndUndated() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "a")
-        let todo = store.globalColumns[0].id
-        let done = store.globalColumns[2].id
+        let todo = board.extraColumns[0].id
+        let done = board.extraColumns[2].id
         let now = Date(timeIntervalSince1970: 1_800_000_000)
 
         var future = try store.addCard(boardID: board.id, columnID: todo, title: "future")
@@ -425,7 +475,7 @@ final class BoardStoreTests: XCTestCase {
         let b = try store.createBoard(name: "b")
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         for board in [a, b] {
-            var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: board.name)
+            var card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: board.name)
             card.due = now.addingTimeInterval(60)
             try store.updateCard(boardID: board.id, card: card)
         }
@@ -437,24 +487,38 @@ final class BoardStoreTests: XCTestCase {
 
     func testSeedsDefaultColumnEmoji() throws {
         let store = try makeStore()
-        XCTAssertEqual(store.globalColumns.map(\.emoji), ["📋", "🚧", "✅"])
+        let board = try store.createBoard(name: "a")
+        XCTAssertEqual(board.extraColumns.map(\.emoji), ["📋", "🚧", "✅"])
     }
 
-    func testAssignsEmojiToAPreEmojiStoreOnce() throws {
-        let store = try makeStore()
-        let index = tempDir.appendingPathComponent("boards.json")
-        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: index)) as? [String: Any])
-        var columns = try XCTUnwrap(json["globalColumns"] as? [[String: Any]])
-        for i in columns.indices { columns[i].removeValue(forKey: "emoji") }
-        json["globalColumns"] = columns
-        try JSONSerialization.data(withJSONObject: json).write(to: index)
-        _ = store
+    /// A legacy store from before columns carried emoji at all has none in its
+    /// `globalColumns` JSON. The migration heals them by role (same heuristic the old
+    /// in-place heal used) before matching legacy columns onto the new per-board defaults —
+    /// otherwise the emoji-keyed match in `migrateLegacyGlobalColumns` couldn't identify
+    /// Todo/In Progress/Done at all.
+    func testMigrationHealsMissingEmojiOnAVeryOldStoreBeforeMatching() throws {
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let boardID = UUID()
+        let boardJSON: [String: Any] = ["id": boardID.uuidString, "name": "legacy", "extraColumns": [], "cards": []]
+        try JSONSerialization.data(withJSONObject: boardJSON)
+            .write(to: tempDir.appendingPathComponent("\(boardID.uuidString).json"))
+        let indexJSON: [String: Any] = [
+            "boardOrder": [boardID.uuidString],
+            "globalColumns": [
+                ["id": UUID().uuidString, "name": "Todo", "isDone": false],
+                ["id": UUID().uuidString, "name": "In Progress", "isDone": false],
+                ["id": UUID().uuidString, "name": "Done", "isDone": true],
+            ],
+        ]
+        try JSONSerialization.data(withJSONObject: indexJSON).write(to: tempDir.appendingPathComponent("boards.json"))
 
         let healed = try makeStore()
-        XCTAssertEqual(healed.globalColumns.map(\.emoji), ["📋", "🚧", "✅"])
-        // Second load must not re-run the heal over a user's own choices.
-        try healed.renameColumn(id: healed.globalColumns[0].id, to: "Backlog", boardID: nil)
-        XCTAssertEqual(try makeStore().globalColumns.map(\.emoji), ["📋", "🚧", "✅"])
+        XCTAssertEqual(healed.boards[0].extraColumns.map(\.emoji), ["📋", "🚧", "✅"])
+        // Reloading again must not re-run the migration — the legacy key is gone from disk.
+        try healed.renameColumn(id: healed.boards[0].extraColumns[0].id, to: "Backlog", boardID: healed.boards[0].id)
+        let reloaded = try makeStore().boards[0].extraColumns
+        XCTAssertEqual(reloaded.map(\.name), ["Backlog", "In Progress", "Done"])
+        XCTAssertEqual(reloaded.map(\.emoji), ["📋", "🚧", "✅"])
     }
 
     func testExtraColumnsHaveNoEmojiByDefault() throws {
@@ -553,7 +617,7 @@ final class BoardStoreTests: XCTestCase {
         let store = try makeStore()
         let label = try store.createLabel(name: "Bug")
         let board = try store.createBoard(name: "b")
-        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        var card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "c")
         card.labelIDs = [label.id]
         try store.updateCard(boardID: board.id, card: card)
         XCTAssertEqual(try makeStore().boards[0].cards[0].labelIDs, [label.id])
@@ -564,7 +628,7 @@ final class BoardStoreTests: XCTestCase {
         let keep = try store.createLabel(name: "Keep")
         let drop = try store.createLabel(name: "Drop")
         let board = try store.createBoard(name: "b")
-        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        var card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "c")
         card.labelIDs = [keep.id, drop.id]
         try store.updateCard(boardID: board.id, card: card)
 
@@ -597,7 +661,7 @@ final class BoardStoreTests: XCTestCase {
     func testCardColorPersistsAcrossReload() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "b")
-        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        var card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "c")
         card.color = CardLabel.palette[4]
         try store.updateCard(boardID: board.id, card: card)
 
@@ -607,7 +671,7 @@ final class BoardStoreTests: XCTestCase {
     func testClearingCardColorPersistsAsNil() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "b")
-        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        var card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "c")
         card.color = CardLabel.palette[0]
         try store.updateCard(boardID: board.id, card: card)
         card.color = nil
@@ -653,7 +717,7 @@ final class BoardStoreTests: XCTestCase {
     func testStoreWrittenBeforeLabelsStillDecodes() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "b")
-        _ = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        _ = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "c")
 
         let boardURL = tempDir.appendingPathComponent("\(board.id.uuidString).json")
         var boardJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: boardURL)) as? [String: Any])
@@ -692,7 +756,7 @@ final class BoardStoreTests: XCTestCase {
         let store = try makeStore()
         let undo = undoable(store)
         let board = try store.createBoard(name: "b")
-        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "before")
+        var card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "before")
         card.title = "after"
         card.body = "notes"
         try store.updateCard(boardID: board.id, card: card)
@@ -712,7 +776,7 @@ final class BoardStoreTests: XCTestCase {
         let store = try makeStore()
         let undo = undoable(store)
         let board = try store.createBoard(name: "b")
-        let column = store.globalColumns[0].id
+        let column = board.extraColumns[0].id
         for title in ["a", "b", "c"] { _ = try store.addCard(boardID: board.id, columnID: column, title: title) }
         let middle = store.boards[0].cards[1]
 
@@ -731,8 +795,8 @@ final class BoardStoreTests: XCTestCase {
         let store = try makeStore()
         let undo = undoable(store)
         let board = try store.createBoard(name: "b")
-        let todo = store.globalColumns[0].id
-        let doing = store.globalColumns[1].id
+        let todo = board.extraColumns[0].id
+        let doing = board.extraColumns[1].id
         for title in ["a", "b", "c"] { _ = try store.addCard(boardID: board.id, columnID: todo, title: title) }
         let b = store.boards[0].cards[1]
 
@@ -748,7 +812,7 @@ final class BoardStoreTests: XCTestCase {
         let store = try makeStore()
         let undo = undoable(store)
         let board = try store.createBoard(name: "b")
-        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "x")
+        let card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "x")
 
         undo.undo()
         XCTAssertFalse(store.boards[0].cards.contains { $0.id == card.id })
@@ -761,7 +825,7 @@ final class BoardStoreTests: XCTestCase {
         let store = try makeStore()
         let undo = undoable(store)
         let board = try store.createBoard(name: "b")
-        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "before")
+        var card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "before")
         card.title = "after"
         try store.updateCard(boardID: board.id, card: card)
         undo.undo()
@@ -772,7 +836,7 @@ final class BoardStoreTests: XCTestCase {
     func testNothingIsRegisteredWithoutAnUndoManager() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "b")
-        var card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "before")
+        var card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "before")
         card.title = "after"
         try store.updateCard(boardID: board.id, card: card)
         XCTAssertEqual(store.boards[0].cards[0].title, "after")
@@ -787,7 +851,7 @@ final class BoardStoreTests: XCTestCase {
         let store = try makeStore()
         let undo = undoable(store)
         let board = try store.createBoard(name: "b")
-        let todo = store.globalColumns[0].id
+        let todo = board.extraColumns[0].id
         for title in ["a", "b", "c"] { _ = try store.addCard(boardID: board.id, columnID: todo, title: title) }
         let c = store.boards[0].cards[2]
 
@@ -806,7 +870,7 @@ final class BoardStoreTests: XCTestCase {
     func testAddAttachmentStoresTheFileAndTheName() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "b")
-        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        let card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "c")
         let name = try store.addAttachment(boardID: board.id, cardID: card.id, data: Data([1, 2]), ext: "png")
 
         XCTAssertEqual(store.boards[0].cards[0].attachments, [name])
@@ -820,7 +884,7 @@ final class BoardStoreTests: XCTestCase {
         let store = try makeStore()
         let undo = undoable(store)
         let board = try store.createBoard(name: "b")
-        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        let card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "c")
         let name = try store.addAttachment(boardID: board.id, cardID: card.id, data: Data([7]), ext: "png")
         let url = store.attachmentURL(cardID: card.id, name: name)
 
@@ -837,7 +901,7 @@ final class BoardStoreTests: XCTestCase {
         let store = try makeStore()
         let undo = undoable(store)
         let board = try store.createBoard(name: "b")
-        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        let card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "c")
         let name = try store.addAttachment(boardID: board.id, cardID: card.id, data: Data([5]), ext: "png")
         let url = store.attachmentURL(cardID: card.id, name: name)
 
@@ -853,7 +917,7 @@ final class BoardStoreTests: XCTestCase {
         let store = try makeStore()
         let undo = undoable(store)
         let board = try store.createBoard(name: "b")
-        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id,
+        let card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id,
                                      title: "shot", image: Data([9]), ext: "png")
 
         let name = try XCTUnwrap(store.boards[0].cards.first?.attachments?.first)
@@ -874,7 +938,7 @@ final class BoardStoreTests: XCTestCase {
     func testDeleteBoardRemovesEveryCardsFiles() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "b")
-        let card = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        let card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "c")
         _ = try store.addAttachment(boardID: board.id, cardID: card.id, data: Data([5]), ext: "png")
         try store.deleteBoard(id: board.id)
         XCTAssertFalse(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("Attachments/\(card.id.uuidString)").path))
@@ -883,7 +947,7 @@ final class BoardStoreTests: XCTestCase {
     func testStoreWrittenBeforeAttachmentsStillDecodes() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "b")
-        _ = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "c")
+        _ = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "c")
         let boardURL = tempDir.appendingPathComponent("\(board.id.uuidString).json")
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: boardURL)) as? [String: Any])
         var cards = try XCTUnwrap(json["cards"] as? [[String: Any]])
@@ -907,7 +971,7 @@ final class BoardStoreTests: XCTestCase {
         let undo = UndoManager(); undo.groupsByEvent = false
         store.undoManager = undo
         let board = try store.createBoard(name: "B")
-        let col = store.globalColumns[0].id
+        let col = board.extraColumns[0].id
         let a = try store.addCard(boardID: board.id, columnID: col, title: "a")
         let b = try store.addCard(boardID: board.id, columnID: col, title: "b")
         let now = Date(timeIntervalSince1970: 1_000)
@@ -920,7 +984,7 @@ final class BoardStoreTests: XCTestCase {
     func testSetArchivedKeepsOriginalDateOfAlreadyArchivedCard() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "B")
-        let a = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "a")
+        let a = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "a")
         let first = Date(timeIntervalSince1970: 1)
         try store.setArchived(boardID: board.id, cardIDs: [a.id], true, now: first)
         try store.setArchived(boardID: board.id, cardIDs: [a.id], true, now: Date(timeIntervalSince1970: 2))
@@ -930,7 +994,7 @@ final class BoardStoreTests: XCTestCase {
     func testArchivedCardsDoNotRemind() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "B")
-        var a = try store.addCard(boardID: board.id, columnID: store.globalColumns[0].id, title: "a")
+        var a = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "a")
         a.due = Date().addingTimeInterval(3600)
         try store.updateCard(boardID: board.id, card: a)
         try store.setArchived(boardID: board.id, cardIDs: [a.id], true)
@@ -942,7 +1006,7 @@ final class BoardStoreTests: XCTestCase {
         let undo = UndoManager(); undo.groupsByEvent = false
         store.undoManager = undo
         let board = try store.createBoard(name: "B")
-        let col = store.globalColumns[0].id
+        let col = board.extraColumns[0].id
         let ids = try (0..<3).map { try store.addCard(boardID: board.id, columnID: col, title: "\($0)").id }
         try store.grouped { for id in ids { try store.deleteCard(boardID: board.id, cardID: id) } }
         XCTAssertTrue(store.boards[0].cards.isEmpty)

@@ -86,10 +86,7 @@ final class BoardCardLinkUITests: XCTestCase {
     private func seedBoard() throws {
         let boards = storageRoot.appendingPathComponent("Boards", isDirectory: true)
         try FileManager.default.createDirectory(at: boards, withIntermediateDirectories: true)
-        let index: [String: Any] = [
-            "boardOrder": [boardID.uuidString],
-            "globalColumns": [["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"]],
-        ]
+        let index: [String: Any] = ["boardOrder": [boardID.uuidString]]
         try JSONSerialization.data(withJSONObject: index).write(to: boards.appendingPathComponent("boards.json"))
         let stamp = "2026-09-03T09:00:00Z"
         let card: (UUID, String, String) -> [String: Any] = { id, title, body in
@@ -99,7 +96,8 @@ final class BoardCardLinkUITests: XCTestCase {
             ]
         }
         let board: [String: Any] = [
-            "id": boardID.uuidString, "name": "Test Board", "extraColumns": [],
+            "id": boardID.uuidString, "name": "Test Board",
+            "extraColumns": [["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"]],
             "cards": [
                 card(linkCardID, "Linked", "https://example.com"),
                 card(plainCardID, "Plain", "plain notes here"),

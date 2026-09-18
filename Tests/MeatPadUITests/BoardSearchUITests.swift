@@ -128,12 +128,7 @@ final class BoardSearchUITests: XCTestCase {
         let boards = storageRoot.appendingPathComponent("Boards", isDirectory: true)
         try FileManager.default.createDirectory(at: boards, withIntermediateDirectories: true)
 
-        let index: [String: Any] = [
-            "boardOrder": [boardID.uuidString],
-            "globalColumns": [
-                ["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"],
-            ],
-        ]
+        let index: [String: Any] = ["boardOrder": [boardID.uuidString]]
         try JSONSerialization.data(withJSONObject: index)
             .write(to: boards.appendingPathComponent("boards.json"))
 
@@ -158,7 +153,7 @@ final class BoardSearchUITests: XCTestCase {
         let board: [String: Any] = [
             "id": boardID.uuidString,
             "name": "Test Board",
-            "extraColumns": [],
+            "extraColumns": [["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"]],
             "cards": cards,
         ]
         try JSONSerialization.data(withJSONObject: board)

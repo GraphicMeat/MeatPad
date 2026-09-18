@@ -24,21 +24,38 @@ public struct DueReminder: Equatable, Sendable {
     }
 }
 
-/// Owns the on-disk board collection: `boards.json` (board order + global columns) plus one
+/// Owns the on-disk board collection: `boards.json` (board order + labels) plus one
 /// `<board-uuid>.json` per board, cards inline. A sibling of `Notes`, never inside it —
 /// kanban state has no business in NoteStore's note-loss-prevention logic.
 @MainActor
 public final class BoardStore: ObservableObject {
     private let rootURL: URL
+    private let defaultColumnNames: (todo: String, inProgress: String, done: String)
 
     /// Boards in user order (the order they were created in, healed on load).
     @Published public private(set) var boards: [Board] = []
 
-    /// Columns every board shows, before its own extras.
-    @Published public private(set) var globalColumns: [BoardColumn] = []
-
     /// Labels every board's cards can carry, in creation order.
     @Published public private(set) var labels: [CardLabel] = []
+
+    /// Fixed so a fresh board's Todo/In Progress/Done share an id with every other board's —
+    /// that's what lets the All Boards overview pool cards into one "Todo" bucket without a
+    /// shared, globally-mutable column list (the bug that used to make deleting a column on
+    /// one board delete it from every board).
+    private static let todoID = UUID(uuidString: "5D091EAF-B0A5-4000-8000-000000000001")!
+    private static let inProgressID = UUID(uuidString: "5D091EAF-B0A5-4000-8000-000000000002")!
+    private static let doneID = UUID(uuidString: "5D091EAF-B0A5-4000-8000-000000000003")!
+
+    /// The Todo/In Progress/Done a new board is seeded with, and what the All Boards overview
+    /// renders as its own pooling columns — a template, not live state, so renaming or
+    /// deleting one board's copy never touches this or any other board's.
+    public var defaultColumnTemplate: [BoardColumn] {
+        [
+            BoardColumn(id: Self.todoID, name: defaultColumnNames.todo, emoji: "📋"),
+            BoardColumn(id: Self.inProgressID, name: defaultColumnNames.inProgress, emoji: "🚧"),
+            BoardColumn(id: Self.doneID, name: defaultColumnNames.done, isDone: true, emoji: "✅"),
+        ]
+    }
 
     /// The window's undo manager, handed in by the board view. Weak because the window owns
     /// it; nil (menu-bar popover, tests) means mutations simply aren't undoable. Every card
@@ -62,10 +79,13 @@ public final class BoardStore: ObservableObject {
         return decoder
     }()
 
-    /// On-disk shape of `boards.json`.
+    /// On-disk shape of `boards.json`. `globalColumns` is legacy: older stores kept one shared
+    /// column list here instead of each board owning its columns. Its mere presence in a
+    /// decoded index (even `[]`, once every default was deleted) is the one-time migration
+    /// signal `init` reads below; a freshly-written index never has the key at all.
     private struct Index: Codable {
         var boardOrder: [UUID]
-        var globalColumns: [BoardColumn]
+        var globalColumns: [BoardColumn]?
         /// Optional so an index written before labels existed still decodes.
         var labels: [CardLabel]?
     }
@@ -75,33 +95,90 @@ public final class BoardStore: ObservableObject {
     public init(rootURL: URL,
                 defaultColumnNames: (todo: String, inProgress: String, done: String) = ("Todo", "In Progress", "Done")) throws {
         self.rootURL = rootURL
+        self.defaultColumnNames = defaultColumnNames
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         attachments = AttachmentStore(rootURL: rootURL.appendingPathComponent("Attachments", isDirectory: true))
 
         let index = Self.loadIndex(from: rootURL.appendingPathComponent("boards.json"))
-        globalColumns = index?.globalColumns ?? [
-            BoardColumn(name: defaultColumnNames.todo, emoji: "📋"),
-            BoardColumn(name: defaultColumnNames.inProgress, emoji: "🚧"),
-            BoardColumn(name: defaultColumnNames.done, isDone: true, emoji: "✅"),
-        ]
-        // One-time heal for a store seeded before columns carried emoji: assign by role, and
-        // never again — any emoji present means the user's choices are already in play.
-        if globalColumns.allSatisfy({ $0.emoji == nil }) {
-            for i in globalColumns.indices {
-                globalColumns[i].emoji = globalColumns[i].isDone ? "✅" : (i == 0 ? "📋" : "🚧")
-            }
-        }
         labels = index?.labels ?? []
         boards = Self.loadBoards(from: rootURL, order: index?.boardOrder ?? [])
+        // If a board's own file failed to persist below (disk full, permissions, an external
+        // volume), the legacy key has to survive on disk so the next launch retries it —
+        // there is no backup and no undo for a column mutation, so losing this once is losing
+        // it for good.
+        var retryLegacyColumns: [BoardColumn]?
+        if let legacyGlobalColumns = index?.globalColumns, !migrateLegacyGlobalColumns(legacyGlobalColumns) {
+            retryLegacyColumns = legacyGlobalColumns
+        }
+        healBoardsWithNoColumns()
         // Seeds a fresh install, and re-persists a healed order after a skipped/adopted file.
-        try? saveIndex()
+        try? saveIndex(legacyGlobalColumns: retryLegacyColumns)
+    }
+
+    /// A board somehow left with no columns at all (a hand-edited file, or one this store
+    /// never seeded) gets the default template — healed once here, at load, rather than
+    /// fabricated every time `columns(for:)` is read.
+    private func healBoardsWithNoColumns() {
+        for idx in boards.indices where boards[idx].extraColumns.isEmpty {
+            boards[idx].extraColumns = defaultColumnTemplate
+            try? persist(at: idx)
+        }
+    }
+
+    /// One-time migration off the old shared-column-list model. `legacy` is whatever remained
+    /// of that list (possibly missing a default the user had already deleted — deleting one
+    /// used to remove it from every board at once, which is the bug this migration retires).
+    /// Every board gets its own copy of the surviving defaults, remapped onto the fixed
+    /// `defaultColumnTemplate` ids so the All Boards overview keeps pooling them correctly;
+    /// any default missing from `legacy` is reseeded fresh (structurally, not with its old
+    /// cards back — that link was already overwritten by the old global delete). A column the
+    /// user added to the legacy list beyond the three defaults (`addGlobalColumn`) keeps its
+    /// own id, copied as-is onto every board. Returns whether every board's file actually
+    /// persisted — a board already carrying a template id (a prior, partly-failed attempt)
+    /// is left untouched and counts as succeeded, so a retry is idempotent.
+    @discardableResult
+    private func migrateLegacyGlobalColumns(_ legacyColumns: [BoardColumn]) -> Bool {
+        var legacy = legacyColumns
+        // One-time heal for a store seeded before columns carried emoji at all: assign by
+        // role, exactly like the old in-place heal did — the emoji-keyed match just below
+        // can't identify Todo/In Progress/Done without it.
+        if legacy.allSatisfy({ $0.emoji == nil }) {
+            for i in legacy.indices {
+                legacy[i].emoji = legacy[i].isDone ? "✅" : (i == 0 ? "📋" : "🚧")
+            }
+        }
+        var idRemap: [UUID: UUID] = [:]
+        var migratedDefaults: [BoardColumn] = []
+        for template in defaultColumnTemplate {
+            if let match = legacy.first(where: { $0.emoji == template.emoji }) {
+                idRemap[match.id] = template.id
+                migratedDefaults.append(BoardColumn(id: template.id, name: match.name, isDone: match.isDone, emoji: match.emoji))
+            } else {
+                migratedDefaults.append(template)
+            }
+        }
+        let extras = legacy.filter { legacyColumn in !migratedDefaults.contains { idRemap[legacyColumn.id] == $0.id } }
+        let boardColumns = migratedDefaults + extras
+        let templateIDs = Set(defaultColumnTemplate.map(\.id))
+        var allPersisted = true
+        for idx in boards.indices {
+            guard !boards[idx].extraColumns.contains(where: { templateIDs.contains($0.id) }) else { continue }
+            for cardIdx in boards[idx].cards.indices {
+                if let newID = idRemap[boards[idx].cards[cardIdx].columnID] {
+                    boards[idx].cards[cardIdx].columnID = newID
+                }
+            }
+            boards[idx].extraColumns = boardColumns + boards[idx].extraColumns
+            do { try persist(at: idx) } catch { allPersisted = false }
+        }
+        return allPersisted
     }
 
     // MARK: - Boards
 
     @discardableResult
     public func createBoard(name: String) throws -> Board {
-        let board = Board(name: try validated(name))
+        let board = Board(name: try validated(name), extraColumns: defaultColumnTemplate)
         try write(board)
         boards.append(board)
         try saveIndex()
@@ -174,10 +251,9 @@ public final class BoardStore: ObservableObject {
 
     // MARK: - Columns (composition)
 
-    /// Rendered order for a board: the global columns first, then that board's extras, unless
-    /// the board has its own `columnOrder`.
+    /// Rendered order for a board: its own columns, in `columnOrder` if it has one.
     public func columns(for board: Board) -> [BoardColumn] {
-        let all = globalColumns + board.extraColumns
+        let all = board.extraColumns
         guard let order = board.columnOrder else { return all }
         let rank = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
         return all.enumerated()
@@ -386,91 +462,60 @@ public final class BoardStore: ObservableObject {
 
     // MARK: - Column editing
 
-    public func addGlobalColumn(name: String) throws {
-        globalColumns.append(BoardColumn(name: try validated(name)))
-        try saveIndex()
-    }
-
     public func addExtraColumn(boardID: UUID, name: String) throws {
         let idx = try boardIndex(boardID)
         boards[idx].extraColumns.append(BoardColumn(name: try validated(name)))
         try persist(at: idx)
     }
 
-    /// `index` is the column's final position. On a board the whole rendered order is written to
-    /// `columnOrder`; in the All Boards overview (nil) the shared global order itself moves.
-    public func moveColumn(id: UUID, to index: Int, onBoard boardID: UUID?) throws {
-        if let boardID {
-            let idx = try boardIndex(boardID)
-            var ids = columns(for: boards[idx]).map(\.id)
-            guard let from = ids.firstIndex(of: id) else { throw BoardStoreError.columnNotFound(id) }
-            ids.remove(at: from)
-            ids.insert(id, at: max(0, min(index, ids.count)))
-            boards[idx].columnOrder = ids
-            try persist(at: idx)
-        } else {
-            guard let from = globalColumns.firstIndex(where: { $0.id == id }) else { throw BoardStoreError.columnNotFound(id) }
-            let column = globalColumns.remove(at: from)
-            globalColumns.insert(column, at: max(0, min(index, globalColumns.count)))
-            try saveIndex()
-        }
+    /// `index` is the column's final position within that board's own rendered order.
+    public func moveColumn(id: UUID, to index: Int, onBoard boardID: UUID) throws {
+        let idx = try boardIndex(boardID)
+        var ids = columns(for: boards[idx]).map(\.id)
+        guard let from = ids.firstIndex(of: id) else { throw BoardStoreError.columnNotFound(id) }
+        ids.remove(at: from)
+        ids.insert(id, at: max(0, min(index, ids.count)))
+        boards[idx].columnOrder = ids
+        try persist(at: idx)
     }
 
-    /// `boardID` nil = a global column; otherwise that board's own extra column.
-    public func renameColumn(id: UUID, to name: String, boardID: UUID?) throws {
+    public func renameColumn(id: UUID, to name: String, boardID: UUID) throws {
         let trimmed = try validated(name)
         try mutateColumn(id: id, boardID: boardID) { $0.name = trimmed }
     }
 
-    public func setColumnDone(id: UUID, _ isDone: Bool, boardID: UUID?) throws {
+    public func setColumnDone(id: UUID, _ isDone: Bool, boardID: UUID) throws {
         try mutateColumn(id: id, boardID: boardID) { $0.isDone = isDone }
     }
 
-    /// Deleting a column never deletes work: its cards move to the first global column.
-    /// That last global column is the fallback, so it cannot itself be removed.
-    public func deleteColumn(id: UUID, boardID: UUID?) throws {
-        if let boardID {
-            let idx = try boardIndex(boardID)
-            guard boards[idx].extraColumns.contains(where: { $0.id == id }) else {
-                throw BoardStoreError.columnNotFound(id)
-            }
-            boards[idx].extraColumns.removeAll { $0.id == id }
-            reassignCards(from: id, boardIndex: idx)
-            try persist(at: idx)
-            return
+    /// Deleting a column never deletes work: its cards move to that board's own first
+    /// remaining column. That last column on a board is the fallback, so it cannot itself be
+    /// removed — a board always shows at least one column.
+    public func deleteColumn(id: UUID, boardID: UUID) throws {
+        let idx = try boardIndex(boardID)
+        guard boards[idx].extraColumns.contains(where: { $0.id == id }) else {
+            throw BoardStoreError.columnNotFound(id)
         }
-        guard globalColumns.contains(where: { $0.id == id }) else { throw BoardStoreError.columnNotFound(id) }
-        guard globalColumns.count > 1 else { throw BoardStoreError.lastColumn }
-        globalColumns.removeAll { $0.id == id }
-        try saveIndex()
-        for idx in boards.indices {
-            reassignCards(from: id, boardIndex: idx)
-            try persist(at: idx)
-        }
+        guard boards[idx].extraColumns.count > 1 else { throw BoardStoreError.lastColumn }
+        boards[idx].extraColumns.removeAll { $0.id == id }
+        reassignCards(from: id, boardIndex: idx)
+        try persist(at: idx)
     }
 
     private func reassignCards(from columnID: UUID, boardIndex idx: Int) {
-        guard let fallback = globalColumns.first?.id else { return }
+        guard let fallback = boards[idx].extraColumns.first?.id else { return }
         for cardIdx in boards[idx].cards.indices where boards[idx].cards[cardIdx].columnID == columnID {
             boards[idx].cards[cardIdx].columnID = fallback
         }
     }
 
-    private func mutateColumn(id: UUID, boardID: UUID?, _ change: (inout BoardColumn) -> Void) throws {
-        if let boardID {
-            let idx = try boardIndex(boardID)
-            guard let colIdx = boards[idx].extraColumns.firstIndex(where: { $0.id == id }) else {
-                throw BoardStoreError.columnNotFound(id)
-            }
-            change(&boards[idx].extraColumns[colIdx])
-            try persist(at: idx)
-        } else {
-            guard let colIdx = globalColumns.firstIndex(where: { $0.id == id }) else {
-                throw BoardStoreError.columnNotFound(id)
-            }
-            change(&globalColumns[colIdx])
-            try saveIndex()
+    private func mutateColumn(id: UUID, boardID: UUID, _ change: (inout BoardColumn) -> Void) throws {
+        let idx = try boardIndex(boardID)
+        guard let colIdx = boards[idx].extraColumns.firstIndex(where: { $0.id == id }) else {
+            throw BoardStoreError.columnNotFound(id)
         }
+        change(&boards[idx].extraColumns[colIdx])
+        try persist(at: idx)
     }
 
     // MARK: - Labels
@@ -613,8 +658,10 @@ public final class BoardStore: ObservableObject {
         return ordered
     }
 
-    private func saveIndex() throws {
-        let index = Index(boardOrder: boards.map(\.id), globalColumns: globalColumns, labels: labels)
+    /// `legacyGlobalColumns` is only ever non-nil right after `init` retries an incomplete
+    /// migration — every other call site keeps the default `nil`, which drops the key.
+    private func saveIndex(legacyGlobalColumns: [BoardColumn]? = nil) throws {
+        let index = Index(boardOrder: boards.map(\.id), globalColumns: legacyGlobalColumns, labels: labels)
         try Self.encoder.encode(index).write(to: indexURL, options: .atomic)
     }
 

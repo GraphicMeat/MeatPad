@@ -19,9 +19,9 @@ public struct BoardColumn: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
-/// A tag a card can carry. Labels are global to the store, exactly like
-/// `BoardStore.globalColumns` — "Bug" means one thing on every board, so the All Boards
-/// overview can filter by it.
+/// A tag a card can carry. Labels are global to the store — "Bug" means one thing on every
+/// board, so the All Boards overview can filter by it. Unlike columns, a label has no
+/// per-board copy: deleting one really does remove it everywhere, and the UI says so.
 public struct CardLabel: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
     public var name: String
@@ -128,7 +128,11 @@ public struct Card: Identifiable, Codable, Equatable, Sendable {
 public struct Board: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
     public var name: String
-    /// Board-specific columns, rendered after the global ones.
+    /// This board's own columns, name and identity entirely its own — deleting or renaming one
+    /// never touches any other board. A new board starts with its own copy of
+    /// `BoardStore.defaultColumnTemplate` (Todo/In Progress/Done), sharing those column ids
+    /// with every other board's copy only so the All Boards overview can pool cards into one
+    /// "Todo" bucket across boards; nothing else depends on that overlap.
     public var extraColumns: [BoardColumn]
     public var cards: [Card]
     /// The board's own look, one emoji — exactly like `BoardColumn.emoji`. Optional so board
@@ -138,7 +142,7 @@ public struct Board: Identifiable, Codable, Equatable, Sendable {
     /// `AttachmentStore`, owned by the board's id. Never set alongside `icon` — a board has
     /// one look, and `BoardStore` is what enforces that.
     public var image: String?
-    /// This board's column order as ids, globals and extras mixed. nil = globals then extras.
+    /// This board's column order as ids. nil = `extraColumns`' own order.
     /// Ids not listed (a column added later) append in default order; stale ids are ignored.
     public var columnOrder: [UUID]? = nil
 

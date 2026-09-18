@@ -157,15 +157,19 @@ struct ColumnDropDelegate: DropDelegate {
     }
 
     /// Which edge of this column a hovered column drag would land on — the leading/trailing
-    /// half of `width`, same halfway rule a card reorder uses on the y axis.
+    /// half of `width`, same halfway rule a card reorder uses on the y axis. Guarded exactly
+    /// like `update(_:)` below: a column drag's own drop is synchronous-ish (see
+    /// `performDrop`), and a late `dropEntered`/`dropUpdated` for the same, already-dropped
+    /// drag would otherwise re-arm the ghost with no later `dropExited` to clear it again.
     private func updateColumnTarget(_ info: DropInfo) {
-        guard let column else { return }
+        guard let column, loader.dropped != NSPasteboard(name: .drag).changeCount else { return }
         columnTarget = (id: column, trailing: info.location.x > width / 2)
     }
 
     func performDrop(info: DropInfo) -> Bool {
         if isColumnDrag(info) {
             defer { columnTarget = nil }
+            loader.dropped = NSPasteboard(name: .drag).changeCount
             guard let columnIndex,
                   let provider = info.itemProviders(for: [.meatpadColumn]).first
             else { return false }

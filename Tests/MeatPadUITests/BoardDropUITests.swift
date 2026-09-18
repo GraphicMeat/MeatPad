@@ -171,14 +171,12 @@ final class BoardDropUITests: XCTestCase {
     private func seedBoard() throws {
         let boards = storageRoot.appendingPathComponent("Boards", isDirectory: true)
         try FileManager.default.createDirectory(at: boards, withIntermediateDirectories: true)
-        let index: [String: Any] = [
-            "boardOrder": [boardID.uuidString],
-            "globalColumns": [
-                ["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"],
-                ["id": secondColumnID.uuidString, "name": "Doing", "isDone": false, "emoji": "🚧"],
-            ],
-        ]
+        let index: [String: Any] = ["boardOrder": [boardID.uuidString]]
         try JSONSerialization.data(withJSONObject: index).write(to: boards.appendingPathComponent("boards.json"))
+        let columns: [[String: Any]] = [
+            ["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"],
+            ["id": secondColumnID.uuidString, "name": "Doing", "isDone": false, "emoji": "🚧"],
+        ]
         let stamp = "2026-09-03T09:00:00Z"
         let cards = ["Alpha", "Beta", "Gamma"].map { title in
             [
@@ -195,7 +193,7 @@ final class BoardDropUITests: XCTestCase {
              "created": stamp, "modified": stamp],
         ]
         let board: [String: Any] = [
-            "id": boardID.uuidString, "name": "Test Board", "extraColumns": [], "cards": cards + dragCards,
+            "id": boardID.uuidString, "name": "Test Board", "extraColumns": columns, "cards": cards + dragCards,
         ]
         try JSONSerialization.data(withJSONObject: board).write(to: boards.appendingPathComponent("\(boardID.uuidString).json"))
 

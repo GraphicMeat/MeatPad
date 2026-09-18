@@ -192,9 +192,9 @@ final class BoardIconUITests: XCTestCase {
 
         let index: [String: Any] = [
             "boardOrder": [emojiBoard.uuidString, imageBoard.uuidString, plainBoard.uuidString],
-            "globalColumns": [["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"]],
         ]
         try JSONSerialization.data(withJSONObject: index).write(to: boards.appendingPathComponent("boards.json"))
+        let columns: [[String: Any]] = [["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"]]
 
         let stamp = "2026-09-06T09:00:00Z"
         for (id, name, extra) in [
@@ -208,7 +208,7 @@ final class BoardIconUITests: XCTestCase {
                 "id": UUID().uuidString, "title": name.replacingOccurrences(of: " Board", with: " Card"),
                 "columnID": columnID.uuidString, "created": stamp, "modified": stamp,
             ]
-            var board: [String: Any] = ["id": id.uuidString, "name": name, "extraColumns": [], "cards": [card]]
+            var board: [String: Any] = ["id": id.uuidString, "name": name, "extraColumns": columns, "cards": [card]]
             board.merge(extra) { _, new in new }
             try JSONSerialization.data(withJSONObject: board)
                 .write(to: boards.appendingPathComponent("\(id.uuidString).json"))

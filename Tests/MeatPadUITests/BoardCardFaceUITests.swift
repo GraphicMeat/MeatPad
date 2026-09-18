@@ -325,15 +325,15 @@ final class BoardCardFaceUITests: XCTestCase {
         try FileManager.default.createDirectory(at: boards, withIntermediateDirectories: true)
         let index: [String: Any] = [
             "boardOrder": [boardID.uuidString, boardAID.uuidString, boardBID.uuidString],
-            "globalColumns": [
-                ["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"],
-                ["id": secondColumnID.uuidString, "name": "Doing", "isDone": false, "emoji": "🚧"],
-            ],
         ]
         try JSONSerialization.data(withJSONObject: index).write(to: boards.appendingPathComponent("boards.json"))
+        let columns: [[String: Any]] = [
+            ["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"],
+            ["id": secondColumnID.uuidString, "name": "Doing", "isDone": false, "emoji": "🚧"],
+        ]
         let stamp = "2026-09-03T09:00:00Z"
         let board: [String: Any] = [
-            "id": boardID.uuidString, "name": "Test Board", "extraColumns": [],
+            "id": boardID.uuidString, "name": "Test Board", "extraColumns": columns,
             "cards": [[
                 "id": cardID.uuidString, "title": "Alpha", "body": "first line\nsecond line",
                 "columnID": columnID.uuidString, "created": stamp, "modified": stamp,
@@ -355,7 +355,7 @@ final class BoardCardFaceUITests: XCTestCase {
             (boardBID, cardBID, "B", "b.png"),
         ] as [(UUID, UUID, String, String)] {
             let sideBoard: [String: Any] = [
-                "id": id.uuidString, "name": name, "extraColumns": [],
+                "id": id.uuidString, "name": name, "extraColumns": columns,
                 "cards": [[
                     "id": card.uuidString, "title": "Card \(name)",
                     "columnID": columnID.uuidString, "created": stamp, "modified": stamp,

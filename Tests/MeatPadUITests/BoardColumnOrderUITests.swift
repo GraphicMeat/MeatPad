@@ -33,8 +33,8 @@ final class BoardColumnOrderUITests: XCTestCase {
         try? FileManager.default.removeItem(at: storageRoot)
     }
 
-    /// The menu writes only the board it was opened on — its sibling board, sharing the same
-    /// global columns, keeps the default order.
+    /// The menu writes only the board it was opened on — its sibling board, whose own copy of
+    /// the same three columns started identical, keeps the default order.
     func testMoveRightMenuMovesColumnOnThisBoardOnly() throws {
         openColumnMenuItem("Move Right", on: todoID).click()
 
@@ -153,15 +153,13 @@ final class BoardColumnOrderUITests: XCTestCase {
     private func seedBoards() throws {
         let boards = storageRoot.appendingPathComponent("Boards", isDirectory: true)
         try FileManager.default.createDirectory(at: boards, withIntermediateDirectories: true)
-        let index: [String: Any] = [
-            "boardOrder": [boardA.uuidString, boardB.uuidString],
-            "globalColumns": [
-                ["id": todoID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"],
-                ["id": inProgressID.uuidString, "name": "In Progress", "isDone": false, "emoji": "🚧"],
-                ["id": doneID.uuidString, "name": "Done", "isDone": true, "emoji": "✅"],
-            ],
-        ]
+        let index: [String: Any] = ["boardOrder": [boardA.uuidString, boardB.uuidString]]
         try JSONSerialization.data(withJSONObject: index).write(to: boards.appendingPathComponent("boards.json"))
+        let columns: [[String: Any]] = [
+            ["id": todoID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"],
+            ["id": inProgressID.uuidString, "name": "In Progress", "isDone": false, "emoji": "🚧"],
+            ["id": doneID.uuidString, "name": "Done", "isDone": true, "emoji": "✅"],
+        ]
 
         let stamp = "2026-09-15T09:00:00Z"
         // One card per column, so a wayward reorder that drags cards along with it (rather
@@ -177,7 +175,7 @@ final class BoardColumnOrderUITests: XCTestCase {
         for id in [boardA, boardB] {
             let board: [String: Any] = [
                 "id": id.uuidString, "name": id == boardA ? "Board A" : "Board B",
-                "extraColumns": [], "cards": cards(),
+                "extraColumns": columns, "cards": cards(),
             ]
             try JSONSerialization.data(withJSONObject: board).write(to: boards.appendingPathComponent("\(id.uuidString).json"))
         }

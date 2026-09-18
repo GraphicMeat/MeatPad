@@ -297,20 +297,16 @@ final class BoardLabelUITests: XCTestCase {
         let boards = storageRoot.appendingPathComponent("Boards", isDirectory: true)
         try FileManager.default.createDirectory(at: boards, withIntermediateDirectories: true)
 
-        let index: [String: Any] = [
-            "boardOrder": [boardID.uuidString, otherBoardID.uuidString],
-            "globalColumns": [
-                ["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"],
-            ],
-        ]
+        let index: [String: Any] = ["boardOrder": [boardID.uuidString, otherBoardID.uuidString]]
         try JSONSerialization.data(withJSONObject: index)
             .write(to: boards.appendingPathComponent("boards.json"))
+        let columns: [[String: Any]] = [["id": columnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"]]
 
         let stamp = "2026-08-24T09:00:00Z"
         let board: [String: Any] = [
             "id": boardID.uuidString,
             "name": "Test Board",
-            "extraColumns": [],
+            "extraColumns": columns,
             "cards": ["Alpha", "Beta"].map { title in
                 [
                     "id": UUID().uuidString,
@@ -328,7 +324,7 @@ final class BoardLabelUITests: XCTestCase {
         let other: [String: Any] = [
             "id": otherBoardID.uuidString,
             "name": "Other Board",
-            "extraColumns": [],
+            "extraColumns": columns,
             "cards": [[
                 "id": UUID().uuidString,
                 "title": "Gamma",

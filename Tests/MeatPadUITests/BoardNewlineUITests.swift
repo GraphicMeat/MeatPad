@@ -143,11 +143,11 @@ final class BoardNewlineUITests: XCTestCase {
 
         let columnID = UUID()
         let index = """
-        {"boardOrder":["\(boardID.uuidString)"],\
-        "globalColumns":[{"id":"\(columnID.uuidString)","name":"Todo","isDone":false,"emoji":"📋"}]}
+        {"boardOrder":["\(boardID.uuidString)"]}
         """
         let board = """
-        {"id":"\(boardID.uuidString)","name":"UI Tests","extraColumns":[],"cards":[]}
+        {"id":"\(boardID.uuidString)","name":"UI Tests",\
+        "extraColumns":[{"id":"\(columnID.uuidString)","name":"Todo","isDone":false,"emoji":"📋"}],"cards":[]}
         """
         try index.write(to: boards.appendingPathComponent("boards.json"), atomically: true, encoding: .utf8)
         try board.write(to: boards.appendingPathComponent("\(boardID.uuidString).json"), atomically: true, encoding: .utf8)

@@ -294,15 +294,13 @@ final class BoardMultiSelectUITests: XCTestCase {
         let boards = storageRoot.appendingPathComponent("Boards", isDirectory: true)
         try FileManager.default.createDirectory(at: boards, withIntermediateDirectories: true)
 
-        let index: [String: Any] = [
-            "boardOrder": [boardID.uuidString],
-            "globalColumns": [
-                ["id": todoColumnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"],
-                ["id": doneColumnID.uuidString, "name": "Done", "isDone": true, "emoji": "✅"],
-            ],
-        ]
+        let index: [String: Any] = ["boardOrder": [boardID.uuidString]]
         try JSONSerialization.data(withJSONObject: index)
             .write(to: boards.appendingPathComponent("boards.json"))
+        let columns: [[String: Any]] = [
+            ["id": todoColumnID.uuidString, "name": "Todo", "isDone": false, "emoji": "📋"],
+            ["id": doneColumnID.uuidString, "name": "Done", "isDone": true, "emoji": "✅"],
+        ]
 
         let stamp = "2026-09-15T09:00:00Z"
         var cards: [[String: Any]] = [card1ID, card2ID, card3ID, card4ID].enumerated().map { index, id in
@@ -316,7 +314,7 @@ final class BoardMultiSelectUITests: XCTestCase {
             "columnID": doneColumnID.uuidString, "created": stamp, "modified": stamp,
         ])
         let board: [String: Any] = [
-            "id": boardID.uuidString, "name": "Test Board", "extraColumns": [], "cards": cards,
+            "id": boardID.uuidString, "name": "Test Board", "extraColumns": columns, "cards": cards,
         ]
         try JSONSerialization.data(withJSONObject: board)
             .write(to: boards.appendingPathComponent("\(boardID.uuidString).json"))
