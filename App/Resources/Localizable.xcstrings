@@ -669,6 +669,119 @@
         }
       }
     },
+    "^[%lld card](inflect: true)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld Karte"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld Karten"
+                }
+              }
+            }
+          }
+        },
+        "es" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld tarjeta"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld tarjetas"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld carte"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld cartes"
+                }
+              }
+            }
+          }
+        },
+        "it" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld scheda"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld schede"
+                }
+              }
+            }
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld枚のカード"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "카드 %lld장"
+          }
+        },
+        "pt-BR" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld cartão"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld cartões"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld张卡片"
+          }
+        }
+      }
+    },
     "^[%lld note](inflect: true) selected" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2479,6 +2592,112 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "看板错误"
+          }
+        }
+      }
+    },
+    "Board Trash" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Board-Papierkorb"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Papelera de tableros"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Corbeille des tableaux"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cestino bacheche"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ボードのゴミ箱"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보드 휴지통"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lixo dos Quadros"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "看板废纸篓"
+          }
+        }
+      }
+    },
+    "Board Trash Is Empty" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Board-Papierkorb ist leer"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La papelera de tableros está vacía"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La corbeille des tableaux est vide"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il cestino delle bacheche è vuoto"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ボードのゴミ箱は空です"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보드 휴지통이 비어 있습니다"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O lixo dos quadros está vazio"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "看板废纸篓为空"
           }
         }
       }
@@ -5452,55 +5671,55 @@
         }
       }
     },
-    "Delete “%@”? Its cards are deleted with it." : {
+    "Delete “%@”? It moves to Board Trash with its cards." : {
       "extractionState" : "manual",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "„%@“ löschen? Die Karten darin werden mitgelöscht."
+            "value" : "„%@“ löschen? Es wandert mit seinen Karten in den Board-Papierkorb."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "¿Eliminar “%@”? Sus tarjetas se eliminarán con él."
+            "value" : "¿Eliminar “%@”? Se moverá a la papelera de tableros junto con sus tarjetas."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Supprimer « %@ » ? Ses cartes seront supprimées avec lui."
+            "value" : "Supprimer « %@ » ? Il sera déplacé vers la corbeille des tableaux avec ses cartes."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Eliminare “%@”? Le relative schede verranno eliminate con essa."
+            "value" : "Eliminare “%@”? Verrà spostata nel cestino delle bacheche insieme alle relative schede."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "“%@”を削除しますか？ 中のカードも削除されます。"
+            "value" : "“%@”を削除しますか？ カードごとボードのゴミ箱に移動します。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "“%@”을(를) 삭제하시겠습니까? 안의 카드도 함께 삭제됩니다."
+            "value" : "“%@”을(를) 삭제하시겠습니까? 카드와 함께 보드 휴지통으로 이동합니다."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Apagar “%@”? Os cartões dele serão apagados junto."
+            "value" : "Apagar “%@”? Ele vai para o Lixo dos Quadros junto com os cartões."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "要删除“%@”吗？其中的卡片会一并删除。"
+            "value" : "要删除“%@”吗？它将连同其中的卡片一起移到看板废纸篓。"
           }
         }
       }
@@ -6039,6 +6258,59 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "删除所有内容"
+          }
+        }
+      }
+    },
+    "Delete everything in Board Trash permanently?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alles im Board-Papierkorb endgültig löschen?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "¿Eliminar permanentemente todo el contenido de la papelera de tableros?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer définitivement tout le contenu de la corbeille des tableaux ?"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eliminare definitivamente tutto il contenuto del cestino delle bacheche?"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ボードのゴミ箱の内容をすべて完全に削除しますか？"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보드 휴지통의 모든 항목을 완전히 삭제하시겠습니까?"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apagar permanentemente tudo no Lixo dos Quadros?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "永久删除看板废纸篓中的所有内容？"
           }
         }
       }
@@ -7315,6 +7587,59 @@
         }
       }
     },
+    "Empty Trash" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Papierkorb leeren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vaciar papelera"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vider la corbeille"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Svuota cestino"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ゴミ箱を空にする"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "휴지통 비우기"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esvaziar Lixo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清空废纸篓"
+          }
+        }
+      }
+    },
     "Environment" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8486,6 +8811,59 @@
         }
       }
     },
+    "from %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "aus %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "de %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "de %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "da %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@から"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에서"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "de %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "来自%@"
+          }
+        }
+      }
+    },
     "Full" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9548,55 +9926,108 @@
         }
       }
     },
-    "Its cards move to %@." : {
+    "Its board was deleted too" : {
       "extractionState" : "manual",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Die Karten darin werden nach „%@“ verschoben."
+            "value" : "Sein Board wurde ebenfalls gelöscht"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sus tarjetas se moverán a “%@”."
+            "value" : "Su tablero también se eliminó"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ses cartes seront déplacées vers « %@ »."
+            "value" : "Son tableau a également été supprimé"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Le relative schede verranno spostate in “%@”."
+            "value" : "Anche la sua bacheca è stata eliminata"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "中のカードは“%@”に移動します。"
+            "value" : "そのボードも削除されています"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "안의 카드는 “%@”(으)로 이동합니다."
+            "value" : "해당 보드도 삭제되었습니다"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Os cartões dela vão para “%@”."
+            "value" : "O quadro dele também foi apagado"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "其中的卡片将移到“%@”。"
+            "value" : "其所属看板也已删除"
+          }
+        }
+      }
+    },
+    "Its cards move to %@. The column moves to Board Trash." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Karten darin werden nach „%@“ verschoben. Die Spalte wandert in den Board-Papierkorb."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sus tarjetas se moverán a “%@”. La columna se moverá a la papelera de tableros."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ses cartes seront déplacées vers « %@ ». La colonne sera déplacée vers la corbeille des tableaux."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le relative schede verranno spostate in “%@”. La colonna verrà spostata nel cestino delle bacheche."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中のカードは“%@”に移動します。列はボードのゴミ箱に移動します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "안의 카드는 “%@”(으)로 이동합니다. 열은 보드 휴지통으로 이동합니다."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Os cartões dela vão para “%@”. A coluna vai para o Lixo dos Quadros."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "其中的卡片将移到“%@”。该列将移到看板废纸篓。"
           }
         }
       }
