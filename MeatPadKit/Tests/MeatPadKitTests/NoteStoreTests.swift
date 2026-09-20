@@ -572,6 +572,68 @@ final class NoteStoreTests: XCTestCase {
         }
     }
 
+    // MARK: - folder creation dates + manual reorder
+
+    func testFolderCreatedIsSetOnCreateFolder() throws {
+        let store = try makeStore()
+        XCTAssertNil(store.folderCreated("Work"))
+        try store.createFolder("Work")
+        XCTAssertNotNil(store.folderCreated("Work"))
+    }
+
+    func testRenameFolderMovesTheCreationDate() throws {
+        let store = try makeStore()
+        try store.createFolder("Work")
+        let original = try XCTUnwrap(store.folderCreated("Work"))
+        try store.renameFolder("Work", to: "Job")
+        XCTAssertNil(store.folderCreated("Work"))
+        XCTAssertEqual(store.folderCreated("Job"), original)
+    }
+
+    func testDeleteFolderDropsTheCreationDate() throws {
+        let store = try makeStore()
+        try store.createFolder("Work")
+        try store.deleteFolder("Work")
+        XCTAssertNil(store.folderCreated("Work"))
+    }
+
+    func testFolderCreatedDatesSurviveReload() throws {
+        let store = try makeStore()
+        try store.createFolder("Work")
+        let original = try XCTUnwrap(store.folderCreated("Work"))
+        let reloaded = try makeStore()
+        // The sidecar is ISO8601, which keeps whole seconds — so this is the precision the
+        // date comes back with, and comparing the raw `Date`s would fail on the fraction.
+        XCTAssertEqual(try XCTUnwrap(reloaded.folderCreated("Work")).timeIntervalSince1970,
+                       original.timeIntervalSince1970, accuracy: 1)
+    }
+
+    func testMoveFolderReordersAndSurvivesReload() throws {
+        let store = try makeStore()
+        try store.createFolder("A")
+        try store.createFolder("B")
+        try store.createFolder("C")
+        try store.moveFolder(from: 2, to: 0)
+        XCTAssertEqual(store.folders, ["C", "A", "B"])
+        XCTAssertEqual(try makeStore().folders, ["C", "A", "B"])
+    }
+
+    func testMoveFolderClampsDestination() throws {
+        let store = try makeStore()
+        try store.createFolder("A")
+        try store.createFolder("B")
+        try store.moveFolder(from: 0, to: 99)
+        XCTAssertEqual(store.folders, ["B", "A"])
+    }
+
+    func testMoveFolderInvalidSourceThrows() throws {
+        let store = try makeStore()
+        try store.createFolder("A")
+        XCTAssertThrowsError(try store.moveFolder(from: 5, to: 0)) { error in
+            XCTAssertEqual(error as? NoteStoreError, .invalidIndex)
+        }
+    }
+
     // MARK: - attachments
 
     func testAddAttachmentWritesTheFileAndTheSidecar() throws {

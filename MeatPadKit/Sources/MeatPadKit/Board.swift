@@ -10,12 +10,17 @@ public struct BoardColumn: Identifiable, Codable, Equatable, Sendable {
     /// Shown before the name in the column header. Seeded for the default columns; nil for
     /// columns the user adds. Optional so older board files decode unchanged.
     public var emoji: String?
+    /// The column's look as a picture instead: a file name in the store's `AttachmentStore`,
+    /// owned by the column's own id — exactly like `Board.image`. Never set alongside `emoji`;
+    /// `BoardStore` is what enforces the one-look rule. Optional so older board files decode.
+    public var image: String?
 
-    public init(id: UUID = UUID(), name: String, isDone: Bool = false, emoji: String? = nil) {
+    public init(id: UUID = UUID(), name: String, isDone: Bool = false, emoji: String? = nil, image: String? = nil) {
         self.id = id
         self.name = name
         self.isDone = isDone
         self.emoji = emoji
+        self.image = image
     }
 }
 
@@ -145,15 +150,20 @@ public struct Board: Identifiable, Codable, Equatable, Sendable {
     /// This board's column order as ids. nil = `extraColumns`' own order.
     /// Ids not listed (a column added later) append in default order; stale ids are ignored.
     public var columnOrder: [UUID]? = nil
+    /// When the board was created, for the `.created` sidebar sort. Optional and never
+    /// backfilled — a board file written before this exists simply sorts as `.distantPast`
+    /// (see `SidebarSorter`), same stance as every other optional-for-old-files field here.
+    public var created: Date?
 
     public init(id: UUID = UUID(), name: String, extraColumns: [BoardColumn] = [], cards: [Card] = [],
-                icon: String? = nil, image: String? = nil) {
+                icon: String? = nil, image: String? = nil, created: Date? = nil) {
         self.id = id
         self.name = name
         self.extraColumns = extraColumns
         self.cards = cards
         self.icon = icon
         self.image = image
+        self.created = created
     }
 }
 

@@ -55,6 +55,15 @@ struct CardView: View {
     /// header while the card is hovered (or right after a copy, so the checkmark is seen).
     @State private var hovering = false
     @State private var copied = false
+    @State private var copiedNotes = false
+    /// On by default — the user asked for inline markdown on card faces, off only when this
+    /// setting says so. Board-wide, not per-card: a mixed board reading half-rendered would be
+    /// worse than either extreme.
+    @AppStorage("board.markdown") private var markdown = true
+    /// The field editor's own drag registration, saved off while a title/notes field is
+    /// focused — see `suspendFieldEditorDragTypes` below.
+    @State private var suspendedFieldEditor: NSTextView?
+    @State private var suspendedDraggedTypes: [NSPasteboard.PasteboardType] = []
     @Environment(\.openWindow) private var openWindow
     /// How much bigger than normal to draw — presentation mode, or the present overlay. Every
     /// type and tile size below is multiplied by it; at 1 the card is what it always was.
@@ -98,6 +107,10 @@ struct CardView: View {
                 .padding(12)
         }
         .onAppear { load() }
+        // A card can disappear mid-edit (scrolled off, dragged to another column) without ever
+        // firing the blur that normally restores the field editor's drag types — this is the
+        // other side of `suspendFieldEditorDragTypes` below.
+        .onDisappear { restoreFieldEditorDragTypes() }
         // The same view instance is reused when a card moves column; reload so drafts follow it.
         .onChange(of: card.id) { _, _ in titleDebouncer.cancel(); bodyDebouncer.cancel(); editing = nil; load() }
         // Our own commits echo back as exactly what we wrote; anything else is an undo, a redo, or
@@ -130,6 +143,12 @@ struct CardView: View {
             // focus has landed is the field editor AppKit's first responder, which is what
             // `moveCaretToEnd` reaches for.
             if new != nil { moveCaretToEnd() }
+            // Drag types come off the instant a field takes focus (nil -> some) and go back on
+            // the instant it's fully blurred (some -> nil) — switching between this card's own
+            // two fields (old and new both non-nil) is still "a field is focused" throughout,
+            // so it neither re-suspends nor restores.
+            if old == nil, new != nil { suspendFieldEditorDragTypes() }
+            if old != nil, new == nil { restoreFieldEditorDragTypes() }
         }
     }
 
@@ -163,7 +182,8 @@ struct CardView: View {
                     text: faceTitle,
                     font: .systemFont(ofSize: fontSize(.body), weight: .semibold),
                     color: title.isEmpty ? .secondaryLabelColor : .labelColor,
-                    lineLimit: display.titleLines ?? 0
+                    lineLimit: display.titleLines,
+                    markdown: markdown
                 )
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background { editTapLayer { editing = .title; focus = .title } }
@@ -173,8 +193,8 @@ struct CardView: View {
                     // an AXStaticText's content lives — the label alone reads back empty.
                     .accessibilityElement(children: .ignore)
                     .accessibilityAddTraits(.isStaticText)
-                    .accessibilityLabel(faceTitle)
-                    .accessibilityValue(faceTitle)
+                    .accessibilityLabel(faceTitleAX)
+                    .accessibilityValue(faceTitleAX)
                     // A tap gesture is invisible to VoiceOver, so the row still offers a named
                     // action — but never the `.isButton` trait: that turns the element into an
                     // AXButton whose value is always "", so both VoiceOver and a UI test reading
@@ -206,6 +226,20 @@ struct CardView: View {
             .accessibilityLabel(Text("Copy"))
             .accessibilityValue(copied ? "copied" : "")
             .accessibilityIdentifier("card.copy")
+            if let onPresent {
+                Button(action: onPresent) {
+                    Image(systemName: "play.rectangle")
+                        .font(.system(size: fontSize(.body)))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22 * scale, height: 18 * scale)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(hovering ? 1 : 0)
+                .help(String(localized: "Present Card"))
+                .accessibilityLabel(Text("Present Card"))
+                .accessibilityIdentifier("card.present")
+            }
             Button {
                 editorLabelForm = false
                 editorShown = true
@@ -239,20 +273,42 @@ struct CardView: View {
         title.isEmpty ? String(localized: "Title") : title
     }
 
-    /// Puts the card's title and notes on the pasteboard and flashes the button's icon green
-    /// for long enough to register as feedback without lingering past the next glance.
-    private func copyText() {
+    /// What VoiceOver and the UI tests read for the title. The placeholder is chrome, never
+    /// markdown; a real title goes through `CardMarkdown.plain` when markdown is on, so what's
+    /// read back matches what `LinkableText` draws instead of the raw `**title**` source.
+    private var faceTitleAX: String {
+        markdown && !title.isEmpty ? CardMarkdown.plain(faceTitle) : faceTitle
+    }
+
+    private func copyToPasteboard(_ text: String) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(card.clipboardText, forType: .string)
-        copied = true
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Copies `text`, then flashes `flag` on and off — long enough to register as feedback
+    /// without lingering past the next glance. Shared by every copy button that has an icon to
+    /// flash; a menu-only copy (no icon on screen once the menu closes) just calls
+    /// `copyToPasteboard` directly.
+    private func copyAndFlash(_ text: String, flag: Binding<Bool>) {
+        copyToPasteboard(text)
+        flag.wrappedValue = true
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.5))
-            copied = false
+            flag.wrappedValue = false
         }
     }
 
+    private func copyText() { copyAndFlash(card.clipboardText, flag: $copied) }
+    private func copyTitleOnly() { copyToPasteboard(card.title) }
+    private func copyNotesOnly() { copyAndFlash((card.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines), flag: $copiedNotes) }
+
     private var faceNotes: String {
         body_.isEmpty ? String(localized: "Add Notes") : (expanded ? body_ : firstLine)
+    }
+
+    /// Same rule as `faceTitleAX`, for the notes row.
+    private var faceNotesAX: String {
+        markdown && !body_.isEmpty ? CardMarkdown.plain(faceNotes) : faceNotes
     }
 
     /// "Click this row to edit it" — as a layer BEHIND the text rather than a gesture on it.
@@ -278,6 +334,33 @@ struct CardView: View {
             guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return }
             editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
         }
+    }
+
+    /// The window's field editor is one `NSTextView` shared by every text field in it, and it
+    /// registers for dragged types — so dropping an image on a card while its title or notes is
+    /// focused lands as inserted text (a file URL) instead of ever reaching the column's
+    /// `onDrop` attachment handler underneath. The fix has to be scoped IN TIME, never
+    /// globally: unregister the instant this field takes focus, put it back the instant it
+    /// blurs (`restoreFieldEditorDragTypes`), so every other field in the window keeps
+    /// accepting drops as normal. Same async gap as `moveCaretToEnd`: first responder only
+    /// becomes the field editor a turn after `focus` changes, so this has to wait a turn too,
+    /// or it finds the previous field's editor (or none yet).
+    private func suspendFieldEditorDragTypes() {
+        DispatchQueue.main.async {
+            guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return }
+            suspendedDraggedTypes = editor.registeredDraggedTypes
+            editor.unregisterDraggedTypes()
+            suspendedFieldEditor = editor
+        }
+    }
+
+    /// Undoes `suspendFieldEditorDragTypes`, putting back exactly what was there. Called on
+    /// blur and from `.onDisappear`, so a card that goes away mid-edit never leaves the shared
+    /// field editor unable to accept drops for the rest of the window's life.
+    private func restoreFieldEditorDragTypes() {
+        guard let editor = suspendedFieldEditor else { return }
+        editor.registerForDraggedTypes(suspendedDraggedTypes)
+        suspendedFieldEditor = nil
     }
 
     // MARK: - Cell
@@ -345,6 +428,8 @@ struct CardView: View {
             Button("Unlink") { update { $0.noteID = nil } }
         }
         Button("Copy Text", action: copyText)
+        Button("Copy Title", action: copyTitleOnly)
+        Button("Copy Notes", action: copyNotesOnly)
         Button(card.archived == nil ? "Archive Card" : "Unarchive Card") {
             try? store.setArchived(boardID: boardID, cardIDs: [card.id], card.archived == nil)
         }
@@ -497,17 +582,37 @@ struct CardView: View {
                     text: faceNotes,
                     font: .systemFont(ofSize: fontSize(.callout)),
                     color: body_.isEmpty ? .secondaryLabelColor : .labelColor,
-                    lineLimit: expanded ? 0 : 1
+                    lineLimit: expanded ? 0 : 1,
+                    markdown: markdown
                 )
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background { editTapLayer { expanded = true; editing = .notes; focus = .notes } }
                     .accessibilityElement(children: .ignore)
                     .accessibilityAddTraits(.isStaticText)
-                    .accessibilityLabel(faceNotes)
-                    .accessibilityValue(faceNotes)
+                    .accessibilityLabel(faceNotesAX)
+                    .accessibilityValue(faceNotesAX)
                     // No `.isButton` trait here either — see the title row's comment above.
                     .accessibilityAction(named: Text("Edit")) { expanded = true; editing = .notes; focus = .notes }
                     .accessibilityIdentifier("card.notes")
+            }
+            // Chrome-light on purpose: hidden rather than disabled when there's nothing to
+            // copy, since an always-visible-but-dead button next to a hover-revealed one reads
+            // as broken.
+            if !(card.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button(action: copyNotesOnly) {
+                    Image(systemName: copiedNotes ? "checkmark.circle.fill" : "doc.on.doc")
+                        .font(.system(size: fontSize(.body)))
+                        .foregroundStyle(copiedNotes ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+                        .frame(width: 22 * scale, height: 18 * scale)
+                        .contentShape(Rectangle())
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .buttonStyle(.plain)
+                .opacity(hovering || copiedNotes ? 1 : 0)
+                .help(String(localized: "Copy Notes"))
+                .accessibilityLabel(Text("Copy Notes"))
+                .accessibilityValue(copiedNotes ? "copied" : "")
+                .accessibilityIdentifier("card.copyNotes")
             }
             Button {
                 // Folding the row out from under a live field would leave the caret in a

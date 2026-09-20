@@ -64,6 +64,9 @@ private struct GeneralSettingsView: View {
     @AppStorage("dockClickAction") private var dockClickAction = "allNotes"
     // Read at launch by AppDelegate.applicationWillFinishLaunching via UserDefaults — same key.
     @AppStorage("menuBarOnly") private var menuBarOnly = false
+    // Read by the board card face (BoardColumnsView/CardView) via the same key — this toggle
+    // just exposes it in Settings.
+    @AppStorage("board.markdown") private var cardMarkdown = true
 
     var body: some View {
         ZStack {
@@ -110,6 +113,19 @@ private struct GeneralSettingsView: View {
                         .accessibilityIdentifier("settings.linkActivation")
                     }
                     .padding(14)
+
+                    Divider().opacity(0.45).padding(.leading, 44)
+
+                    Toggle(isOn: $cardMarkdown) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("Format card text as Markdown", systemImage: "bold.italic.underline")
+                            Text("Bold, italic and links on board cards.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(14)
+                    .accessibilityIdentifier("settings.board.markdown")
 
                     Divider().opacity(0.45).padding(.leading, 44)
 

@@ -80,6 +80,10 @@ struct NotesBrowserWindow: View {
     @State private var query = ""
     @State private var selection: Set<UUID> = []
     @SceneStorage("notesBrowser.folder") private var folderSelection: FolderSelection = .all
+    /// Sidebar ordering for the Notes / Boards sections, independent of each other — sorting
+    /// your folders alphabetically says nothing about how you want your boards ordered.
+    @AppStorage("sidebar.sort.notes") private var notesSort: SidebarSort = .manual
+    @AppStorage("sidebar.sort.boards") private var boardsSort: SidebarSort = .manual
 
     // New Folder / Rename alerts.
     @State private var folderNameDraft = ""
@@ -147,6 +151,18 @@ struct NotesBrowserWindow: View {
     private var matchByID: [UUID: NoteSearchMatch] {
         guard let searchMatches else { return [:] }
         return Dictionary(uniqueKeysWithValues: searchMatches.map { ($0.noteID, $0) })
+    }
+
+    /// Sidebar folder order under the current sort mode. `.manual` is `noteStore.folders`
+    /// itself, so `.onMove` indices line up with the store's own array in the common case.
+    private var sortedFolders: [String] {
+        SidebarSorter.sort(noteStore.folders, by: notesSort, name: { $0 }, created: { noteStore.folderCreated($0) })
+    }
+
+    /// Sidebar board order under the current sort mode — same manual/store relationship as
+    /// `sortedFolders`.
+    private var sortedBoards: [Board] {
+        SidebarSorter.sort(boardStore.boards, by: boardsSort, name: \.name, created: \.created)
     }
 
     var body: some View {
@@ -287,45 +303,165 @@ struct NotesBrowserWindow: View {
     @ViewBuilder
     private var folderSidebar: some View {
         List(selection: $folderSelection) {
-            folderRow(.all, name: String(localized: "All Notes"), icon: "tray.full", count: noteStore.notes.count)
-            folderRow(.defaultFolder, name: String(localized: "Notes"), icon: "folder", count: noteStore.notes.filter { $0.folder == nil || !noteStore.folders.contains($0.folder!) }.count)
-            ForEach(noteStore.folders, id: \.self) { name in
-                folderRow(.folder(name), name: name, icon: "folder", count: noteStore.notes.filter { $0.folder == name }.count)
-                    .contextMenu {
-                        Button("Rename…") { folderNameDraft = name; renameTarget = name }
-                        Button("Delete…", role: .destructive) { deleteTarget = name }
-                    }
-            }
-            folderRow(.trash, name: String(localized: "Trash"), icon: "trash", count: noteStore.trashedNotes.count)
-            actionRow(title: String(localized: "New Folder"), icon: "folder.badge.plus") {
-                folderNameDraft = ""
-                newFolderShown = true
-            }
-
-            Divider()
-
-            folderRow(.allBoards, name: String(localized: "All Boards"), icon: "square.grid.2x2",
-                      count: boardStore.boards.reduce(0) { $0 + matchingCards($1) })
-            ForEach(boardStore.boards) { board in
-                boardRow(board)
-                    .contextMenu {
-                        Button("Rename…") { boardNameDraft = board.name; boardRenameTarget = board.id }
-                        Button("Set Emoji…") { boardIconDraft = board.icon ?? ""; boardIconTarget = board.id }
-                        Button("Choose Image…") { chooseBoardImage(board.id) }
-                        if board.icon != nil || board.image != nil {
-                            Button("Remove Icon") { runFolderOp { try boardStore.clearBoardIcon(id: board.id) } }
+            Section {
+                folderRow(.all, name: String(localized: "All Notes"), icon: "tray.full", count: noteStore.notes.count)
+                folderRow(.defaultFolder, name: String(localized: "Notes"), icon: "folder", count: noteStore.notes.filter { $0.folder == nil || !noteStore.folders.contains($0.folder!) }.count)
+                ForEach(sortedFolders, id: \.self) { name in
+                    folderRow(.folder(name), name: name, icon: "folder", count: noteStore.notes.filter { $0.folder == name }.count)
+                        .contextMenu {
+                            Button("Rename…") { folderNameDraft = name; renameTarget = name }
+                            Button("Delete…", role: .destructive) { deleteTarget = name }
                         }
-                        Button("Delete…", role: .destructive) { boardDeleteTarget = board.id }
-                    }
+                }
+                .onMove { moveFolders($0, to: $1) }
+                folderRow(.trash, name: String(localized: "Trash"), icon: "trash", count: noteStore.trashedNotes.count)
+                actionRow(title: String(localized: "New Folder"), icon: "folder.badge.plus") {
+                    folderNameDraft = ""
+                    newFolderShown = true
+                }
+            } header: {
+                sectionHeader(String(localized: "Notes"))
             }
-            actionRow(title: String(localized: "New Board"), icon: "plus.rectangle.on.folder", identifier: "sidebar.newBoard") {
-                boardNameDraft = ""
-                newBoardShown = true
+
+            Section {
+                folderRow(.allBoards, name: String(localized: "All Boards"), icon: "square.grid.2x2",
+                          count: boardStore.boards.reduce(0) { $0 + matchingCards($1) })
+                ForEach(sortedBoards) { board in
+                    boardRow(board)
+                        .contextMenu {
+                            Button("Rename…") { boardNameDraft = board.name; boardRenameTarget = board.id }
+                            Button("Set Emoji…") { boardIconDraft = board.icon ?? ""; boardIconTarget = board.id }
+                            Button("Choose Image…") { chooseBoardImage(board.id) }
+                            if board.icon != nil || board.image != nil {
+                                Button("Remove Icon") { runFolderOp { try boardStore.clearBoardIcon(id: board.id) } }
+                            }
+                            Button("Delete…", role: .destructive) { boardDeleteTarget = board.id }
+                        }
+                }
+                .onMove { moveBoards($0, to: $1) }
+                // Board Trash sits above New Board here, mirroring Trash-above-New-Folder.
+                folderRow(.boardTrash, name: String(localized: "Board Trash"), icon: "trash", count: boardStore.trash.count)
+                actionRow(title: String(localized: "New Board"), icon: "plus.rectangle.on.folder", identifier: "sidebar.newBoard") {
+                    boardNameDraft = ""
+                    newBoardShown = true
+                }
+            } header: {
+                sectionHeader(String(localized: "Boards"))
             }
-            folderRow(.boardTrash, name: String(localized: "Board Trash"), icon: "trash", count: boardStore.trash.count)
         }
         .scrollContentBackground(.hidden)
         .navigationSplitViewColumnWidth(min: 150, ideal: 180)
+        .safeAreaInset(edge: .bottom) { studioFooter }
+    }
+
+    /// A section title with its sort menu pinned to the trailing edge — same row for both
+    /// the Notes and Boards sections, just a different title/binding/identifier.
+    /// A plain section title. The sort control deliberately does NOT live here: SwiftUI folds
+    /// a `List` section header and anything in it into one accessibility element, and a `Menu`
+    /// placed here never opens from a click on that element — the same `Menu` opens fine in the
+    /// board toolbar. Sorting lives in View ▸ Sort Notes/Boards By instead, which is both
+    /// native and reachable.
+    private func sectionHeader(_ title: String) -> some View {
+        // A distinct accessibility label, not bare `title`: the default "Notes" folder row
+        // already answers to that exact text, and existing UI tests find rows via
+        // `app.staticTexts[name]` — this header must not shadow that row.
+        Text(title).accessibilityLabel(Text("\(title) Section"))
+    }
+
+    /// Notes-section drag reorder. Forced back to `.manual` first: reordering rows you are
+    /// viewing in name/date order would otherwise look like nothing happened, since the next
+    /// re-sort would put the dragged row right back where it came from.
+    ///
+    /// ponytail: the destination is applied directly as an index into `noteStore.folders`'
+    /// own manual array. Exact when the section was already showing manual order (the common
+    /// case); if you drag while sorted by name/date the row lands close but not pixel-exact,
+    /// since the store has no "set whole order" API to replay a sorted-view drag onto — only
+    /// this positional move. The *item* being moved is always resolved by name first, though
+    /// — `from`/`to` are indices into `sortedFolders` (the displayed order), which is not
+    /// `noteStore.folders` (the raw order) whenever a sort mode is active.
+    private func moveFolders(_ source: IndexSet, to destination: Int) {
+        guard let from = source.first, sortedFolders.indices.contains(from),
+              let rawFrom = noteStore.folders.firstIndex(of: sortedFolders[from]) else { return }
+        notesSort = .manual
+        let to = destination > from ? destination - 1 : destination
+        runFolderOp { try noteStore.moveFolder(from: rawFrom, to: to) }
+    }
+
+    /// Boards-section drag reorder — same manual-flip and same positional-move caveat as
+    /// `moveFolders`, via `BoardStore.moveBoard(id:to:)`.
+    private func moveBoards(_ source: IndexSet, to destination: Int) {
+        guard let from = source.first, sortedBoards.indices.contains(from) else { return }
+        let id = sortedBoards[from].id
+        boardsSort = .manual
+        let to = destination > from ? destination - 1 : destination
+        runFolderOp { try boardStore.moveBoard(id: id, to: to) }
+    }
+
+    /// Bottom-of-sidebar studio footer: brand mark (opens graphicmeat.com) plus feature/bug/
+    /// sibling-app links. Pinned via the `.safeAreaInset` above so it never scrolls away with
+    /// a long folder/board list.
+    private var studioFooter: some View {
+        VStack(spacing: 8) {
+            Divider().opacity(0.45)
+
+            Button {
+                LinkOpener.open(AboutPanel.studio)
+            } label: {
+                if let mark = NSImage(named: "GraphicMeatLogo") {
+                    Image(nsImage: mark)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 22)
+                } else {
+                    Text("Graphic Meat")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .help(String(localized: "Graphic Meat"))
+            .accessibilityLabel(Text("Graphic Meat"))
+            .accessibilityIdentifier("sidebar.studio")
+
+            // Every one of these routes through LinkOpener, never NSWorkspace directly, so a
+            // UI test launched with -meatpad.suppressLinkOpen YES can click them without the
+            // machine changing hands to a browser or Mail.
+            HStack(spacing: 14) {
+                footerLink(systemImage: "lightbulb", label: String(localized: "Suggest a Feature"),
+                           identifier: "sidebar.suggest", url: suggestFeatureURL)
+                footerLink(systemImage: "ladybug", label: String(localized: "Report a Bug"),
+                           identifier: "sidebar.bug", url: URL(string: "https://github.com/GraphicMeat/MeatPad/issues/new")!)
+                footerLink(systemImage: "envelope.fill", label: String(localized: "MailVault"),
+                           identifier: "sidebar.mailvault", url: URL(string: "https://mailvaultapp.com")!)
+                footerLink(systemImage: "photo.on.rectangle.angled", label: String(localized: "PhotoBooks"),
+                           identifier: "sidebar.photobooks", url: URL(string: "https://graphicmeat.com/photobooks")!)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 4)
+        .padding(.bottom, 10)
+    }
+
+    /// `mailto:` with a percent-encoded subject naming the app. Built via `URLComponents`
+    /// rather than a hand-interpolated string so the encoding is never wrong.
+    private var suggestFeatureURL: URL {
+        var components = URLComponents(string: "mailto:prime@graphicmeat.com")!
+        components.queryItems = [URLQueryItem(name: "subject", value: String(localized: "MeatPad Feature Suggestion"))]
+        return components.url!
+    }
+
+    private func footerLink(systemImage: String, label: String, identifier: String, url: URL) -> some View {
+        Button {
+            LinkOpener.open(url)
+        } label: {
+            Image(systemName: systemImage)
+        }
+        .buttonStyle(.plain)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .help(label)
+        .accessibilityLabel(Text(label))
+        .accessibilityIdentifier(identifier)
     }
 
     /// "Boards" in the File menu, the menu-bar popover, and "Reveal in Board" all land here:

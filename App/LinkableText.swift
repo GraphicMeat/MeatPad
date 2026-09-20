@@ -109,6 +109,9 @@ struct LinkableText: NSViewRepresentable {
     let color: NSColor
     /// 0 means no limit — the same shape `NSTextContainer` uses.
     var lineLimit: Int = 0
+    /// Inline markdown on the card face — off for anything that must render exactly as typed
+    /// (the live `TextField`s never set this; only the read-only face does).
+    var markdown: Bool = false
 
     func makeNSView(context: Context) -> LinkLabel {
         let view = LinkLabel()
@@ -117,17 +120,79 @@ struct LinkableText: NSViewRepresentable {
     }
 
     func updateNSView(_ view: LinkLabel, context: Context) {
-        let links = LinkScanner.links(in: text)
-        let attributed = NSMutableAttributedString(
-            string: text,
-            attributes: [.font: font, .foregroundColor: color]
-        )
-        for link in links {
+        if markdown {
+            updateMarkdown(view)
+        } else {
+            let links = LinkScanner.links(in: text)
+            let attributed = NSMutableAttributedString(
+                string: text,
+                attributes: [.font: font, .foregroundColor: color]
+            )
+            for link in links {
+                attributed.addAttributes(
+                    [.foregroundColor: NSColor.linkColor, .underlineStyle: NSUnderlineStyle.single.rawValue],
+                    range: link.range
+                )
+            }
+            view.apply(attributed, links: links, lineLimit: lineLimit)
+        }
+    }
+
+    /// Renders `text` as inline markdown. The base font/colour go on FIRST, over the whole
+    /// string, so `CardMarkdown`'s own (unstyled) defaults never win over the card's type —
+    /// then each run's carried traits are layered back on top of that base.
+    ///
+    /// Link ranges are the trap: `[a](b)` reads longer than it draws, so a range measured
+    /// against the raw markdown would hit-test the wrong glyphs. Everything below is measured
+    /// against `rendered`/the converted `NSAttributedString`, never against `text`.
+    private func updateMarkdown(_ view: LinkLabel) {
+        let rendered = CardMarkdown.attributed(text)
+        let attributed = NSMutableAttributedString(rendered)
+        let fullRange = NSRange(location: 0, length: attributed.length)
+        attributed.addAttributes([.font: font, .foregroundColor: color], range: fullRange)
+
+        var markdownLinks: [DetectedLink] = []
+        for run in rendered.runs {
+            let nsRange = NSRange(run.range, in: rendered)
+            if let intent = run.inlinePresentationIntent {
+                var runFont = font
+                if intent.contains(.stronglyEmphasized) {
+                    runFont = NSFontManager.shared.convert(runFont, toHaveTrait: .boldFontMask)
+                }
+                if intent.contains(.emphasized) {
+                    runFont = NSFontManager.shared.convert(runFont, toHaveTrait: .italicFontMask)
+                }
+                if intent.contains(.code) {
+                    runFont = .monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
+                }
+                if runFont !== font { attributed.addAttribute(.font, value: runFont, range: nsRange) }
+                if intent.contains(.strikethrough) {
+                    attributed.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: nsRange)
+                }
+            }
+            if let link = run.link {
+                markdownLinks.append(DetectedLink(range: nsRange, url: link))
+                attributed.addAttributes(
+                    [.foregroundColor: NSColor.linkColor, .underlineStyle: NSUnderlineStyle.single.rawValue],
+                    range: nsRange
+                )
+            }
+        }
+
+        // Bare URLs the markdown parser didn't already turn into links — scanned on the
+        // RENDERED plain text, and any hit already covered by a markdown link is dropped
+        // rather than double-counted.
+        let bareLinks = LinkScanner.links(in: attributed.string).filter { bare in
+            !markdownLinks.contains { NSIntersectionRange($0.range, bare.range).length > 0 }
+        }
+        for link in bareLinks {
             attributed.addAttributes(
                 [.foregroundColor: NSColor.linkColor, .underlineStyle: NSUnderlineStyle.single.rawValue],
                 range: link.range
             )
         }
+
+        let links = (markdownLinks + bareLinks).sorted { $0.range.location < $1.range.location }
         view.apply(attributed, links: links, lineLimit: lineLimit)
     }
 

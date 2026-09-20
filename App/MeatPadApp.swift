@@ -65,6 +65,8 @@ struct MeatPadApp: App {
                 Menu("Language") { LanguageCommands() }
                 QuickOpenCommand()
                 ProjectSearchCommand()
+                Divider()
+                SidebarSortCommands()
             }
             // Route Cmd+F / Cmd+G through the responder chain to STTextView's
             // NSTextFinder integration. It reads the action from the sender's tag.
@@ -173,6 +175,41 @@ private struct NewFolderCommand: View {
         Button("New Folder") { browser?.newFolder() }
             .keyboardShortcut("n", modifiers: [.command, .shift])
             .disabled(browser == nil)
+    }
+}
+
+/// View ▸ Sort Notes By / Sort Boards By. In the menu bar rather than on the sidebar itself:
+/// SwiftUI folds a `List` section header and anything inside it into ONE accessibility element,
+/// and a `Menu` placed there never opens from a click on it — proven on the mini, where the
+/// identical `Menu` in the board toolbar opens every time. A menu-bar command is native, always
+/// reachable, and the one place a Mac user already looks for "sort this list".
+///
+/// `Toggle` per option rather than a `Picker`: it gives the checkmark for free and each option
+/// stays an addressable menu item.
+private struct SidebarSortCommands: View {
+    @AppStorage("sidebar.sort.notes") private var notesSort: SidebarSort = .manual
+    @AppStorage("sidebar.sort.boards") private var boardsSort: SidebarSort = .manual
+
+    var body: some View {
+        Menu("Sort Notes By") { options($notesSort) }
+        Menu("Sort Boards By") { options($boardsSort) }
+    }
+
+    /// No `accessibilityIdentifier` on these: SwiftUI builds the menu bar out of real
+    /// `NSMenuItem`s and does not carry identifiers onto them (an in-window `Menu` does).
+    /// The two submenus therefore share three titles, and anything reading them has to
+    /// descend through the submenu rather than search the whole app for a title.
+    @ViewBuilder
+    private func options(_ selection: Binding<SidebarSort>) -> some View {
+        Toggle("Manual", isOn: binding(selection, .manual))
+        Toggle("Name", isOn: binding(selection, .name))
+        Toggle("Date Created", isOn: binding(selection, .created))
+    }
+
+    /// Turning one on selects it; turning the checked one off is a no-op, because a list is
+    /// always in SOME order and "no sort at all" is not one of them.
+    private func binding(_ selection: Binding<SidebarSort>, _ mode: SidebarSort) -> Binding<Bool> {
+        Binding(get: { selection.wrappedValue == mode }, set: { if $0 { selection.wrappedValue = mode } })
     }
 }
 

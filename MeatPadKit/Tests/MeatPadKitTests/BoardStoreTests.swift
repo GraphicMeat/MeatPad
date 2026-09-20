@@ -96,6 +96,57 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertTrue(try makeStore().boards.isEmpty)
     }
 
+    func testCreateBoardSetsCreated() throws {
+        let before = Date()
+        let store = try makeStore()
+        let board = try store.createBoard(name: "a")
+        XCTAssertNotNil(board.created)
+        XCTAssertGreaterThanOrEqual(board.created!, before)
+    }
+
+    func testMoveBoardReordersAndSurvivesReload() throws {
+        let store = try makeStore()
+        let a = try store.createBoard(name: "a")
+        _ = try store.createBoard(name: "b")
+        let c = try store.createBoard(name: "c")
+        try store.moveBoard(id: c.id, to: 0)
+        XCTAssertEqual(store.boards.map(\.name), ["c", "a", "b"])
+        XCTAssertEqual(try makeStore().boards.map(\.name), ["c", "a", "b"])
+        _ = a
+    }
+
+    func testMoveBoardClampsToTheEnds() throws {
+        let store = try makeStore()
+        let a = try store.createBoard(name: "a")
+        _ = try store.createBoard(name: "b")
+        try store.moveBoard(id: a.id, to: 99)
+        XCTAssertEqual(store.boards.map(\.name), ["b", "a"])
+    }
+
+    func testMoveUnknownBoardThrows() throws {
+        let store = try makeStore()
+        let unknown = UUID()
+        XCTAssertThrowsError(try store.moveBoard(id: unknown, to: 0)) { error in
+            XCTAssertEqual(error as? BoardStoreError, .boardNotFound(unknown))
+        }
+    }
+
+    /// A board file written before `created`/`image` existed has neither key — both optional,
+    /// so it decodes unchanged, same stance as every other field added to `Board` after launch.
+    func testBoardFileWithoutCreatedOrImageDecodes() throws {
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let id = UUID()
+        let board: [String: Any] = ["id": id.uuidString, "name": "legacy", "extraColumns": [], "cards": []]
+        try JSONSerialization.data(withJSONObject: board)
+            .write(to: tempDir.appendingPathComponent("\(id.uuidString).json"))
+
+        let store = try makeStore()
+
+        XCTAssertEqual(store.boards.map(\.name), ["legacy"])
+        XCTAssertNil(store.boards.first?.created)
+        XCTAssertNil(store.boards.first?.image)
+    }
+
     // MARK: - self-healing load
 
     func testCorruptBoardFileIsSkippedNotFatal() throws {
@@ -245,7 +296,7 @@ final class BoardStoreTests: XCTestCase {
     func testDeletingADefaultColumnOnOneBoardNeverTouchesAnotherBoard() throws {
         let store = try makeStore()
         let a = try store.createBoard(name: "a")
-        let b = try store.createBoard(name: "b")
+        _ = try store.createBoard(name: "b")
         try store.deleteColumn(id: a.extraColumns[0].id, boardID: a.id)
 
         XCTAssertEqual(store.boards[0].extraColumns.map(\.name), ["In Progress", "Done"])
@@ -300,7 +351,9 @@ final class BoardStoreTests: XCTestCase {
 
         XCTAssertEqual(store.columns(for: store.boards[0]).map(\.name), ["Todo", "In Progress", "Done", "Blocked"])
         XCTAssertEqual(store.columns(for: store.boards[1]).map(\.name), ["Todo", "In Progress", "Done"])
-        XCTAssertEqual(try makeStore().boards[0].extraColumns.map(\.name), ["Blocked"])
+        // `extraColumns` is the board's whole column list since columns became per-board —
+        // the name is a leftover from the shared-global-list model it replaced.
+        XCTAssertEqual(try makeStore().boards[0].extraColumns.map(\.name), ["Todo", "In Progress", "Done", "Blocked"])
     }
 
     func testRenameColumnKeepsCardMembership() throws {
@@ -368,7 +421,7 @@ final class BoardStoreTests: XCTestCase {
         let a = try store.createBoard(name: "A")
         let b = try store.createBoard(name: "B")
         try store.addExtraColumn(boardID: a.id, name: "Extra")
-        let extra = store.boards[0].extraColumns[0].id
+        let extra = try XCTUnwrap(store.boards[0].extraColumns.first { $0.name == "Extra" }).id
         try store.moveColumn(id: extra, to: 0, onBoard: a.id)
         XCTAssertEqual(store.columns(for: store.boards[0]).map(\.name), ["Extra", "Todo", "In Progress", "Done"])
         XCTAssertEqual(store.columns(for: store.boards[1]).map(\.name), ["Todo", "In Progress", "Done"])
@@ -648,7 +701,8 @@ final class BoardStoreTests: XCTestCase {
         let store = try makeStore()
         let board = try store.createBoard(name: "a")
         try store.addExtraColumn(boardID: board.id, name: "Blocked")
-        XCTAssertNil(store.boards[0].extraColumns[0].emoji)
+        // The seeded defaults carry their own emoji; a column the user adds starts with none.
+        XCTAssertNil(try XCTUnwrap(store.boards[0].extraColumns.last).emoji)
     }
 
     // MARK: - labels

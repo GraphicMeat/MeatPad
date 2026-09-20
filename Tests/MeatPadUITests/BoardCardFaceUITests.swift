@@ -73,6 +73,19 @@ final class BoardCardFaceUITests: XCTestCase {
         XCTAssertTrue(poll(timeout: 4) { (copy.value as? String) != "copied" })
     }
 
+    /// The notes row carries its own copy button: the header's copies the whole card, this
+    /// one copies only what is under it.
+    func testTheNotesCopyButtonCopiesOnlyTheNotes() throws {
+        notes.hover()
+        let copy = app.buttons["card.copyNotes"].firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 5), "no copy button on the notes row")
+        NSPasteboard.general.clearContents()
+        copy.click()
+        XCTAssertTrue(poll { NSPasteboard.general.string(forType: .string) == "first line\nsecond line" },
+                      "the notes copy put \(String(describing: NSPasteboard.general.string(forType: .string))) on the pasteboard")
+        XCTAssertEqual(copy.value as? String, "copied")
+    }
+
     func testDraggingTheTitleMovesTheCardToAnotherColumn() throws {
         let target = app.staticTexts["Doing"].firstMatch
         XCTAssertTrue(target.waitForExistence(timeout: 5))
@@ -149,11 +162,16 @@ final class BoardCardFaceUITests: XCTestCase {
     }
 
     /// The presented copy of a card carries the same tiles, and the overlay sits over the
-    /// board's own double-click monitor — Quick Look has to survive both.
+    /// board's own event monitors — Quick Look has to survive both.
     func testDoubleClickingAnAttachmentInThePresentedCardOpensQuickLook() throws {
-        title.doubleClick()
+        // Presenting is a button on the card now, not a double-click on it — the double-click
+        // belonged as much to the field editor underneath as to the card.
+        title.hover()
+        let present = app.buttons["card.present"].firstMatch
+        XCTAssertTrue(present.waitForExistence(timeout: 5), "no present button on the card")
+        present.click()
         XCTAssertTrue(app.buttons["board.present.close"].waitForExistence(timeout: 5),
-                      "the double click presented nothing")
+                      "the present button presented nothing")
 
         // Two tiles carry the identifier now — the row behind the backdrop and the presented
         // copy, which is the bigger of the two.
@@ -263,8 +281,15 @@ final class BoardCardFaceUITests: XCTestCase {
     /// Every sidebar row — a board, "All Boards", a folder, a note — is a plain `Text`, so one
     /// query drives them all, the same way `BoardIconUITests`/`BoardLabelUITests` click a row
     /// by its label.
+    /// Scoped to the sidebar outline, not the whole app: a one-letter board name also matches
+    /// that board's badge on every card in the All Boards overview, and which of the two an
+    /// app-wide query answers with depends on accessibility-tree order — so an unscoped lookup
+    /// silently clicks a card badge instead of the row.
     private func selectSidebarRow(_ name: String) {
-        let row = app.staticTexts[name].firstMatch
+        let sidebar = app.outlines["Sidebar"].staticTexts[name].firstMatch
+        // Note rows live in the middle column, not the sidebar outline, so fall back to an
+        // app-wide lookup for those.
+        let row = sidebar.waitForExistence(timeout: 3) ? sidebar : app.staticTexts[name].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 5), "no sidebar row named “\(name)”")
         row.click()
     }

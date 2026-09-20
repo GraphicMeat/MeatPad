@@ -1,8 +1,8 @@
 import XCTest
 
 /// Showing a card, and showing a board. Both are pure layout — the card is scaled by an
-/// environment value that no unit test can see, and the double-click that presents it is
-/// caught by an AppKit event monitor rather than a SwiftUI gesture.
+/// environment value that no unit test can see, and the button that presents it only earns
+/// its space in the card header while the pointer is over the card.
 final class BoardPresentUITests: XCTestCase {
     private var app: XCUIApplication!
     private var storageRoot: URL!
@@ -39,10 +39,10 @@ final class BoardPresentUITests: XCTestCase {
             .allElementsBoundByIndex.map(\.frame.width).max() ?? 0
     }
 
-    func testDoubleClickingACardPresentsItAndPlusGrowsIt() throws {
-        title.doubleClick()
+    func testThePresentButtonPresentsTheCardAndPlusGrowsIt() throws {
+        try present()
         let close = app.buttons["board.present.close"]
-        XCTAssertTrue(close.waitForExistence(timeout: 5), "the double click presented nothing")
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "the present button presented nothing")
 
         let presented = widestTitle()
         app.buttons["board.present.larger"].click()
@@ -56,9 +56,9 @@ final class BoardPresentUITests: XCTestCase {
     /// The +/- and close buttons are parked in a corner of the overlay: growing the card must
     /// not walk them out from under the cursor between two clicks.
     func testPresentControlsStayPutWhenTheCardGrows() throws {
-        title.doubleClick()
+        try present()
         let close = app.buttons["board.present.close"]
-        XCTAssertTrue(close.waitForExistence(timeout: 5), "the double click presented nothing")
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "the present button presented nothing")
         let parked = close.frame
 
         let grown = widestTitle()
@@ -84,6 +84,24 @@ final class BoardPresentUITests: XCTestCase {
 
         toggle.click()
         XCTAssertTrue(poll { abs(self.widestTitle() - normal) < 1 }, "leaving it did not restore the size")
+    }
+
+    /// A double-click on a card no longer presents it — the gesture belonged to the field
+    /// editor underneath as much as to the card, so it is a button now. Hover first: the
+    /// button is invisible until the pointer is over the card.
+    private func present() throws {
+        title.hover()
+        let button = app.buttons["card.present"].firstMatch
+        XCTAssertTrue(button.waitForExistence(timeout: 5), "no present button on the card")
+        button.click()
+    }
+
+    /// The double-click that used to present a card must not do it any more: it was taking
+    /// the second click of every title edit with it.
+    func testDoubleClickingACardNoLongerPresentsIt() throws {
+        title.doubleClick()
+        XCTAssertFalse(app.buttons["board.present.close"].waitForExistence(timeout: 3),
+                       "a double click still presented the card")
     }
 
     /// Layout is signed off by eye from these — the runner's own tmp dir, because its sandbox

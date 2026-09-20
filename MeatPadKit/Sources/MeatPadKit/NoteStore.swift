@@ -5,6 +5,8 @@ public enum NoteStoreError: Error, Equatable {
     case folderExists(String)
     case folderNotFound(String)
     case invalidFolderName
+    /// `moveFolder`'s `source` wasn't a real index into `folders`.
+    case invalidIndex
 }
 
 /// Owns the on-disk collection of notes: one `<uuid>.txt` (contents) + `<uuid>.json`
@@ -21,9 +23,17 @@ public final class NoteStore: ObservableObject {
     /// Deliberately NOT added to `searchIndex` — trash isn't searchable.
     @Published public private(set) var trashedNotes: [Note] = []
 
-    /// User-created folders in creation order. The default "Notes" folder is implicit
-    /// and never appears here.
+    /// User-created folders. This is the sidebar's MANUAL order once `moveFolder` has been
+    /// used — it used to always be creation order, which is exactly why `folderDates` exists
+    /// as a separate sidecar: reordering `folders` must not lose when each one was made. The
+    /// default "Notes" folder is implicit and never appears here.
     @Published public private(set) var folders: [String] = []
+
+    /// Sidecar of `folders.json`: creation date per folder name, for the `.created` sidebar
+    /// sort. Self-healing like `folders` itself — missing or corrupt reads as no dates, never
+    /// a launch failure. Not `@Published`: it never changes except alongside `folders`, whose
+    /// own publish already drives a re-render.
+    private var folderDates: [String: Date] = [:]
 
     /// In-memory full-text index, kept in sync with every content-mutating disk write
     /// (never persisted — rebuilt from disk on each launch). Folder ops don't touch
@@ -55,6 +65,7 @@ public final class NoteStore: ObservableObject {
         notes = try Self.loadNotes(from: rootURL)
         trashedNotes = (try? Self.loadNotes(from: trashURL)) ?? [] // already sorted, most recent first
         folders = Self.loadFolders(from: foldersURL)
+        folderDates = Self.loadFolderDates(from: folderDatesURL)
         // Eager: notes are small, and search must work before the user touches anything.
         for note in notes {
             let contents = (try? String(contentsOf: textURL(for: note.id), encoding: .utf8)) ?? ""
@@ -183,6 +194,26 @@ public final class NoteStore: ObservableObject {
         let updated = folders + [trimmed]
         try saveFolders(updated)
         folders = updated
+        folderDates[trimmed] = Date()
+        saveFolderDates()
+    }
+
+    /// nil for a folder with no recorded date — either it predates this sidecar, or the
+    /// sidecar failed to load, both of which self-heal to "unknown" rather than a crash.
+    public func folderCreated(_ name: String) -> Date? {
+        folderDates[name]
+    }
+
+    /// Reorders `folders` itself — the sidebar's drag order. `destination` is clamped like
+    /// `BoardStore.moveColumn`'s; `source` must be a real index, since unlike a column move
+    /// there's no id here to look up by.
+    public func moveFolder(from source: Int, to destination: Int) throws {
+        guard folders.indices.contains(source) else { throw NoteStoreError.invalidIndex }
+        var updated = folders
+        let name = updated.remove(at: source)
+        updated.insert(name, at: max(0, min(destination, updated.count)))
+        try saveFolders(updated)
+        folders = updated
     }
 
     /// `old` is matched exact (not case-insensitive) by design — callers pass names
@@ -198,6 +229,10 @@ public final class NoteStore: ObservableObject {
         updated[idx] = trimmed
         try saveFolders(updated)
         folders = updated
+        if let date = folderDates.removeValue(forKey: old) {
+            folderDates[trimmed] = date
+            saveFolderDates()
+        }
         // Rewrite member sidecars; keep going on individual failures, surface the first
         // at the end (per-note sidecars are the source of truth, reload stays consistent).
         var firstError: Error?
@@ -224,6 +259,9 @@ public final class NoteStore: ObservableObject {
         let updated = folders.filter { $0 != name }
         try saveFolders(updated)
         folders = updated
+        if folderDates.removeValue(forKey: name) != nil {
+            saveFolderDates()
+        }
         if let firstError { throw firstError }
     }
 
@@ -263,6 +301,25 @@ public final class NoteStore: ObservableObject {
 
     private func saveFolders(_ list: [String]) throws {
         try Self.encoder.encode(list).write(to: foldersURL, options: .atomic)
+    }
+
+    private var folderDatesURL: URL {
+        rootURL.appendingPathComponent("folderDates.json")
+    }
+
+    /// Self-healing like `loadFolders`: missing or corrupt reads as no dates.
+    private static func loadFolderDates(from url: URL) -> [String: Date] {
+        guard let data = try? Data(contentsOf: url),
+              let dates = try? decoder.decode([String: Date].self, from: data) else { return [:] }
+        return dates
+    }
+
+    /// Best-effort, unlike `saveFolders`: a failed write here only means the next launch
+    /// can't answer `folderCreated` for the affected name, which the whole sidecar is already
+    /// designed to shrug off — it must never take down the folder mutation that triggered it,
+    /// since `folders.json` (the source of truth) has already been written by the time this runs.
+    private func saveFolderDates() {
+        try? Self.encoder.encode(folderDates).write(to: folderDatesURL, options: .atomic)
     }
 
     /// UserDefaults key for an absolute-path override of the storage base (the `MeatPad`

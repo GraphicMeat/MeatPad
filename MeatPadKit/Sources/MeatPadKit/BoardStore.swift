@@ -185,7 +185,7 @@ public final class BoardStore: ObservableObject {
 
     @discardableResult
     public func createBoard(name: String) throws -> Board {
-        let board = Board(name: try validated(name), extraColumns: defaultColumnTemplate)
+        let board = Board(name: try validated(name), extraColumns: defaultColumnTemplate, created: Date())
         try write(board)
         boards.append(board)
         try saveIndex()
@@ -196,6 +196,14 @@ public final class BoardStore: ObservableObject {
         let idx = try boardIndex(id)
         boards[idx].name = try validated(name)
         try persist(at: idx)
+    }
+
+    /// Reorders `boards` itself — the sidebar's manual drag order, same shape as `moveColumn`.
+    public func moveBoard(id: UUID, to index: Int) throws {
+        guard let from = boards.firstIndex(where: { $0.id == id }) else { throw BoardStoreError.boardNotFound(id) }
+        let board = boards.remove(at: from)
+        boards.insert(board, at: max(0, min(index, boards.count)))
+        try saveIndex()
     }
 
     /// Trashes the whole board — cards, columns, icon image and all — rather than deleting it.
@@ -256,6 +264,67 @@ public final class BoardStore: ObservableObject {
     private func dropBoardImage(at idx: Int) {
         if let name = boards[idx].image { try? attachments.remove(name, from: boards[idx].id) }
         boards[idx].image = nil
+    }
+
+    // MARK: - Column icon
+
+    /// A column's look is one thing, so an emoji drops whatever image it had — and the file
+    /// with it, because nothing would ever reference it again. Mirrors "Board icon" above;
+    /// `boardID` is what locates the column, since a default column's id is shared across
+    /// every board's own copy of it (see `defaultColumnTemplate`).
+    public func setColumnIcon(id: UUID, emoji: String, boardID: UUID) throws {
+        let idx = try boardIndex(boardID)
+        let colIdx = try columnIndex(id, boardIndex: idx)
+        let trimmed = try validated(emoji)
+        dropColumnImage(at: colIdx, boardIndex: idx)
+        boards[idx].extraColumns[colIdx].emoji = trimmed
+        try persist(at: idx)
+    }
+
+    /// The same rule from the other side: an image drops the emoji, and the image it replaces.
+    /// The write comes first — a rejected extension must leave the column exactly as it was.
+    public func setColumnImage(id: UUID, data: Data, ext: String, boardID: UUID) throws {
+        let idx = try boardIndex(boardID)
+        let colIdx = try columnIndex(id, boardIndex: idx)
+        let name = try attachments.add(data, ext: ext, to: id)
+        dropColumnImage(at: colIdx, boardIndex: idx)
+        boards[idx].extraColumns[colIdx].image = name
+        boards[idx].extraColumns[colIdx].emoji = nil
+        try persist(at: idx)
+    }
+
+    /// Back to the default glyph: no emoji, no image, no orphaned file.
+    public func clearColumnIcon(id: UUID, boardID: UUID) throws {
+        let idx = try boardIndex(boardID)
+        let colIdx = try columnIndex(id, boardIndex: idx)
+        dropColumnImage(at: colIdx, boardIndex: idx)
+        boards[idx].extraColumns[colIdx].emoji = nil
+        try persist(at: idx)
+    }
+
+    /// The file a column's image lives in, or nil when it has none. Takes the column itself,
+    /// not its id, on purpose: the default Todo/In Progress/Done ids are shared across every
+    /// board, so two boards' copies land in the same attachment directory and only the
+    /// column's own `image` name says which file is whose. An id-keyed lookup would hand the
+    /// first board's picture to every other board's Todo.
+    public func columnImageURL(_ column: BoardColumn) -> URL? {
+        column.image.map { attachments.url($0, for: column.id) }
+    }
+
+    /// Forgets the column's image and deletes its file. Best-effort on the file, same stance
+    /// as `dropBoardImage`.
+    private func dropColumnImage(at colIdx: Int, boardIndex idx: Int) {
+        if let name = boards[idx].extraColumns[colIdx].image {
+            try? attachments.remove(name, from: boards[idx].extraColumns[colIdx].id)
+        }
+        boards[idx].extraColumns[colIdx].image = nil
+    }
+
+    private func columnIndex(_ id: UUID, boardIndex idx: Int) throws -> Int {
+        guard let colIdx = boards[idx].extraColumns.firstIndex(where: { $0.id == id }) else {
+            throw BoardStoreError.columnNotFound(id)
+        }
+        return colIdx
     }
 
     // MARK: - Columns (composition)

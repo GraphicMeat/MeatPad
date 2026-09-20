@@ -146,15 +146,21 @@ final class BoardIconTests: XCTestCase {
         XCTAssertNil(try makeStore().boards.first?.image)
     }
 
-    func testDeletingABoardDeletesItsImageFile() throws {
+    /// Deleting a board trashes it, so its image has to outlive the delete — restoring a board
+    /// that came back without its icon would be a silent data loss. The file goes when the
+    /// trash entry is purged, and not before.
+    func testABoardsImageSurvivesTheDeleteAndGoesWithThePurge() throws {
         let store = try makeStore()
         let board = try store.createBoard(name: "launch")
         try store.setBoardImage(id: board.id, data: png, ext: "png")
         let url = try XCTUnwrap(store.boardImageURL(board.id))
 
         try store.deleteBoard(id: board.id)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path),
+                      "the image went before the trash entry did")
 
-        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path), "the board's image outlived the board")
+        try store.purgeTrashEntry(id: try XCTUnwrap(store.trash.first).id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path), "the purge orphaned the image")
     }
 
     // MARK: - Older files

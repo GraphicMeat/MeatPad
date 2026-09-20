@@ -27,6 +27,18 @@ struct BoardColumnsView: View {
     @AppStorage("board.cardDisplay") private var display: CardDisplay = .full
     /// Everything a step bigger, for showing a board to a room rather than working in it.
     @AppStorage("board.presentation") private var presentation = false
+    /// All-boards only: which (board, column) pairs pool into the synthetic "Combined" column.
+    /// Stored as one string (`BoardColumnMerge`'s wire format) rather than `Set<ColumnKey>`
+    /// directly — `AppStorage` needs a `RawRepresentable`/primitive value, and a bespoke one
+    /// for a single feature is more machinery than a parse/serialize pair.
+    @AppStorage("board.mergedColumns") private var mergedColumnsRaw = ""
+
+    private var mergedColumns: Set<ColumnKey> {
+        get { BoardColumnMerge.parse(mergedColumnsRaw) }
+        // `nonmutating` because the storage behind it is `@AppStorage`, whose own setter is:
+        // a plain `set` would need a mutable `self`, which a SwiftUI body closure never has.
+        nonmutating set { mergedColumnsRaw = BoardColumnMerge.serialize(newValue) }
+    }
 
     /// The window's undo manager. Handed to the store on appear so every card edit lands on
     /// the same stack ⌘Z and Edit ▸ Undo already pull from.
@@ -40,6 +52,10 @@ struct BoardColumnsView: View {
     @State private var renameTarget: ColumnRef?
     @State private var deleteTarget: ColumnRef?
     @State private var addColumnTarget: AddColumnScope?
+    /// A separate draft from `nameDraft`: the rename sheet and this one are both one text
+    /// field, and sharing the string would leak a half-typed rename into the emoji (or back).
+    @State private var iconDraft = ""
+    @State private var columnIconTarget: ColumnRef?
     /// A multi-item paste waiting on the user's call: split it, or keep it as one card.
     @State private var splitTarget: SplitTarget?
     /// What the live drag would do right now — drives the insertion bar, the column highlight
@@ -59,10 +75,10 @@ struct BoardColumnsView: View {
     @State private var presentedCard: UUID?
     @State private var presentScale: CGFloat = 1.8
     @State private var presentedHeight: CGFloat = 0
-    /// Which card the pointer is over: the double-click monitor below gets a point, not a view.
+    /// Which card the pointer is over — what the outer `.onTapGesture` reads to tell a plain
+    /// click on a card (which must not clear the selection) from a click on empty column space.
     @State private var hoveredCard: UUID?
-    @State private var clickMonitor: Any?
-    /// Esc/⌫/⌦/⌘A, installed and removed alongside `clickMonitor`.
+    /// Esc/⌫/⌦/⌘A.
     @State private var keyMonitor: Any?
     /// This view's hosting window, so the key monitor can ignore events meant for another
     /// window. Captured once via `BoardWindowAccessor`; a plain `NSWindow?` would work too, but
@@ -110,8 +126,21 @@ struct BoardColumnsView: View {
         var id: UUID { card.id }
     }
 
+    /// Fixed like `BoardStore`'s own default column ids — stable SwiftUI identity for the
+    /// synthetic Combined column across redraws. Never a real column of any board.
+    private static let combinedID = UUID(uuidString: "5D091EAF-B0A5-4000-8000-0000000000C0")!
+
     private var renderedColumns: [BoardColumn] {
-        board.map { store.columns(for: $0) } ?? store.defaultColumnTemplate
+        guard let board else {
+            var columns = store.defaultColumnTemplate
+            // First, so `visibleOrder` (which flatMaps this) lists Combined's cards before the
+            // pooled defaults — matching the left-to-right order the view actually draws.
+            if !mergedColumns.isEmpty {
+                columns.insert(BoardColumn(id: Self.combinedID, name: String(localized: "Combined")), at: 0)
+            }
+            return columns
+        }
+        return store.columns(for: board)
     }
 
     /// Every visible card, left-to-right by column and top-to-bottom within it, then "Other" —
@@ -155,6 +184,7 @@ struct BoardColumnsView: View {
                 .accessibilityValue(showArchived ? "on" : "off")
                 .accessibilityIdentifier("board.showArchived")
                 displayPicker
+                if board == nil { combineMenu }
                 Button {
                     undoManager?.undo()
                 } label: {
@@ -213,12 +243,9 @@ struct BoardColumnsView: View {
         .onAppear {
             store.undoManager = undoManager
             canUndo = undoManager?.canUndo ?? false
-            installDoubleClickMonitor()
             installKeyMonitor()
         }
         .onDisappear {
-            if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
-            clickMonitor = nil
             if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
             keyMonitor = nil
         }
@@ -232,6 +259,13 @@ struct BoardColumnsView: View {
             NamePromptSheet(title: "Rename Column", action: "Rename", name: $nameDraft) {
                 if let target = renameTarget {
                     try? store.renameColumn(id: target.id, to: nameDraft, boardID: target.boardID)
+                }
+            }
+        }
+        .sheet(isPresented: columnIconPresented) {
+            NamePromptSheet(title: "Set Column Emoji", action: "Set", name: $iconDraft) {
+                if let target = columnIconTarget {
+                    try? store.setColumnIcon(id: target.id, emoji: iconDraft, boardID: target.boardID)
                 }
             }
         }
@@ -291,7 +325,57 @@ struct BoardColumnsView: View {
         .accessibilityIdentifier("board.cardDisplay")
     }
 
+    /// All-boards only: picks per-board columns to pool into one synthetic "Combined" column
+    /// instead of their board's own pooled bucket — see `mergedColumns`/`renderedColumns`. A
+    /// `Menu` costs nothing to add when nothing is merged, unlike a popover's own state.
+    /// `Section` per board, since two boards' columns otherwise share no visual grouping.
+    @ViewBuilder
+    private var combineMenu: some View {
+        Menu {
+            ForEach(store.boards) { board in
+                Section(board.name) {
+                    ForEach(store.columns(for: board)) { column in
+                        Toggle(column.name, isOn: mergeBinding(ColumnKey(boardID: board.id, columnID: column.id)))
+                            .accessibilityIdentifier("board.combine.\(board.id.uuidString).\(column.id.uuidString)")
+                    }
+                }
+            }
+            Divider()
+            Button("Clear") { mergedColumns = [] }
+                .disabled(mergedColumns.isEmpty)
+        } label: {
+            Image(systemName: "rectangle.3.group")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(String(localized: "Combine Columns"))
+        .accessibilityLabel(Text("Combine Columns"))
+        .accessibilityIdentifier("board.combine")
+    }
+
+    /// Pulled out of `combineMenu`'s `ForEach` rather than an inline `Binding(get:set:)` there —
+    /// same type-checker-budget reason as `columnIconPresented` below, just for a closure
+    /// instead of a computed property.
+    private func mergeBinding(_ key: ColumnKey) -> Binding<Bool> {
+        Binding(
+            get: { mergedColumns.contains(key) },
+            set: { isOn in
+                var keys = mergedColumns
+                if isOn { keys.insert(key) } else { keys.remove(key) }
+                mergedColumns = keys
+            }
+        )
+    }
+
     private var addColumnTitle: LocalizedStringKey { "New Column" }
+
+    /// Hoisted out of the modifier chain, same reason `NotesBrowserWindow.boardIconPresented`
+    /// is: this body already chains several sheets/dialogs, and an inline `Binding(get:set:)`
+    /// here pushes the type-checker past its budget.
+    private var columnIconPresented: Binding<Bool> {
+        Binding(get: { columnIconTarget != nil }, set: { if !$0 { columnIconTarget = nil } })
+    }
 
     private func ref(for column: BoardColumn, on board: Board) -> ColumnRef {
         ColumnRef(id: column.id, boardID: board.id, name: column.name, isDone: column.isDone)
@@ -303,6 +387,39 @@ struct BoardColumnsView: View {
     private func fallbackColumnName(after target: ColumnRef?) -> String {
         guard let target, let owner = store.boards.first(where: { $0.id == target.boardID }) else { return "" }
         return store.columns(for: owner).first(where: { $0.id != target.id })?.name ?? ""
+    }
+
+    /// A column's own look: its image, else its emoji, else nothing at all. Unlike
+    /// `NotesBrowserWindow.boardIcon(_:)` — which this otherwise mirrors exactly — there is no
+    /// third, default-glyph branch: a column that has neither must draw exactly as it does
+    /// today, or every existing board would sprout an icon it never had.
+    @ViewBuilder
+    private func columnIcon(_ column: BoardColumn) -> some View {
+        Group {
+            // ponytail: decoded per body pass, same stance (and same ceiling) as `boardIcon`.
+            if let url = store.columnImageURL(column), let image = NSImage(contentsOf: url) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 16 * columnScale, height: 16 * columnScale)
+                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            } else if let emoji = column.emoji {
+                Text(emoji)
+            }
+        }
+        .accessibilityRepresentation { Text(column.image != nil ? "image" : (column.emoji ?? "none")) }
+        .accessibilityIdentifier("column.icon.\(column.id.uuidString)")
+    }
+
+    /// Panel is app-modal, so the board view is untouched while it is up; the target was
+    /// captured before it opened, so a column deleted underneath simply fails the store call.
+    /// Mirrors `NotesBrowserWindow.chooseBoardImage(_:)`.
+    private func chooseColumnImage(_ target: ColumnRef) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.prompt = String(localized: "Choose")
+        guard panel.runModal() == .OK, let url = panel.url, let data = try? Data(contentsOf: url) else { return }
+        try? store.setColumnImage(id: target.id, data: data, ext: AttachmentImport.ext(of: url), boardID: target.boardID)
     }
 
     // MARK: - Presenting
@@ -319,29 +436,6 @@ struct BoardColumnsView: View {
             return CardRef(board: board, card: card)
         }
         return nil
-    }
-
-    /// A double-click on a card is caught with an AppKit monitor rather than a
-    /// `TapGesture(count: 2)`: the first click on a title or notes row swaps the label for a
-    /// live `NSTextField`, which then takes the second click for its own caret — SwiftUI never
-    /// sees a double tap on the row. The event is returned untouched; this only listens.
-    private func installDoubleClickMonitor() {
-        guard clickMonitor == nil else { return }
-        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
-            guard event.clickCount == 2, presentedCard == nil, let id = hoveredCard,
-                  !isAttachmentTile(event)
-            else { return event }
-            // The first click may have opened a field; blur it, or the presented copy and the
-            // row underneath both hold a caret.
-            NSApp.keyWindow?.makeFirstResponder(nil)
-            presentedCard = id
-            return event
-        }
-    }
-
-    /// An attachment tile's own double-click (Quick Look) wins over presenting the card.
-    private func isAttachmentTile(_ event: NSEvent) -> Bool {
-        DoubleClickCatcherView.catcher(for: event) != nil
     }
 
     /// Esc clears the selection, ⌫/⌦ deletes it, ⌘A selects every visible card — all gated on
@@ -411,9 +505,15 @@ struct BoardColumnsView: View {
                 Text("\(selection.ids.count) Selected")
                     .font(.callout.weight(.medium))
                     .accessibilityIdentifier("board.selection.count")
+                // `role: .destructive` alone renders grey in a `.borderless` bar — there's no
+                // filled/bordered style here for the system to hang its semantic colour on —
+                // so red/green have to be spelled out explicitly. `role: .destructive` stays on
+                // Delete anyway, for the keyboard/menu semantics that role still carries.
                 Button(allSelectedArchived ? "Unarchive" : "Archive", action: archiveSelected)
+                    .foregroundStyle(.green)
                     .accessibilityIdentifier("board.selection.archive")
                 Button("Delete", role: .destructive, action: deleteSelected)
+                    .foregroundStyle(.red)
                     .accessibilityIdentifier("board.selection.delete")
                 Button {
                     selection.clear()
@@ -506,20 +606,46 @@ struct BoardColumnsView: View {
                 .filter { $0.matches(labels: labelFilter, text: searchQuery, showArchived: showArchived) }
                 .map { CardRef(board: live, card: $0) }
         }
-        return store.boards.flatMap { board in
-            store.cards(in: board, column: column.id)
+        if column.id == Self.combinedID { return combinedCards }
+        // HARD DE-DUP RULE: a board whose copy of this pooled column was picked into Combined
+        // is skipped here entirely, or its cards would render twice — once here, once there.
+        return store.boards.flatMap { owner -> [CardRef] in
+            guard !mergedColumns.contains(ColumnKey(boardID: owner.id, columnID: column.id)) else { return [] }
+            return store.cards(in: owner, column: column.id)
                 .filter { $0.matches(labels: labelFilter, text: searchQuery, showArchived: showArchived) }
-                .map { CardRef(board: board, card: $0) }
+                .map { CardRef(board: owner, card: $0) }
+        }
+    }
+
+    /// All-boards only: every card behind a picked `mergedColumns` pair, pooled into the
+    /// synthetic Combined column. Walked board-by-board (in `store.boards` order) and
+    /// column-by-column (in that board's own `columns(for:)` order) rather than iterating the
+    /// `Set<ColumnKey>` directly, so the result — and with it `visibleOrder` — has a stable,
+    /// readable order instead of whatever order the set happens to hash into.
+    private var combinedCards: [CardRef] {
+        store.boards.flatMap { owner -> [CardRef] in
+            store.columns(for: owner)
+                .filter { mergedColumns.contains(ColumnKey(boardID: owner.id, columnID: $0.id)) }
+                .flatMap { column in
+                    store.cards(in: owner, column: column.id)
+                        .filter { $0.matches(labels: labelFilter, text: searchQuery, showArchived: showArchived) }
+                        .map { CardRef(board: owner, card: $0) }
+                }
         }
     }
 
     /// All-boards only: cards parked in a column the default template cannot represent — a
-    /// board's own extra column, like "Features".
+    /// board's own extra column, like "Features". Excludes any column merged into Combined,
+    /// for the same de-dup reason as `cards(in:)`.
     private var otherCards: [CardRef] {
         let defaults = Set(store.defaultColumnTemplate.map(\.id))
         return store.boards.flatMap { board in
             board.cards
-                .filter { !defaults.contains($0.columnID) && $0.matches(labels: labelFilter, text: searchQuery, showArchived: showArchived) }
+                .filter {
+                    !defaults.contains($0.columnID)
+                        && !mergedColumns.contains(ColumnKey(boardID: board.id, columnID: $0.columnID))
+                        && $0.matches(labels: labelFilter, text: searchQuery, showArchived: showArchived)
+                }
                 .map { CardRef(board: board, card: $0) }
         }
     }
@@ -530,9 +656,12 @@ struct BoardColumnsView: View {
         let order = renderedColumns.map(\.id)
         let index = order.firstIndex(of: column.id)
         let columnWidth = 280 * columnScale
+        // Combined has no owning board and no card of its own home column, so cards inside it
+        // are shown against their own column's done-ness rather than this pseudo-column's.
+        let cardColumn: BoardColumn? = column.id == Self.combinedID ? nil : column
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                if let emoji = column.emoji { Text(emoji) }
+                columnIcon(column)
                 Text(column.name)
                     .font(.system(size: NSFont.preferredFont(forTextStyle: .headline).pointSize * columnScale,
                                   weight: .semibold))
@@ -552,13 +681,22 @@ struct BoardColumnsView: View {
                         Button(column.isDone ? "Not a Done Column" : "Mark as Done Column") {
                             try? store.setColumnDone(id: column.id, !column.isDone, boardID: board.id)
                         }
+                        Button("Set Emoji…") { iconDraft = column.emoji ?? ""; columnIconTarget = ref(for: column, on: board) }
+                        Button("Choose Image…") { chooseColumnImage(ref(for: column, on: board)) }
+                        if column.emoji != nil || column.image != nil {
+                            Button("Remove Icon") { try? store.clearColumnIcon(id: column.id, boardID: board.id) }
+                        }
                         Button("Move Left") { moveColumn(column.id, to: (index ?? 0) - 1) }
                             .disabled((index ?? 0) == 0)
                         Button("Move Right") { moveColumn(column.id, to: (index ?? 0) + 1) }
                             .disabled((index ?? 0) == order.count - 1)
                     }
-                    Button("Archive All Cards") { archiveAll(in: column) }
-                        .disabled(!hasUnarchivedCards(in: column))
+                    // Combined has no owning board to archive against — `archiveAll(in:)` reads
+                    // `store.cards(in: owner, column:)`, which no board has for this id.
+                    if column.id != Self.combinedID {
+                        Button("Archive All Cards") { archiveAll(in: column) }
+                            .disabled(!hasUnarchivedCards(in: column))
+                    }
                     Button("Select All Cards") { selection.selectAll(items.map(\.card.id)) }
                         .disabled(items.isEmpty)
                     if let board {
@@ -617,7 +755,7 @@ struct BoardColumnsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in
                         insertionBar(for: column, at: index)
-                        cardRow(ref, in: column, at: index, visible: items, space: space)
+                        cardRow(ref, in: cardColumn, at: index, visible: items, space: space)
                     }
                     insertionBar(for: column, at: items.count)
                     dropGhost(for: column)
@@ -640,14 +778,20 @@ struct BoardColumnsView: View {
         // The named space has to sit on the same view as the drop, or `DropInfo.location` and
         // the row frames below are measured against different origins.
         .coordinateSpace(name: space)
+        // Combined is not a real column any board owns — `create`/`moveCards` would call
+        // `addCard`/`moveCard` with a column id no board's `columns(for:)` contains, which
+        // `BoardStore` rejects (caught by the callers' own `try?`), so a card dropped there
+        // would silently do nothing rather than land somewhere sensible. Same stance as
+        // `otherColumn`'s drop below: `attach` still works, since it resolves the owning board
+        // from the card id, not from this column.
         .onDrop(of: [.image, .fileURL, .utf8PlainText, .plainText, .meatpadColumn], delegate: ColumnDropDelegate(
             column: column.id,
             rows: rows(of: items),
             target: $dropTarget,
             loader: dragLoader,
             attach: attach,
-            create: newCardBoard.map { owner in { drop in newCard(drop, in: column.id, on: owner) } },
-            moveCards: { ids, index in move(ids, to: column.id, visible: items, at: index) },
+            create: column.id == Self.combinedID ? nil : newCardBoard.map { owner in { drop in newCard(drop, in: column.id, on: owner) } },
+            moveCards: column.id == Self.combinedID ? { _, _ in false } : { ids, index in move(ids, to: column.id, visible: items, at: index) },
             columnIndex: index,
             columnOrder: order,
             width: columnWidth,
@@ -830,8 +974,8 @@ struct BoardColumnsView: View {
             onPresent: { presentedCard = ref.card.id }
         )
         .contentShape(Rectangle())
-        // What the double-click monitor reads: a mouse-down carries a window point, and this
-        // is the only place that knows which card is under it.
+        // Feeds `hoveredCard`, which the outer `.onTapGesture` reads so a plain click on a card
+        // doesn't also clear the selection that click just made.
         .onHover { hoveredCard = $0 ? ref.card.id : (hoveredCard == ref.card.id ? nil : hoveredCard) }
         // Simultaneous, not exclusive: a click on the title both selects the card and starts
         // editing — the face's own tap gestures must still fire. Finder rules for the kind:
