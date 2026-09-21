@@ -8,6 +8,32 @@ import MeatPadKit
 /// from its padding. The label is `LinkableText`, which keeps a URL in the text clickable
 /// without taking the clicks that belong to editing and dragging. Height follows content — the title wraps rather than truncates, and the
 /// notes fold down to their first line. `⋯` opens `CardEditor` for everything at once.
+/// A board icon, decoded once instead of once per layout pass. Every card in the All Boards
+/// view draws the badge of the board it belongs to, so the uncached read was a file read plus
+/// an image decode per card per pass — the single most expensive thing on that board's scroll.
+/// Keyed by path, which is safe here: `AttachmentStore.add` names every file after a fresh
+/// UUID, so a replaced board image never reuses its predecessor's URL. Unlike
+/// `AttachmentThumbnail`'s cache the key carries no pixel size, because this one hands back
+/// the decoded file itself and every caller only ever draws it (`Image(nsImage:).resizable()`
+/// reads the image, it does not resize it) — nothing here sets `NSImage.size` the way
+/// `AboutPanel` does to its own mark.
+enum BoardIconCache {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 200
+        return cache
+    }()
+
+    static func image(at url: URL?) -> NSImage? {
+        guard let url else { return nil }
+        let key = url.path as NSString
+        if let hit = cache.object(forKey: key) { return hit }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        cache.setObject(image, forKey: key)
+        return image
+    }
+}
+
 struct CardView: View {
     @ObservedObject var store: BoardStore
     let boardID: UUID
@@ -683,7 +709,7 @@ struct CardView: View {
     /// text for the same reason the sidebar row's is: a thumbnail has no value to read.
     @ViewBuilder
     private func badgeIcon(_ board: Board) -> some View {
-        let image = store.boardImageURL(board.id).flatMap { NSImage(contentsOf: $0) }
+        let image = BoardIconCache.image(at: store.boardImageURL(board.id))
         if image != nil || board.icon != nil {
             Group {
                 if let image {

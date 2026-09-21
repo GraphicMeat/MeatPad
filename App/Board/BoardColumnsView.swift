@@ -5,6 +5,17 @@ import MeatPadKit
 /// The columns for one board, or for every board at once ("All Boards"). In the all-boards
 /// view only the global columns are rendered — a board-specific extra column has no shared
 /// counterpart, so its cards collect in a trailing read-only "Other" column instead.
+/// Card row frames and the hovered card, off to the side of SwiftUI's state so writing one
+/// invalidates nothing. Not `ObservableObject` on purpose — there is no observer, and that is
+/// the whole point: see `BoardColumnsView.rowGeometry`.
+@MainActor
+final class BoardRowGeometry {
+    /// Each frame in its own column's coordinate space. `DropInfo` gives a pointer position
+    /// and nothing else — this is what turns it into "over that card" / "in that gap".
+    var frames: [UUID: CGRect] = [:]
+    var hovered: UUID?
+}
+
 struct BoardColumnsView: View {
     @ObservedObject var store: BoardStore
     /// nil = the All Boards overview.
@@ -67,17 +78,21 @@ struct BoardColumnsView: View {
     @State private var columnDropTarget: (id: UUID, trailing: Bool)?
     /// The dragged image, decoded once per drag so the hover preview costs nothing per frame.
     @StateObject private var dragLoader = DragImageLoader()
-    /// Card row frames, each in its own column's coordinate space. `DropInfo` gives a pointer
-    /// position and nothing else — this is what turns it into "over that card" / "in that gap".
-    @State private var rowFrames: [UUID: CGRect] = [:]
+    /// Card row frames and the hovered card. Both are written on every scroll tick — the
+    /// frames are measured in the COLUMN's coordinate space, which sits outside the scroll
+    /// view, so every row reports a new frame each time the content moves, and a parked
+    /// pointer crosses a card boundary on the way past. As `@State` that was a full-board
+    /// invalidation per frame of every scroll: every column rebuilt, every card's markdown
+    /// re-parsed. A plain reference box instead — `onGeometryChange` fires on LAYOUT, not on
+    /// body evaluation, so the frames stay current even though writing one redraws nothing.
+    /// Nothing renders from either value: the frames are read by the drop delegates (through
+    /// a closure, so they are always fresh) and `hovered` only inside a tap closure.
+    @State private var rowGeometry = BoardRowGeometry()
     /// The card shown big over a blurred board, and how big. Held by id so an edit made while
     /// it is up re-reads from the store.
     @State private var presentedCard: UUID?
     @State private var presentScale: CGFloat = 1.8
     @State private var presentedHeight: CGFloat = 0
-    /// Which card the pointer is over — what the outer `.onTapGesture` reads to tell a plain
-    /// click on a card (which must not clear the selection) from a click on empty column space.
-    @State private var hoveredCard: UUID?
     /// Esc/⌫/⌦/⌘A.
     @State private var keyMonitor: Any?
     /// This view's hosting window, so the key monitor can ignore events meant for another
@@ -232,8 +247,8 @@ struct BoardColumnsView: View {
                     NSApp.keyWindow?.makeFirstResponder(nil)
                     // A card's own row uses `.simultaneousGesture`, which never blocks this
                     // ancestor gesture — so a plain click on a card would reach here too and
-                    // wipe the selection it just made. `hoveredCard` is what tells the two apart.
-                    if hoveredCard == nil { selection.clear() }
+                    // wipe the selection it just made. `rowGeometry.hovered` tells the two apart.
+                    if rowGeometry.hovered == nil { selection.clear() }
                 }
             }
             .environment(\.cardScale, columnScale)
@@ -786,7 +801,7 @@ struct BoardColumnsView: View {
         // from the card id, not from this column.
         .onDrop(of: [.image, .fileURL, .utf8PlainText, .plainText, .meatpadColumn], delegate: ColumnDropDelegate(
             column: column.id,
-            rows: rows(of: items),
+            rows: { rows(of: items) },
             target: $dropTarget,
             loader: dragLoader,
             attach: attach,
@@ -834,7 +849,7 @@ struct BoardColumnsView: View {
     /// Only rows whose frame has been measured — an unmeasured one would shift every index
     /// after it. In practice a column's `VStack` lays all of its rows out at once.
     private func rows(of items: [CardRef]) -> [BoardDropRow] {
-        items.compactMap { ref in rowFrames[ref.id].map { BoardDropRow(id: ref.id, frame: $0) } }
+        items.compactMap { ref in rowGeometry.frames[ref.id].map { BoardDropRow(id: ref.id, frame: $0) } }
     }
 
     /// The board a dropped image would make a card on. In the all-boards view there is no
@@ -942,7 +957,7 @@ struct BoardColumnsView: View {
         // columns at once, so it has no column a reorder or a new card could mean.
         .onDrop(of: [.image, .fileURL], delegate: ColumnDropDelegate(
             column: nil,
-            rows: rows(of: otherCards),
+            rows: { rows(of: otherCards) },
             target: $dropTarget,
             loader: dragLoader,
             attach: attach,
@@ -974,9 +989,9 @@ struct BoardColumnsView: View {
             onPresent: { presentedCard = ref.card.id }
         )
         .contentShape(Rectangle())
-        // Feeds `hoveredCard`, which the outer `.onTapGesture` reads so a plain click on a card
-        // doesn't also clear the selection that click just made.
-        .onHover { hoveredCard = $0 ? ref.card.id : (hoveredCard == ref.card.id ? nil : hoveredCard) }
+        // Feeds `rowGeometry.hovered`, which the outer `.onTapGesture` reads so a plain click on a
+        // card doesn't also clear the selection that click just made.
+        .onHover { rowGeometry.hovered = $0 ? ref.card.id : (rowGeometry.hovered == ref.card.id ? nil : rowGeometry.hovered) }
         // Simultaneous, not exclusive: a click on the title both selects the card and starts
         // editing — the face's own tap gestures must still fire. Finder rules for the kind:
         // ⌘ toggles, ⇧ extends over the visible order, anything else replaces the selection.
@@ -997,8 +1012,8 @@ struct BoardColumnsView: View {
         }
         // The column owns the drop — a card only reports where it is, so the column can tell
         // "over this card" from "in the gap under it".
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(space)) } action: { rowFrames[ref.id] = $0 }
-        .onDisappear { rowFrames[ref.id] = nil }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(space)) } action: { rowGeometry.frames[ref.id] = $0 }
+        .onDisappear { rowGeometry.frames[ref.id] = nil }
         .marchingAnts(dropTarget == .attach(card: ref.card.id), cornerRadius: 10)
         .overlay(alignment: .topTrailing) { dropBadge(for: ref.card.id) }
     }

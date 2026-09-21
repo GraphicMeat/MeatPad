@@ -13,10 +13,31 @@ public enum CardMarkdown {
         failurePolicy: .returnPartiallyParsedIfPossible
     )
 
+    /// One parse held per string. A card face asks for the same title and notes on every
+    /// layout pass, and `AttributedString(markdown:)` is not cheap enough to run a boardful of
+    /// them per scrolled frame. `NSCache` because it evicts itself under memory pressure and
+    /// is thread-safe, which a bare dictionary behind a lock would have to be taught.
+    /// `@unchecked` and genuinely safe: the box is written once in `init` and never mutated,
+    /// and what it holds is a value type — a reader gets its own copy of the `AttributedString`.
+    private final class Parsed: @unchecked Sendable {
+        let value: AttributedString
+        init(_ value: AttributedString) { self.value = value }
+    }
+
+    private static let cache: NSCache<NSString, Parsed> = {
+        let cache = NSCache<NSString, Parsed>()
+        cache.countLimit = 1000
+        return cache
+    }()
+
     /// Parses `text` as inline markdown. Never throws outward: a card must never lose its text
     /// to a parse error, so any throw here falls back to the plain, unstyled string.
     public static func attributed(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        let key = text as NSString
+        if let hit = cache.object(forKey: key) { return hit.value }
+        let parsed = (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        cache.setObject(Parsed(parsed), forKey: key)
+        return parsed
     }
 
     /// The same text with markup stripped — what search, the plain-text export, and anywhere

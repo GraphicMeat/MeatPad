@@ -18,6 +18,18 @@ final class LinkLabel: NSView {
     private let container = NSTextContainer()
     private var links: [DetectedLink] = []
     var onOpen: ((URL) -> Void)?
+    /// What was last rendered into this view. `updateNSView` runs on every update SwiftUI
+    /// sends down, and rebuilding the text means a markdown parse plus an `NSDataDetector`
+    /// pass — per card, per pass. Unchanged input, unchanged glyphs: skip the lot.
+    var rendered: Input?
+
+    struct Input: Equatable {
+        let text: String
+        let font: NSFont
+        let color: NSColor
+        let lineLimit: Int
+        let markdown: Bool
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -120,6 +132,9 @@ struct LinkableText: NSViewRepresentable {
     }
 
     func updateNSView(_ view: LinkLabel, context: Context) {
+        let input = LinkLabel.Input(text: text, font: font, color: color, lineLimit: lineLimit, markdown: markdown)
+        guard view.rendered != input else { return }
+        view.rendered = input
         if markdown {
             updateMarkdown(view)
         } else {

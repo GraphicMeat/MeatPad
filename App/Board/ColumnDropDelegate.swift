@@ -100,8 +100,11 @@ struct ColumnDropDelegate: DropDelegate {
     /// nil = the all-boards "Other" pseudo-column: it has no single column to reorder into,
     /// so it takes files onto its cards and nothing else.
     let column: UUID?
-    /// The visible card rows, top to bottom, in this column's coordinate space.
-    let rows: [BoardDropRow]
+    /// The visible card rows, top to bottom, in this column's coordinate space — read through
+    /// a closure, not handed over as an array: the frames behind it are now updated without
+    /// re-evaluating the view's body, so a snapshot taken when the delegate was built could be
+    /// a whole scroll out of date by the time a drop lands on it.
+    let rows: () -> [BoardDropRow]
     @Binding var target: DropTarget?
     let loader: DragImageLoader
     let attach: (UUID, CardDrop) -> Bool
@@ -151,7 +154,7 @@ struct ColumnDropDelegate: DropDelegate {
         if isColumnDrag(info) { columnTarget = nil; return }
         switch target {
         case .insert(let c, _), .newCard(let c): if c == column { target = nil }
-        case .attach(let card): if rows.contains(where: { $0.id == card }) { target = nil }
+        case .attach(let card): if rows().contains(where: { $0.id == card }) { target = nil }
         case nil: break
         }
     }
@@ -269,7 +272,7 @@ struct ColumnDropDelegate: DropDelegate {
 
     private func placement(_ info: DropInfo) -> DropTarget? {
         if isFile(info) {
-            if case .attach(let id) = BoardDropPlacement.forImage(at: info.location, rows: rows) {
+            if case .attach(let id) = BoardDropPlacement.forImage(at: info.location, rows: rows()) {
                 // A tile dragged out of its own card and hovered back over that same card is
                 // this card's own drag-out copy re-arriving — no ants, no drop: attaching it
                 // would duplicate the file. (Not `.newCard`: falling through to the bare-space
@@ -283,7 +286,7 @@ struct ColumnDropDelegate: DropDelegate {
             return .newCard(column: column)
         }
         guard let column,
-              case .insert(let index) = BoardDropPlacement.forCard(at: info.location.y, rows: rows)
+              case .insert(let index) = BoardDropPlacement.forCard(at: info.location.y, rows: rows())
         else { return nil }
         return .insert(column: column, index: index)
     }

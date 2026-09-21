@@ -408,10 +408,14 @@ struct NotesBrowserWindow: View {
                 LinkOpener.open(AboutPanel.studio)
             } label: {
                 if let mark = NSImage(named: "GraphicMeatLogo") {
+                    // Aspect FILL, not fit: the mark spans the sidebar's full width at 150pt
+                    // tall and is cropped rather than letterboxed — the outer frame + clip is
+                    // what keeps the overflow out of the pinned footer's layout.
                     Image(nsImage: mark)
                         .resizable()
-                        .scaledToFit()
-                        .frame(height: 22)
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity, minHeight: 150, maxHeight: 150)
+                        .clipped()
                 } else {
                     Text("Graphic Meat")
                         .font(.caption.weight(.medium))
@@ -513,9 +517,7 @@ struct NotesBrowserWindow: View {
     /// guarantees at most one of the first two, so this is a precedence, not a merge.
     private func boardIcon(_ board: Board) -> some View {
         Group {
-            // ponytail: decoded per body pass — a handful of sidebar-sized files. Cache by
-            // name if a board list ever gets long enough to feel it.
-            if let url = boardStore.boardImageURL(board.id), let image = NSImage(contentsOf: url) {
+            if let image = BoardIconCache.image(at: boardStore.boardImageURL(board.id)) {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFill()
