@@ -13986,6 +13986,59 @@
         }
       }
     },
+    "Notes — **bold**, *italic*" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notizen — **fett**, *kursiv*"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notas — **negrita**, *cursiva*"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notes — **gras**, *italique*"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Note — **grassetto**, *corsivo*"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ノート — **太字**、*斜体*"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메모 — **굵게**, *기울임*"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notas — **negrito**, *itálico*"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "笔记 — **粗体**、*斜体*"
+          }
+        }
+      }
+    },
     "Notes and settings live on this Mac at %@ — nothing is uploaded." : {
       "extractionState" : "manual",
       "localizations" : {

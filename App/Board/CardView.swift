@@ -302,6 +302,13 @@ struct CardView: View {
     private func copyTitleOnly() { copyToPasteboard(card.title) }
     private func copyNotesOnly() { copyAndFlash((card.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines), flag: $copiedNotes) }
 
+    /// The empty-notes field doubles as the only in-app hint that card text takes markdown —
+    /// gated on the setting that renders it, or it would advertise syntax the card shows
+    /// literally. The idle face keeps its plain "Add Notes"; a hint belongs where you type.
+    private var notesPlaceholder: String {
+        markdown ? String(localized: "Notes — **bold**, *italic*") : String(localized: "Notes")
+    }
+
     private var faceNotes: String {
         body_.isEmpty ? String(localized: "Add Notes") : (expanded ? body_ : firstLine)
     }
@@ -563,7 +570,7 @@ struct CardView: View {
                 // and unlike TextEditor it takes the caret on a single click. No upper line
                 // limit: a capped field clips the rest of the text AND eats the scroll wheel,
                 // so the column underneath can't be scrolled while the pointer is over it.
-                TextField("Notes", text: $body_, axis: .vertical)
+                TextField(notesPlaceholder, text: $body_, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: fontSize(.callout)))
                     .lineLimit(1...)
