@@ -224,7 +224,13 @@ public struct TrashEntry: Identifiable, Codable, Equatable, Sendable {
     /// One line for a trash row: the name of whatever got deleted.
     public var title: String {
         switch kind {
-        case .card: return card?.title ?? ""
+        // An untitled card names itself by its notes — a blank card can be trashed now, and a
+        // row with nothing written on it is a row you cannot tell from the one above it.
+        case .card:
+            guard let card else { return "" }
+            guard card.title.isEmpty else { return card.title }
+            return (card.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                .components(separatedBy: "\n").first ?? ""
         case .column: return column?.name ?? ""
         case .board: return board?.name ?? ""
         }

@@ -1231,6 +1231,16 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(Card(title: "", columnID: UUID()).clipboardText, "")
     }
 
+    func testTrashEntryTitleFallsBackToTheNotesForAnUntitledCard() {
+        let column = UUID()
+        let entry = { (card: Card) in
+            TrashEntry(kind: .card, boardID: UUID(), boardName: "B", card: card).title
+        }
+        XCTAssertEqual(entry(Card(title: "T", body: "n", columnID: column)), "T")
+        XCTAssertEqual(entry(Card(title: "", body: " n1\nn2", columnID: column)), "n1")
+        XCTAssertEqual(entry(Card(title: "", columnID: column)), "")
+    }
+
     /// What the card face asks before it offers to paste.
     func testIsBlankIsTitleAndNotesBothEmpty() {
         XCTAssertTrue(Card(title: "  ", body: " \n ", columnID: UUID()).isBlank)
