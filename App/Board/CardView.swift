@@ -238,6 +238,23 @@ struct CardView: View {
             if summarizing {
                 ProgressView().controlSize(.mini)
             }
+            // Only while the card has nothing on it. A blank card is what the column's `+`
+            // makes, and this is the one-click way to fill it — always visible rather than
+            // hover-revealed like the copy button, because on an otherwise empty card it is
+            // the whole point of the card being there.
+            if card.isBlank {
+                Button(action: pasteFromClipboard) {
+                    Image(systemName: "doc.on.clipboard")
+                        .font(.system(size: fontSize(.body)))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22 * scale, height: 18 * scale)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(String(localized: "Paste from Clipboard"))
+                .accessibilityLabel(Text("Paste from Clipboard"))
+                .accessibilityIdentifier("card.paste")
+            }
             Button(action: copyText) {
                 Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
                     .font(.system(size: fontSize(.body)))
@@ -321,6 +338,19 @@ struct CardView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.5))
             flag.wrappedValue = false
+        }
+    }
+
+    /// Fills a blank card from the clipboard, split the same way a paste into the column's
+    /// add-card field is: lead sentence as the title, the rest as the notes. One card, never
+    /// several — the multi-card question belongs to the column field, where the paste creates
+    /// the cards; here there is already exactly one card to fill.
+    private func pasteFromClipboard() {
+        guard let text = NSPasteboard.general.string(forType: .string),
+              let draft = CardTextSplit.single(from: text) else { return }
+        update {
+            $0.title = draft.title
+            $0.body = draft.body
         }
     }
 

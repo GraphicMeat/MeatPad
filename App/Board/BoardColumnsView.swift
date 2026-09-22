@@ -748,6 +748,8 @@ struct BoardColumnsView: View {
                     }
                     .buttonStyle(.plain)
                     .help(String(localized: "Add card"))
+                    .accessibilityLabel(Text("Add card"))
+                    .accessibilityIdentifier("column.addCard.plus")
                     // axis: .vertical so a pasted list arrives with its line breaks intact —
                     // a single-line field folds them into spaces and the items are gone.
                     TextField("Add card", text: Binding(
@@ -1137,7 +1139,13 @@ struct BoardColumnsView: View {
     /// reliable moment to read the text back is when it is submitted.
     private func addCard(to column: BoardColumn, in board: Board) {
         let text = drafts[column.id] ?? ""
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // Nothing typed: the + still makes a card, an empty one at the bottom of the column.
+        // Its face carries the paste affordance, so "add a card now, fill it in a second" is
+        // one click rather than a click plus a detour through the field.
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            _ = try? store.addCard(boardID: board.id, columnID: column.id, title: "")
+            return
+        }
         let items = CardTextSplit.drafts(from: text)
         guard items.count > 1 else {
             if let draft = CardTextSplit.single(from: text) {

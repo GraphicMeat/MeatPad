@@ -371,7 +371,7 @@ public final class BoardStore: ObservableObject {
         guard columns(for: boards[idx]).contains(where: { $0.id == columnID }) else {
             throw BoardStoreError.columnNotFound(columnID)
         }
-        let card = Card(title: try validated(title), body: body, columnID: columnID)
+        let card = Card(title: Self.trimmedCardTitle(title), body: body, columnID: columnID)
         boards[idx].cards.append(card)
         try persist(at: idx)
         registerUndo { try? $0.deleteCard(boardID: boardID, cardID: card.id) }
@@ -398,7 +398,7 @@ public final class BoardStore: ObservableObject {
         }
         let previous = boards[idx].cards[cardIdx]
         var updated = card
-        updated.title = try validated(card.title)
+        updated.title = Self.trimmedCardTitle(card.title)
         updated.modified = Date()
         boards[idx].cards[cardIdx] = updated
         try persist(at: idx)
@@ -804,6 +804,15 @@ public final class BoardStore: ObservableObject {
     }
 
     /// Trims and rejects empty — the one name rule shared by boards, columns, and cards.
+    /// Cards, unlike boards, columns and labels, are allowed to have no title at all: the
+    /// column's `+` makes exactly that, and the face then offers to fill it from the
+    /// clipboard. So a card title is only ever trimmed, never rejected — and it has to be
+    /// trimmed in `updateCard` too, or pasting notes into a still-untitled card would throw
+    /// and every caller's `try?` would swallow the paste.
+    private static func trimmedCardTitle(_ title: String) -> String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func validated(_ name: String) throws -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw BoardStoreError.invalidName }

@@ -205,16 +205,36 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(try makeStore().boards[0].cards.map(\.title), ["ship it"])
     }
 
-    func testAddCardRejectsEmptyTitleAndUnknownColumn() throws {
+    /// A card with no title is a real card now — that is what the column's `+` makes, and the
+    /// face carries a paste affordance until it has text. Board and column names still refuse
+    /// to be blank; only cards were loosened.
+    func testAddCardAllowsAnEmptyTitleAndRejectsUnknownColumn() throws {
         let store = try makeStore()
         let board = try makeBoard(store)
-        XCTAssertThrowsError(try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: " ")) {
-            XCTAssertEqual($0 as? BoardStoreError, .invalidName)
-        }
+        let blank = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: " ")
+        XCTAssertEqual(blank.title, "")
+        XCTAssertTrue(blank.isBlank)
+        XCTAssertEqual(try makeStore().boards[0].cards.map(\.title), [""])
+
         let unknown = UUID()
         XCTAssertThrowsError(try store.addCard(boardID: board.id, columnID: unknown, title: "x")) {
             XCTAssertEqual($0 as? BoardStoreError, .columnNotFound(unknown))
         }
+    }
+
+    /// The discriminating case: pasting notes into a still-untitled card writes the card back
+    /// with an empty title. A store that rejects that loses the paste, silently — every caller
+    /// in the app goes through `try?`.
+    func testUpdateCardKeepsNotesWhenTheTitleIsStillEmpty() throws {
+        let store = try makeStore()
+        let board = try makeBoard(store)
+        var card = try store.addCard(boardID: board.id, columnID: board.extraColumns[0].id, title: "")
+        card.body = "pasted notes"
+        try store.updateCard(boardID: board.id, card: card)
+
+        XCTAssertEqual(store.boards[0].cards[0].body, "pasted notes")
+        XCTAssertEqual(store.boards[0].cards[0].title, "")
+        XCTAssertEqual(try makeStore().boards[0].cards[0].body, "pasted notes")
     }
 
     func testUpdateCardBumpsModifiedAndPersists() throws {
@@ -1206,5 +1226,16 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertEqual(Card(title: "T", body: "  n1\nn2 ", columnID: UUID()).clipboardText, "T\n\nn1\nn2")
         XCTAssertEqual(Card(title: "T", body: "   ", columnID: UUID()).clipboardText, "T")
         XCTAssertEqual(Card(title: "T", columnID: UUID()).clipboardText, "T")
+        // An untitled card copies as its notes alone, never as two leading newlines.
+        XCTAssertEqual(Card(title: "", body: "n1", columnID: UUID()).clipboardText, "n1")
+        XCTAssertEqual(Card(title: "", columnID: UUID()).clipboardText, "")
+    }
+
+    /// What the card face asks before it offers to paste.
+    func testIsBlankIsTitleAndNotesBothEmpty() {
+        XCTAssertTrue(Card(title: "  ", body: " \n ", columnID: UUID()).isBlank)
+        XCTAssertTrue(Card(title: "", columnID: UUID()).isBlank)
+        XCTAssertFalse(Card(title: "T", columnID: UUID()).isBlank)
+        XCTAssertFalse(Card(title: "", body: "n", columnID: UUID()).isBlank)
     }
 }

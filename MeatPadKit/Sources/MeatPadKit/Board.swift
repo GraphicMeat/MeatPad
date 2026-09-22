@@ -124,7 +124,15 @@ public struct Card: Identifiable, Codable, Equatable, Sendable {
     /// blank line when there are any.
     public var clipboardText: String {
         let notes = (body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return notes.isEmpty ? title : title + "\n\n" + notes
+        guard !notes.isEmpty else { return title }
+        return title.isEmpty ? notes : title + "\n\n" + notes
+    }
+
+    /// Nothing written on it yet — what the column's `+` makes, and the only state in which
+    /// the face offers to paste the clipboard into the card.
+    public var isBlank: Bool {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
