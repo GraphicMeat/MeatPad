@@ -87,10 +87,8 @@ final class BoardPresentUITests: XCTestCase {
     }
 
     /// A double-click on a card no longer presents it — the gesture belonged to the field
-    /// editor underneath as much as to the card, so it is a button now. Hover first: the
-    /// button is invisible until the pointer is over the card.
+    /// editor underneath as much as to the card, so it is a button in the card's action row.
     private func present() throws {
-        title.hover()
         let button = app.buttons["card.present"].firstMatch
         XCTAssertTrue(button.waitForExistence(timeout: 5), "no present button on the card")
         button.click()

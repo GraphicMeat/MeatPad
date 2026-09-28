@@ -320,6 +320,23 @@ public final class BoardStore: ObservableObject {
         boards[idx].extraColumns[colIdx].image = nil
     }
 
+    /// What a column with no look of its own could wear: the emoji another board gave a column
+    /// of the same name (the most common one, if they disagree), else `ColumnIconSuggester`'s
+    /// keyword guess. nil when the column already has an emoji or image — it needs no
+    /// suggestion — or when nothing suggests one. Read-only: applying it is the caller's call.
+    public func suggestedEmoji(for column: BoardColumn) -> String? {
+        guard column.emoji == nil, column.image == nil else { return nil }
+        let name = column.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let borrowed = boards.flatMap(\.extraColumns)
+            .filter { $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                .compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
+            .compactMap(\.emoji)
+        let mostCommon = borrowed.max { a, b in
+            borrowed.filter { $0 == a }.count < borrowed.filter { $0 == b }.count
+        }
+        return mostCommon ?? ColumnIconSuggester.emoji(forName: name)
+    }
+
     private func columnIndex(_ id: UUID, boardIndex idx: Int) throws -> Int {
         guard let colIdx = boards[idx].extraColumns.firstIndex(where: { $0.id == id }) else {
             throw BoardStoreError.columnNotFound(id)
@@ -503,30 +520,32 @@ public final class BoardStore: ObservableObject {
     }
 
     /// "Split into Cards": every line of the card (`Card.splitLines`) becomes its own card,
-    /// directly under the original in the same column. The original keeps everything that
-    /// makes it *that* card — id, attachments, due date, note link, archive state — and takes
-    /// line one as its title with no notes. The new cards inherit only how it is filed
-    /// (labels, colour); a due date or a file copied onto five cards would be five reminders
-    /// and five owners of one file. Returns the new cards; fewer than two lines is a no-op.
+    /// directly under the original in the same column. `mode` says what a line becomes — a
+    /// title, or notes (with the title `mode` carries, if it does). The original keeps
+    /// everything that makes it *that* card — id, attachments, due date, note link, archive
+    /// state — and takes line one. The new cards inherit only how it is filed (labels,
+    /// colour); a due date or a file copied onto five cards would be five reminders and five
+    /// owners of one file. Returns the new cards; fewer than two lines is a no-op.
     ///
     /// Inserted into the flat array right after the original, not appended via `addCard`:
     /// flat order IS column order, and a split that scattered its lines to the column's end
     /// would read as cards lost. Undo is one step and never goes through `deleteCard`, which
     /// would leave every split-off line in the Board Trash — see `unsplit`.
     @discardableResult
-    public func splitCard(boardID: UUID, cardID: UUID) throws -> [Card] {
+    public func splitCard(boardID: UUID, cardID: UUID, mode: CardSplitMode = .titles) throws -> [Card] {
         let idx = try boardIndex(boardID)
         guard let original = boards[idx].cards.first(where: { $0.id == cardID }) else {
             throw BoardStoreError.cardNotFound(cardID)
         }
         let lines = original.splitLines
         guard lines.count >= 2 else { return [] }
+        let faces = mode.faces(for: lines).map { (title: Self.trimmedCardTitle($0.title), body: $0.body) }
         var head = original
-        head.title = Self.trimmedCardTitle(lines[0])
-        head.body = nil
+        head.title = faces[0].title
+        head.body = faces[0].body
         head.modified = Date()
-        let added = lines.dropFirst().map {
-            Card(title: Self.trimmedCardTitle($0), columnID: original.columnID,
+        let added = faces.dropFirst().map {
+            Card(title: $0.title, body: $0.body, columnID: original.columnID,
                  labelIDs: original.labelIDs, color: original.color)
         }
         try resplit(boardID: boardID, previous: original, head: head, added: added)

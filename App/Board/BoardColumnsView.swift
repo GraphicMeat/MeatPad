@@ -701,6 +701,13 @@ struct BoardColumnsView: View {
                         }
                         Button("Set Emoji…") { iconDraft = column.emoji ?? ""; columnIconTarget = ref(for: column, on: board) }
                         Button("Choose Image…") { chooseColumnImage(ref(for: column, on: board)) }
+                        // Opt-in: the Move menu already shows this suggestion, but a column
+                        // only wears it once its owner says so.
+                        if let suggestion = store.suggestedEmoji(for: column) {
+                            Button("Use \(suggestion) as Icon") {
+                                try? store.setColumnIcon(id: column.id, emoji: suggestion, boardID: board.id)
+                            }
+                        }
                         if column.emoji != nil || column.image != nil {
                             Button("Remove Icon") { try? store.clearColumnIcon(id: column.id, boardID: board.id) }
                         }

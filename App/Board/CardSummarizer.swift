@@ -22,6 +22,12 @@ enum CardSummarizer {
     private static let promptLimit = 4_000
 
     static func canSummarize(_ text: String) -> Bool {
+        canSummarize(text, minimumLength: minimumLength)
+    }
+
+    /// `minimumLength` is what a caller that already knows the text is worth summarizing
+    /// (a split-off line the caller found too long to be a title) passes to lower the bar.
+    static func canSummarize(_ text: String, minimumLength: Int) -> Bool {
         guard text.count >= minimumLength else { return false }
         #if canImport(FoundationModels)
         guard #available(macOS 26, *) else { return false }
@@ -40,8 +46,12 @@ enum CardSummarizer {
     /// nil whenever the model is unavailable, unsupported for this text, or refuses — every
     /// one of which leaves the card exactly as it was.
     static func title(for text: String) async -> String? {
+        await title(for: text, minimumLength: minimumLength)
+    }
+
+    static func title(for text: String, minimumLength: Int) async -> String? {
         #if canImport(FoundationModels)
-        guard #available(macOS 26, *), canSummarize(text) else { return nil }
+        guard #available(macOS 26, *), canSummarize(text, minimumLength: minimumLength) else { return nil }
         let session = LanguageModelSession(instructions: """
             You write short task titles. Reply with the title only: no quotes, no trailing \
             period, at most eight words, in the same language as the text you are given.

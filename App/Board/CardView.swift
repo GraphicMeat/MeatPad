@@ -79,11 +79,8 @@ struct CardView: View {
     @State private var editorShown = false
     /// Whether the editor should open straight onto its new-label field.
     @State private var editorLabelForm = false
-    /// Whether the pointer is over the card — the copy button only earns its space in the
-    /// header while the card is hovered (or right after a copy, so the checkmark is seen).
-    @State private var hovering = false
+    /// Flashed by every copy, so the Copy icon in the action row shows the checkmark.
     @State private var copied = false
-    @State private var copiedNotes = false
     /// On by default — the user asked for inline markdown on card faces, off only when this
     /// setting says so. Board-wide, not per-card: a mixed board reading half-rendered would be
     /// worse than either extreme.
@@ -117,6 +114,9 @@ struct CardView: View {
                     .padding(.vertical, 7)
             }
             HairlineDivider()
+            // Not in `.compact`, for the density's own reason: the row is one more line on
+            // every card. The right-click menu and ⋯ still carry every action there.
+            if display != .compact { actionRow }
             notesSection
         }
         .padding(.horizontal, 10)
@@ -125,7 +125,6 @@ struct CardView: View {
         .background { cellBackground }
         .opacity(card.archived != nil ? 0.55 : 1)
         .contextMenu { cardMenu }
-        .onHover { hovering = $0 }
         // Calendar's own shape for "pick an exact time": a popover, not a field wedged into
         // the card — the card face carries the date, never the picker.
         .popover(isPresented: $editingDue) {
@@ -157,9 +156,6 @@ struct CardView: View {
         // the field's text must land before the row turns back into Text.
         .onChange(of: focus) { old, new in
             if old == .title, new != .title {
-                // A blank title is never stored, so put the card's own back — otherwise the
-                // idle row draws its grey placeholder over a card that still has a name.
-                if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { title = card.title }
                 titleDebouncer.cancel()
                 commit()
             }
@@ -243,9 +239,8 @@ struct CardView: View {
                 ProgressView().controlSize(.mini)
             }
             // Only while the card has nothing on it. A blank card is what the column's `+`
-            // makes, and this is the one-click way to fill it — always visible rather than
-            // hover-revealed like the copy button, because on an otherwise empty card it is
-            // the whole point of the card being there.
+            // makes, and this is the one-click way to fill it — always visible, because on an
+            // otherwise empty card it is the whole point of the card being there.
             if card.isBlank {
                 Button(action: pasteFromClipboard) {
                     Image(systemName: "doc.on.clipboard")
@@ -258,38 +253,6 @@ struct CardView: View {
                 .help(String(localized: "Paste from Clipboard"))
                 .accessibilityLabel(Text("Paste from Clipboard"))
                 .accessibilityIdentifier("card.paste")
-            }
-            // Gone, not just transparent, on a blank card: there is nothing to copy, and the
-            // paste button beside it is the one action that card has.
-            if !card.isBlank {
-                Button(action: copyText) {
-                    Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
-                        .font(.system(size: fontSize(.body)))
-                        .foregroundStyle(copied ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
-                        .frame(width: 22 * scale, height: 18 * scale)
-                        .contentShape(Rectangle())
-                        .contentTransition(.symbolEffect(.replace))
-                }
-                .buttonStyle(.plain)
-                .opacity(hovering || copied ? 1 : 0)
-                .help(String(localized: "Copy Title and Notes"))
-                .accessibilityLabel(Text("Copy"))
-                .accessibilityValue(copied ? "copied" : "")
-                .accessibilityIdentifier("card.copy")
-            }
-            if let onPresent {
-                Button(action: onPresent) {
-                    Image(systemName: "play.rectangle")
-                        .font(.system(size: fontSize(.body)))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 22 * scale, height: 18 * scale)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .opacity(hovering ? 1 : 0)
-                .help(String(localized: "Present Card"))
-                .accessibilityLabel(Text("Present Card"))
-                .accessibilityIdentifier("card.present")
             }
             Button {
                 editorLabelForm = false
@@ -340,9 +303,7 @@ struct CardView: View {
     }
 
     /// Copies `text`, then flashes `flag` on and off — long enough to register as feedback
-    /// without lingering past the next glance. Shared by every copy button that has an icon to
-    /// flash; a menu-only copy (no icon on screen once the menu closes) just calls
-    /// `copyToPasteboard` directly.
+    /// without lingering past the next glance.
     private func copyAndFlash(_ text: String, flag: Binding<Bool>) {
         copyToPasteboard(text)
         flag.wrappedValue = true
@@ -366,18 +327,42 @@ struct CardView: View {
     }
 
     private func copyText() { copyAndFlash(card.clipboardText, flag: $copied) }
-    private func copyTitleOnly() { copyToPasteboard(card.title) }
-    private func copyNotesOnly() { copyAndFlash((card.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines), flag: $copiedNotes) }
+    private func copyTitleOnly() { copyAndFlash(card.title, flag: $copied) }
+    private func copyNotesOnly() { copyAndFlash((card.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines), flag: $copied) }
 
     /// "Split into Cards". A draft still waiting on its debounce is committed first, inside
     /// the same undo group, so the split works on what the card shows and one ⌘Z takes the
     /// whole gesture back.
-    private func splitIntoCards() {
+    private func splitIntoCards(_ mode: CardSplitMode) {
         titleDebouncer.cancel()
         bodyDebouncer.cancel()
         try? store.grouped {
             commit()
-            try store.splitCard(boardID: boardID, cardID: card.id)
+            try store.splitCard(boardID: boardID, cardID: card.id, mode: mode)
+        }
+    }
+
+    /// Notes, each under a title written for it. The titles come first and the store is
+    /// called once, so the split is still one undo step and one write — titling the cards
+    /// afterwards would be a dozen. A line the model can't title (unsupported language, no
+    /// on-device model, macOS 14) gets its opening words instead; a line that short already
+    /// is its own title and keeps no notes. The store drops the titles if the card changed
+    /// while they were being written.
+    private func splitIntoNotesWithTitles() {
+        titleDebouncer.cancel()
+        bodyDebouncer.cancel()
+        commit()
+        let id = card.id
+        let lines = CardTextSplit.lines(from: title + "\n" + body_)
+        summarizing = true
+        Task {
+            var titles: [String] = []
+            for line in lines {
+                let lead = CardTextSplit.headline(of: line)
+                titles.append(lead == line ? lead : await CardSummarizer.title(for: line, minimumLength: 0) ?? lead)
+            }
+            summarizing = false
+            try? store.splitCard(boardID: boardID, cardID: id, mode: .notes(titles: titles))
         }
     }
 
@@ -486,76 +471,227 @@ struct CardView: View {
 
     // MARK: - Menu
 
-    /// One set of card actions, shown both from the ⋯ button and from a right-click — a card
-    /// that only answers to the context menu hides half its features.
+    /// The card's actions, grouped. One list drives both places they appear — the right-click
+    /// menu shows each as a submenu with its name, the action row as an icon that opens the
+    /// same menu — so the two cannot drift apart. A card that only answers to the context
+    /// menu would hide half its features; one that only answers to the row would hide them
+    /// from anyone who right-clicks.
+    private enum Category: CaseIterable {
+        case move, due, labels, copy, split
+
+        var title: LocalizedStringKey {
+            switch self {
+            case .move: "Move to"
+            case .due: "Due Date"
+            case .labels: "Labels"
+            case .copy: "Copy"
+            case .split: "Split into Cards"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .move: "arrow.right.circle"
+            case .due: "calendar"
+            case .labels: "tag"
+            case .copy: "doc.on.doc"
+            case .split: "rectangle.split.3x1"
+            }
+        }
+
+        var identifier: String {
+            switch self {
+            case .move: "card.move"
+            case .due: "card.due"
+            case .labels: "card.labels"
+            case .copy: "card.copy"
+            case .split: "card.split"
+            }
+        }
+    }
+
+    /// A category with nothing to offer is absent, not disabled: a blank card has nothing to
+    /// copy, a one-line card nothing to split, a card alone in its board nowhere to move.
+    private var categories: [Category] {
+        Category.allCases.filter { category in
+            switch category {
+            case .move: !otherColumns.isEmpty
+            case .copy: !card.isBlank
+            case .split: card.splitLines.count >= 2
+            case .due, .labels: true
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func items(for category: Category) -> some View {
+        switch category {
+        case .move: moveItems
+        case .due: dueItems
+        case .labels: labelItems
+        case .copy: copyItems
+        case .split: splitItems
+        }
+    }
+
+    /// Every menu entry is an icon and a name.
+    private func item(_ title: LocalizedStringKey, _ symbol: String, role: ButtonRole? = nil,
+                      action: @escaping () -> Void) -> some View {
+        Button(role: role, action: action) { Label(title, systemImage: symbol) }
+    }
+
     @ViewBuilder
     private var cardMenu: some View {
-        // First and flat, one click each: moving a card along the board ("Todo" to "In
-        // Progress") is the thing a card's menu gets opened for most, and a submenu would
-        // make it two. Every column of the card's own board but the one it is in, in the
-        // board's order — the card's own `boardID`, so the All Boards view offers the same.
-        let destinations = otherColumns
-        if !destinations.isEmpty {
-            ForEach(destinations) { column in
-                Button("Move to \(column.name)") { move(to: column) }
-            }
-            Divider()
-        }
-        Menu("Due Date") {
-            Button("Today") { setDue(CardDue.today()) }
-            Button("Tomorrow") { setDue(CardDue.morning(daysFromNow: 1)) }
-            Button("Next Week") { setDue(CardDue.morning(daysFromNow: 7)) }
-            Button("Custom…") {
-                if card.due == nil { setDue(CardDue.today()) }
-                editingDue = true
-            }
-            if card.due != nil {
-                Divider()
-                Button("Remove Due Date") { update { $0.due = nil } }
-            }
-        }
-        Menu("Labels") {
-            ForEach(store.labels) { label in
-                Toggle(label.name, isOn: labelBinding(label.id))
-            }
-            if !store.labels.isEmpty { Divider() }
-            Button("New Label…") {
-                editorLabelForm = true
-                editorShown = true
-            }
-        }
-        Button(expanded ? "Hide Notes" : "Show Notes") { expanded.toggle() }
-        if let onPresent {
-            Button("Present Card") { onPresent() }
-        }
-        if summarizable {
-            Button("Summarize into Title") { summarize() }
-        }
-        if card.splitLines.count >= 2 {
-            Button("Split into Cards", action: splitIntoCards)
-        }
-        if card.noteID != nil {
-            Button("Unlink") { update { $0.noteID = nil } }
-        }
-        // Each copy only when it would put something on the pasteboard — a blank card offers
-        // none of them, a card without notes no "Copy Notes".
-        if !card.isBlank {
-            Button("Copy Text", action: copyText)
-        }
-        if !card.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            Button("Copy Title", action: copyTitleOnly)
-        }
-        if !(card.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            Button("Copy Notes", action: copyNotesOnly)
-        }
-        Button(card.archived == nil ? "Archive Card" : "Unarchive Card") {
-            try? store.setArchived(boardID: boardID, cardIDs: [card.id], card.archived == nil)
+        ForEach(categories, id: \.self) { category in
+            Menu { items(for: category) } label: { Label(category.title, systemImage: category.symbol) }
         }
         Divider()
-        Button("Delete Card", role: .destructive) {
+        item(expanded ? "Hide Notes" : "Show Notes", "text.alignleft") { expanded.toggle() }
+        if let onPresent {
+            item("Present Card", "play.rectangle") { onPresent() }
+        }
+        if summarizable {
+            item("Summarize into Title", "sparkles") { summarize() }
+        }
+        if card.noteID != nil {
+            item("Unlink", "link.badge.minus") { update { $0.noteID = nil } }
+        }
+        Divider()
+        item(card.archived == nil ? "Archive Card" : "Unarchive Card",
+             card.archived == nil ? "archivebox" : "tray.and.arrow.up") {
+            try? store.setArchived(boardID: boardID, cardIDs: [card.id], card.archived == nil)
+        }
+        item("Delete Card", "trash", role: .destructive) {
             bodyDebouncer.cancel()
             try? store.deleteCard(boardID: boardID, cardID: card.id)
         }
+    }
+
+    /// Every other column of the card's own board, in the board's order — the card's own
+    /// `boardID`, so the All Boards view offers the same. Each with its column's look, so the
+    /// menu reads like the header it points at.
+    @ViewBuilder
+    private var moveItems: some View {
+        ForEach(otherColumns) { column in
+            Button { move(to: column) } label: {
+                Label {
+                    Text(column.name)
+                } icon: {
+                    if let image = ColumnMenuIcon.image(for: column, in: store) {
+                        Image(nsImage: image)
+                    } else {
+                        Image(systemName: "rectangle.split.3x1")
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var dueItems: some View {
+        item("Today", "sun.max") { setDue(CardDue.today()) }
+        item("Tomorrow", "sunrise") { setDue(CardDue.morning(daysFromNow: 1)) }
+        item("Next Week", "calendar.badge.clock") { setDue(CardDue.morning(daysFromNow: 7)) }
+        item("Custom…", "calendar") {
+            if card.due == nil { setDue(CardDue.today()) }
+            editingDue = true
+        }
+        if card.due != nil {
+            Divider()
+            item("Remove Due Date", "calendar.badge.minus") { update { $0.due = nil } }
+        }
+    }
+
+    @ViewBuilder
+    private var labelItems: some View {
+        ForEach(store.labels) { label in
+            Toggle(label.name, isOn: labelBinding(label.id))
+        }
+        if !store.labels.isEmpty { Divider() }
+        item("New Label…", "plus") {
+            editorLabelForm = true
+            editorShown = true
+        }
+    }
+
+    /// Each copy only when it would put something on the pasteboard: a card without notes
+    /// offers no "Copy Notes".
+    @ViewBuilder
+    private var copyItems: some View {
+        item("Copy Text", "doc.on.doc", action: copyText)
+        if !card.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            item("Copy Title", "textformat", action: copyTitleOnly)
+        }
+        if !(card.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            item("Copy Notes", "note.text", action: copyNotesOnly)
+        }
+    }
+
+    @ViewBuilder
+    private var splitItems: some View {
+        item("Split into Titles", "textformat") { splitIntoCards(.titles) }
+        item("Split into Notes", "note.text") { splitIntoCards(.notes()) }
+        item("Split into Notes with Titles", "sparkles", action: splitIntoNotesWithTitles)
+    }
+
+    // MARK: - Action row
+
+    /// Below the title's separator and above the notes, so the notes can take the card's full
+    /// width instead of sharing their line with two buttons. Icons only — the name is the
+    /// tooltip and the accessibility label — each opening the category's menu.
+    private var actionRow: some View {
+        HStack(spacing: 2 * scale) {
+            ForEach(categories, id: \.self) { category in
+                let flashing = category == .copy && copied
+                Menu { items(for: category) } label: {
+                    Image(systemName: flashing ? "checkmark.circle.fill" : category.symbol)
+                        .font(.system(size: fontSize(.callout)))
+                        .foregroundStyle(flashing ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+                        .frame(width: 22 * scale, height: 18 * scale)
+                        .contentShape(Rectangle())
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help(category.title)
+                .accessibilityLabel(category.title)
+                .accessibilityValue(flashing ? "copied" : "")
+                .accessibilityIdentifier(category.identifier)
+            }
+            Spacer(minLength: 0)
+            if let onPresent {
+                Button(action: onPresent) {
+                    Image(systemName: "play.rectangle")
+                        .font(.system(size: fontSize(.callout)))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22 * scale, height: 18 * scale)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(String(localized: "Present Card"))
+                .accessibilityLabel(Text("Present Card"))
+                .accessibilityIdentifier("card.present")
+            }
+            Button {
+                // Folding the row out from under a live field would leave the caret in a
+                // view that is on its way out; hand focus back first, which also commits.
+                if editing == .notes { focus = nil }
+                expanded.toggle()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11 * scale, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(expanded ? 0 : -90))
+                    .frame(width: 22 * scale, height: 18 * scale)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .animation(.snappy(duration: 0.18), value: expanded)
+            .help(expanded ? String(localized: "Hide Notes") : String(localized: "Show Notes"))
+            .accessibilityIdentifier("card.notesToggle")
+        }
+        .padding(.top, 4)
     }
 
     private var otherColumns: [BoardColumn] {
@@ -684,11 +820,10 @@ struct CardView: View {
 
     // MARK: - Notes
 
-    /// Folded: the first line of the notes, in the same type the editor uses, with a chevron
-    /// at the trailing edge (where the editor keeps its tag button). Open: the whole text.
-    /// Either way a click on the text edits; only the chevron folds.
+    /// Folded: the first line of the notes, in the same type the editor uses. Open: the whole
+    /// text. Either way a click on the text edits; the fold chevron lives in the action row.
     private var notesSection: some View {
-        HStack(alignment: .top, spacing: 6) {
+        Group {
             if editing == .notes {
                 // axis: .vertical grows with its content instead of reserving a fixed block,
                 // and unlike TextEditor it takes the caret on a single click. No upper line
@@ -727,43 +862,8 @@ struct CardView: View {
                     .accessibilityAction(named: Text("Edit")) { expanded = true; editing = .notes; focus = .notes }
                     .accessibilityIdentifier("card.notes")
             }
-            // Chrome-light on purpose: hidden rather than disabled when there's nothing to
-            // copy, since an always-visible-but-dead button next to a hover-revealed one reads
-            // as broken.
-            if !(card.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Button(action: copyNotesOnly) {
-                    Image(systemName: copiedNotes ? "checkmark.circle.fill" : "doc.on.doc")
-                        .font(.system(size: fontSize(.body)))
-                        .foregroundStyle(copiedNotes ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
-                        .frame(width: 22 * scale, height: 18 * scale)
-                        .contentShape(Rectangle())
-                        .contentTransition(.symbolEffect(.replace))
-                }
-                .buttonStyle(.plain)
-                .opacity(hovering || copiedNotes ? 1 : 0)
-                .help(String(localized: "Copy Notes"))
-                .accessibilityLabel(Text("Copy Notes"))
-                .accessibilityValue(copiedNotes ? "copied" : "")
-                .accessibilityIdentifier("card.copyNotes")
-            }
-            Button {
-                // Folding the row out from under a live field would leave the caret in a
-                // view that is on its way out; hand focus back first, which also commits.
-                if editing == .notes { focus = nil }
-                expanded.toggle()
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 11 * scale, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .rotationEffect(.degrees(expanded ? 0 : -90))
-                    .frame(width: 22 * scale, height: 18 * scale)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .animation(.snappy(duration: 0.18), value: expanded)
-            .help(expanded ? String(localized: "Hide Notes") : String(localized: "Show Notes"))
-            .accessibilityIdentifier("card.notesToggle")
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 7)
     }
 
@@ -878,12 +978,12 @@ struct CardView: View {
     }
 
     private func commit() {
-        // The store trims the title before persisting (`validated(_:)`), so this guard must
+        // The store trims the title before persisting (`trimmedCardTitle`), so this guard must
         // compare the same trimmed value — otherwise a trailing-space-only edit would diverge
         // from the store's echo and the space would vanish from the draft on the next resync.
-        // An empty title is rejected by the store; keep the stored one instead.
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let edited = trimmed.isEmpty ? card.title : trimmed
+        // An empty title is a title: the column's `+` makes exactly that, and clearing the
+        // field has to be able to get back to it.
+        let edited = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let editedBody = body_.isEmpty ? nil : body_
         // Recorded even on the no-op path below: this is what the card's own values are about
         // to be (or already are), and the `.onChange` handlers above must not mistake either

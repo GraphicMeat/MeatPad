@@ -167,6 +167,29 @@ public struct Card: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// What each line of a card becomes when it is split into cards.
+public enum CardSplitMode: Equatable, Sendable {
+    /// The line is the new card's title.
+    case titles
+    /// The line is the new card's notes. `titles`, one per line, are written above them; nil (or
+    /// a list of the wrong length — the card was edited while they were being written) leaves
+    /// the cards untitled. A title that already is the whole line leaves its notes empty.
+    case notes(titles: [String]? = nil)
+
+    func faces(for lines: [String]) -> [(title: String, body: String?)] {
+        switch self {
+        case .titles:
+            return lines.map { ($0, nil) }
+        case .notes(let titles):
+            let usable = titles?.count == lines.count ? titles : nil
+            return lines.indices.map { i in
+                let title = usable?[i].trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return (title, title == lines[i] ? nil : lines[i])
+            }
+        }
+    }
+}
+
 /// One project's board. `cards` order IS the display order; filtering by `columnID` yields
 /// a column's cards already ordered.
 public struct Board: Identifiable, Codable, Equatable, Sendable {

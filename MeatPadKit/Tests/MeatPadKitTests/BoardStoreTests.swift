@@ -1432,4 +1432,73 @@ final class BoardStoreTests: XCTestCase {
         undo.undo()
         XCTAssertEqual(store.boards[0].cards, before)
     }
+
+    // MARK: - split into notes
+
+    /// Notes mode: each line is a card's notes, the cards are untitled, the original keeps its id.
+    func testSplitIntoNotesPutsEachLineInTheNotesOfAnUntitledCard() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "b")
+        let column = board.extraColumns[0].id
+        let source = try store.addCard(boardID: board.id, columnID: column, title: "one", body: "two\nthree")
+
+        let added = try store.splitCard(boardID: board.id, cardID: source.id, mode: .notes())
+
+        XCTAssertEqual(added.map(\.title), ["", ""])
+        XCTAssertEqual(store.boards[0].cards.map(\.body), ["one", "two", "three"])
+        XCTAssertEqual(store.boards[0].cards.map(\.title), ["", "", ""])
+        XCTAssertEqual(store.boards[0].cards[0].id, source.id)
+        XCTAssertEqual(try makeStore().boards[0].cards.map(\.body), ["one", "two", "three"])
+    }
+
+    /// Notes with titles: the given title goes above each line. A title that already is the
+    /// whole line leaves nothing to put in the notes.
+    func testSplitIntoNotesWithTitlesWritesThemAndSkipsRedundantNotes() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "b")
+        let column = board.extraColumns[0].id
+        let source = try store.addCard(boardID: board.id, columnID: column, title: "Buy milk",
+                                       body: "Call the plumber about the leak in the upstairs bathroom")
+
+        try store.splitCard(boardID: board.id, cardID: source.id,
+                            mode: .notes(titles: ["Buy milk", "  Plumber: bathroom leak "]))
+
+        XCTAssertEqual(store.boards[0].cards.map(\.title), ["Buy milk", "Plumber: bathroom leak"])
+        XCTAssertEqual(store.boards[0].cards.map(\.body),
+                       [nil, "Call the plumber about the leak in the upstairs bathroom"])
+    }
+
+    /// The card was edited while the titles were being written: the count no longer matches,
+    /// so none of them is trusted onto the wrong line.
+    func testSplitIntoNotesIgnoresTitlesOfTheWrongCount() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "b")
+        let column = board.extraColumns[0].id
+        let source = try store.addCard(boardID: board.id, columnID: column, title: "a", body: "b\nc")
+
+        try store.splitCard(boardID: board.id, cardID: source.id, mode: .notes(titles: ["only one"]))
+
+        XCTAssertEqual(store.boards[0].cards.map(\.title), ["", "", ""])
+        XCTAssertEqual(store.boards[0].cards.map(\.body), ["a", "b", "c"])
+    }
+
+    /// Every mode undoes as one step with no trash entry, and redo puts the same cards back.
+    func testSplitIntoNotesUndoesInOneStepWithoutTrash() throws {
+        let store = try makeStore()
+        let undo = undoable(store)
+        let board = try store.createBoard(name: "b")
+        let column = board.extraColumns[0].id
+        let source = try store.addCard(boardID: board.id, columnID: column, title: "a", body: "b\nc")
+        let before = store.boards[0].cards
+
+        try store.splitCard(boardID: board.id, cardID: source.id, mode: .notes(titles: ["A", "B", "C"]))
+        let after = store.boards[0].cards
+        XCTAssertEqual(after.map(\.title), ["A", "B", "C"])
+
+        undo.undo()
+        XCTAssertEqual(store.boards[0].cards, before)
+        XCTAssertTrue(store.trash.isEmpty)
+        undo.redo()
+        XCTAssertEqual(store.boards[0].cards, after)
+    }
 }

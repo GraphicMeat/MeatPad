@@ -81,4 +81,23 @@ final class CardTextSplitTests: XCTestCase {
     func testLinesOfBlankTextIsEmpty() {
         XCTAssertEqual(CardTextSplit.lines(from: " \n\t\n"), [])
     }
+
+    // MARK: - headline(of:)
+
+    /// A line already short enough is its own title, untouched.
+    func testHeadlineKeepsAShortLineWhole() {
+        XCTAssertEqual(CardTextSplit.headline(of: "  Buy milk  "), "Buy milk")
+    }
+
+    /// Past eight words the title is the lead, cut at a word, with the stranded comma gone.
+    func testHeadlineCutsALongLineAtEightWords() {
+        XCTAssertEqual(CardTextSplit.headline(of: "one two three four five six seven eight, nine ten"),
+                       "one two three four five six seven eight…")
+    }
+
+    /// No spaces (Japanese, say) means one "word": the length ceiling is what still applies.
+    func testHeadlineOfSpacelessTextStaysUnderTheTitleLimit() {
+        let title = CardTextSplit.headline(of: String(repeating: "あ", count: 400))
+        XCTAssertLessThanOrEqual(title.count, 121)
+    }
 }

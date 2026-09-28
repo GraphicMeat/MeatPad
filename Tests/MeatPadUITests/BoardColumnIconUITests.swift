@@ -59,6 +59,27 @@ final class BoardColumnIconUITests: XCTestCase {
         XCTAssertEqual(try storedColumn(plainColumn)["emoji"] as? String, "🎯")
     }
 
+    /// "Doing" has no icon and no other board to borrow one from, so the keyword rule suggests
+    /// 🚧 — in the column menu, as an opt-in. Seeing the suggestion changes nothing: the
+    /// header stays bare until the item is chosen, and then it is stored like any emoji.
+    func testTheColumnMenuOffersASuggestedIconAndAppliesItOnlyWhenChosen() throws {
+        XCTAssertFalse(icon(plainColumn).exists)
+        let use = menuItem("Use 🚧 as Icon", on: plainColumn)
+        XCTAssertFalse(icon(plainColumn).exists, "the suggestion was applied before it was chosen")
+        use.click()
+
+        XCTAssertTrue(poll { self.icon(self.plainColumn).value as? String == "🚧" },
+                      "the header still shows \(String(describing: icon(plainColumn).value))")
+        XCTAssertEqual(try storedColumn(plainColumn)["emoji"] as? String, "🚧")
+    }
+
+    /// A column that already has a look is not offered another.
+    func testAColumnWithAnIconIsOfferedNoSuggestion() {
+        _ = menuItem("Remove Icon", on: emojiColumn)
+        XCTAssertEqual(app.menuItems.matching(NSPredicate(format: "title BEGINSWITH 'Use '")).count, 0,
+                       "a column with an icon was offered a suggestion")
+    }
+
     func testRemovingTheIconPutsTheHeaderBackToPlain() throws {
         menuItem("Remove Icon", on: emojiColumn).click()
 

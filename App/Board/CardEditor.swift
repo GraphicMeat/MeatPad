@@ -519,8 +519,8 @@ struct CardEditor: View {
 
     private func commitTitle() {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        // An empty title is rejected by the store; keep the stored one rather than lose it.
-        guard !trimmed.isEmpty, trimmed != card.title else { return }
+        // Empty is allowed — a card can be untitled, and clearing the field must stick.
+        guard trimmed != card.title else { return }
         update { $0.title = trimmed }
     }
 

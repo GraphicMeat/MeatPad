@@ -70,30 +70,68 @@ final class BoardCardFaceUITests: XCTestCase {
         XCTAssertEqual(try storedTitle(), "Alpha!")
     }
 
-    /// Seeded card: title "Alpha", body "first line\nsecond line" — `clipboardText` joins them
-    /// with a blank line between, the same format `MeatPadKitTests` proves for `Card`.
-    func testCopyButtonCopiesTitleAndNotesAndShowsCheckmark() throws {
-        title.hover()
-        let copy = app.buttons["card.copy"].firstMatch
-        XCTAssertTrue(copy.waitForExistence(timeout: 5))
+    /// The action row's Copy icon opens a menu of what to copy. Seeded card: title "Alpha",
+    /// body "first line\nsecond line" — `clipboardText` joins them with a blank line between,
+    /// the same format `MeatPadKitTests` proves for `Card`.
+    func testCopyMenuCopiesTitleAndNotesAndShowsCheckmark() throws {
+        let copy = element("card.copy")
+        XCTAssertTrue(copy.waitForExistence(timeout: 5), "no Copy icon in the action row")
         NSPasteboard.general.clearContents()
         copy.click()
+        app.menuItems["Copy Text"].firstMatch.click()
         XCTAssertTrue(poll { NSPasteboard.general.string(forType: .string) == "Alpha\n\nfirst line\nsecond line" })
         XCTAssertEqual(copy.value as? String, "copied")
         XCTAssertTrue(poll(timeout: 4) { (copy.value as? String) != "copied" })
     }
 
-    /// The notes row carries its own copy button: the header's copies the whole card, this
-    /// one copies only what is under it.
-    func testTheNotesCopyButtonCopiesOnlyTheNotes() throws {
-        notes.hover()
-        let copy = app.buttons["card.copyNotes"].firstMatch
-        XCTAssertTrue(copy.waitForExistence(timeout: 5), "no copy button on the notes row")
+    /// Each field has its own entry: the whole card, only the title, only what is under it.
+    func testCopyMenuCopiesOnlyTheTitleOrOnlyTheNotes() throws {
+        let copy = element("card.copy")
+        XCTAssertTrue(copy.waitForExistence(timeout: 5))
         NSPasteboard.general.clearContents()
         copy.click()
+        app.menuItems["Copy Notes"].firstMatch.click()
         XCTAssertTrue(poll { NSPasteboard.general.string(forType: .string) == "first line\nsecond line" },
                       "the notes copy put \(String(describing: NSPasteboard.general.string(forType: .string))) on the pasteboard")
         XCTAssertEqual(copy.value as? String, "copied")
+
+        copy.click()
+        app.menuItems["Copy Title"].firstMatch.click()
+        XCTAssertTrue(poll { NSPasteboard.general.string(forType: .string) == "Alpha" })
+    }
+
+    /// Any element type: a menu button, a pop-up button, a button — whichever the row's icon is.
+    private func element(_ identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    /// The bug: a typed title could never be deleted back to nothing. The blur restored the
+    /// card's own title over the empty field, and the commit refused an empty one.
+    func testClearingTheTitleEmptiesItAndBlurCommits() throws {
+        title.click()
+        XCTAssertTrue(app.textFields["card.title"].waitForExistence(timeout: 5), "the click opened no field")
+        app.typeKey("a", modifierFlags: .command)
+        app.typeKey(.delete, modifierFlags: [])
+        app.staticTexts["Todo"].firstMatch.click()   // blur
+
+        XCTAssertTrue(poll { (try? self.storedTitle()) == "" }, "stored title: \(String(describing: try? storedTitle()))")
+        XCTAssertTrue(poll { self.faceText(self.title) == "Title" }, "the face still reads \(faceText(title))")
+        XCTAssertEqual(try storedCard()["body"] as? String, "first line\nsecond line", "clearing the title touched the notes")
+    }
+
+    /// The notes were never the problem — an emptied body is stored as nothing — but the two
+    /// fields share a commit, so the pair is pinned together.
+    func testClearingTheNotesEmptiesThemAndBlurCommits() throws {
+        notes.click()
+        XCTAssertTrue(app.textFields["card.notes"].waitForExistence(timeout: 5))
+        app.typeKey("a", modifierFlags: .command)
+        app.typeKey(.delete, modifierFlags: [])
+        app.staticTexts["Todo"].firstMatch.click()   // blur
+
+        XCTAssertTrue(poll { (try? self.storedCard()).map { $0["body"] == nil } ?? false },
+                      "the notes are still stored: \(String(describing: try? storedCard()["body"]))")
+        XCTAssertTrue(poll { self.faceText(self.notes) == "Add Notes" }, "the face still reads \(faceText(notes))")
+        XCTAssertEqual(try storedTitle(), "Alpha")
     }
 
     func testDraggingTheTitleMovesTheCardToAnotherColumn() throws {
@@ -176,7 +214,6 @@ final class BoardCardFaceUITests: XCTestCase {
     func testDoubleClickingAnAttachmentInThePresentedCardOpensQuickLook() throws {
         // Presenting is a button on the card now, not a double-click on it — the double-click
         // belonged as much to the field editor underneath as to the card.
-        title.hover()
         let present = app.buttons["card.present"].firstMatch
         XCTAssertTrue(present.waitForExistence(timeout: 5), "no present button on the card")
         present.click()
@@ -283,8 +320,8 @@ final class BoardCardFaceUITests: XCTestCase {
 
     /// Seeded Alpha is "Alpha" over "first line\nsecond line": three lines, three cards, in
     /// order, in the same column — and one ⌘Z takes the split back.
-    func testSplitIntoCardsMakesACardPerLineUnderTheOriginal() throws {
-        cardMenuItem("Split into Cards", on: title).click()
+    func testSplitIntoTitlesMakesACardPerLineUnderTheOriginal() throws {
+        cardMenuItem("Split into Titles", on: title, in: "Split into Cards").click()
 
         XCTAssertTrue(poll { (try? self.storedTitles()) == ["Alpha", "first line", "second line"] },
                       "stored after the split: \(String(describing: try? storedTitles()))")
@@ -295,7 +332,7 @@ final class BoardCardFaceUITests: XCTestCase {
         XCTAssertTrue(poll { self.faceTitlesTopDown() == ["Alpha", "first line", "second line"] },
                       "the column shows \(faceTitlesTopDown())")
 
-        // A one-line card has nothing to split: the item is gone, the menu itself is not.
+        // A one-line card has nothing to split: the whole category is gone, the menu is not.
         let single = app.descendants(matching: .any).matching(identifier: "card.title")
             .matching(NSPredicate(format: "value == %@", "second line")).firstMatch
         XCTAssertTrue(cardMenuItem("Delete Card", on: single).exists)
@@ -307,13 +344,45 @@ final class BoardCardFaceUITests: XCTestCase {
         XCTAssertTrue(waitForStoredBody("first line\nsecond line"), "⌘Z did not give the original its notes back")
     }
 
+    /// Notes mode: each line lands in the notes of an untitled card, the original keeps its id.
+    func testSplitIntoNotesPutsEachLineInAnUntitledCard() throws {
+        cardMenuItem("Split into Notes", on: title, in: "Split into Cards").click()
+
+        XCTAssertTrue(poll { (try? self.storedBodies()) == ["Alpha", "first line", "second line"] },
+                      "bodies after the split: \(String(describing: try? storedBodies()))")
+        XCTAssertEqual(try storedTitles(), ["", "", ""])
+        XCTAssertEqual(try storedCard()["id"] as? String, cardID.uuidString)
+
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(poll { (try? self.storedTitles()) == ["Alpha"] }, "⌘Z left \(String(describing: try? storedTitles()))")
+    }
+
+    /// Notes with titles: every line here is short enough to be its own title, so each card
+    /// is titled by its line and has no notes repeating it. (A long line keeps the line as
+    /// its notes under a shorter title — `MeatPadKitTests` covers that, this proves the wiring.)
+    func testSplitIntoNotesWithTitlesTitlesEachCard() throws {
+        cardMenuItem("Split into Notes with Titles", on: title, in: "Split into Cards").click()
+
+        XCTAssertTrue(poll { (try? self.storedTitles()) == ["Alpha", "first line", "second line"] },
+                      "stored after the split: \(String(describing: try? storedTitles()))")
+        XCTAssertEqual(try storedBodies(), [])
+    }
+
     /// The card's own context menu, retried the way `BoardArchiveUITests` does: the menu
     /// occasionally does not come up on the first right-click after the window takes focus.
-    private func cardMenuItem(_ item: String, on card: XCUIElement) -> XCUIElement {
+    /// With `submenu`, the item is inside that category's submenu, which is opened first — a
+    /// closed submenu's items are not in the tree, so a bare lookup would find nothing (and an
+    /// `exists == false` check on one would pass vacuously).
+    private func cardMenuItem(_ item: String, on card: XCUIElement, in submenu: String? = nil) -> XCUIElement {
         XCTAssertTrue(card.waitForExistence(timeout: 5), "no card to right-click")
-        let entry = app.menuItems[item].firstMatch
+        let category = submenu.map { app.menuItems[$0].firstMatch }
+        let entry = (category?.menuItems[item] ?? app.menuItems[item]).firstMatch
         for _ in 0..<3 {
             card.rightClick()
+            if let category {
+                guard category.waitForExistence(timeout: 3) else { app.typeKey(.escape, modifierFlags: []); continue }
+                category.click()
+            }
             if entry.waitForExistence(timeout: 3) { return entry }
             app.typeKey(.escape, modifierFlags: [])
         }
@@ -329,14 +398,15 @@ final class BoardCardFaceUITests: XCTestCase {
 
     // MARK: - Move to column
 
-    /// The card menu leads with one "Move to …" per other column of the card's board — never
-    /// the one it is already in — and a move is one ⌘Z.
+    /// The card menu's "Move to" submenu has one entry per other column of the card's board —
+    /// never the one it is already in — and a move is one ⌘Z.
     func testTheCardMenuMovesACardToAnotherColumn() throws {
         launch(onBoard: probeBoardID)
         let card = probeTitle("Card P2")
-        let move = cardMenuItem("Move to Doing", on: card)
-        XCTAssertTrue(app.menuItems["Move to Done"].exists, "no item for the board's third column")
-        XCTAssertFalse(app.menuItems["Move to Todo"].exists, "the menu offers the card's own column")
+        let move = cardMenuItem("Doing", on: card, in: "Move to")
+        let submenu = app.menuItems["Move to"]
+        XCTAssertTrue(submenu.menuItems["Done"].exists, "no item for the board's third column")
+        XCTAssertFalse(submenu.menuItems["Todo"].exists, "the menu offers the card's own column")
         move.click()
 
         XCTAssertTrue(poll { self.probeColumn(of: self.probeCard2ID) == self.secondColumnID.uuidString },
@@ -344,8 +414,8 @@ final class BoardCardFaceUITests: XCTestCase {
         XCTAssertEqual(probeColumn(of: probeCard1ID), columnID.uuidString, "the move took the other card along")
 
         // Now in Doing: the menu offers Todo back, and not Doing.
-        XCTAssertTrue(cardMenuItem("Move to Todo", on: card).exists)
-        XCTAssertFalse(app.menuItems["Move to Doing"].exists, "the menu offers the column the card just moved to")
+        XCTAssertTrue(cardMenuItem("Todo", on: card, in: "Move to").exists)
+        XCTAssertFalse(submenu.menuItems["Doing"].exists, "the menu offers the column the card just moved to")
         app.typeKey(.escape, modifierFlags: [])
 
         app.typeKey("z", modifierFlags: .command)
@@ -564,6 +634,10 @@ final class BoardCardFaceUITests: XCTestCase {
     private func storedTitle() throws -> String { try XCTUnwrap(storedCard()["title"] as? String) }
     private func storedTitles() throws -> [String] {
         try XCTUnwrap(boardJSON()["cards"] as? [[String: Any]]).compactMap { $0["title"] as? String }
+    }
+    /// The bodies that exist, in card order — a card with no notes has no `body` key at all.
+    private func storedBodies() throws -> [String] {
+        try XCTUnwrap(boardJSON()["cards"] as? [[String: Any]]).compactMap { $0["body"] as? String }
     }
     private func waitForStoredBody(_ expected: String) -> Bool { poll { (try? self.storedCard()["body"] as? String) == expected } }
     private func waitForStoredColumn(_ id: UUID) -> Bool { poll { (try? self.storedCard()["columnID"] as? String) == id.uuidString } }

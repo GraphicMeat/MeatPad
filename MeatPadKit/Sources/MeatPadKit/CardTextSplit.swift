@@ -49,6 +49,21 @@ public enum CardTextSplit {
             .filter { !$0.isEmpty }
     }
 
+    /// A short title for one line, for when the on-device model can't write one (unsupported
+    /// language, line too short to summarize, macOS 14): its first `maxWords` words, or the
+    /// whole line when it is already that short. Whitespace-delimited, so a script without
+    /// spaces falls through to the same length ceiling a pasted title gets.
+    public static func headline(of line: String, maxWords: Int = 8) -> String {
+        let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = text.split(whereSeparator: \.isWhitespace)
+        var title = text
+        if words.count > maxWords {
+            let head = words.prefix(maxWords).joined(separator: " ")
+            title = head.trimmingCharacters(in: CharacterSet(charactersIn: ",;:-–— ")) + "…"
+        }
+        return title.count > titleLimit ? truncated(title) : title
+    }
+
     // MARK: - Grouping
 
     /// Groups lines by list marker ("1.", "2)", "-", "•", …). nil when the text isn't a list,
