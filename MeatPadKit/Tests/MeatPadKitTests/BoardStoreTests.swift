@@ -1069,9 +1069,19 @@ final class BoardStoreTests: XCTestCase {
 
         undo.undo()
         XCTAssertFalse(store.boards[0].cards.contains { $0.id == card.id })
+        // Taking back a card you just made is not deleting one: nothing lands in Board Trash.
+        XCTAssertTrue(store.trash.isEmpty)
+        XCTAssertTrue(try makeStore().trash.isEmpty)
 
         undo.redo()
         XCTAssertEqual(store.boards[0].cards.map(\.title), ["x"])
+        XCTAssertEqual(store.boards[0].cards.map(\.id), [card.id])
+        XCTAssertTrue(store.trash.isEmpty)
+
+        // And round again — redo registered its own undo.
+        undo.undo()
+        XCTAssertTrue(store.boards[0].cards.isEmpty)
+        XCTAssertTrue(store.trash.isEmpty)
     }
 
     func testUndoIsPersistedToDisk() throws {
@@ -1186,6 +1196,7 @@ final class BoardStoreTests: XCTestCase {
         undo.undo()
         XCTAssertTrue(store.boards[0].cards.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertTrue(store.trash.isEmpty)
 
         undo.redo()
         XCTAssertEqual(store.boards[0].cards.map(\.title), ["shot"])

@@ -374,8 +374,26 @@ public final class BoardStore: ObservableObject {
         let card = Card(title: Self.trimmedCardTitle(title), body: body, columnID: columnID)
         boards[idx].cards.append(card)
         try persist(at: idx)
-        registerUndo { try? $0.deleteCard(boardID: boardID, cardID: card.id) }
+        registerUndo { $0.unadd(card, boardID: boardID) }
         return card
+    }
+
+    /// The inverse of `addCard`. Not `deleteCard`: taking back a card you just made is not
+    /// deleting one, and routing it through the trash left an entry in Board Trash for every
+    /// ⌘Z of a new card. Redo puts the very same card back where it was.
+    private func unadd(_ card: Card, boardID: UUID) {
+        guard let idx = try? boardIndex(boardID),
+              let cardIdx = boards[idx].cards.firstIndex(where: { $0.id == card.id }) else { return }
+        let current = boards[idx].cards.remove(at: cardIdx)
+        try? persist(at: idx)
+        registerUndo { $0.readd(current, boardID: boardID, at: cardIdx) }
+    }
+
+    private func readd(_ card: Card, boardID: UUID, at index: Int) {
+        guard let idx = try? boardIndex(boardID) else { return }
+        boards[idx].cards.insert(card, at: min(index, boards[idx].cards.count))
+        try? persist(at: idx)
+        registerUndo { $0.unadd(card, boardID: boardID) }
     }
 
     /// A card made out of a dropped image. One outer undo group around both mutations: the
