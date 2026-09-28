@@ -176,6 +176,9 @@ struct BoardColumnsView: View {
             if presentedCard != nil { presentOverlay }
         }
         .animation(.snappy(duration: 0.18), value: presentedCard != nil)
+        // Quick Look for every card's tiles, hosted here rather than per strip: this view
+        // survives a switch between boards, the strips do not — see `QuickLookHost`.
+        .modifier(QuickLookHost())
     }
 
     private var board_: some View {
@@ -988,7 +991,8 @@ struct BoardColumnsView: View {
             isDone: column?.isDone ?? columnIsDone(ref),
             isSelected: selection.ids.contains(ref.card.id),
             display: display,
-            onPresent: { presentedCard = ref.card.id }
+            onPresent: { presentedCard = ref.card.id },
+            highlight: searchQuery
         )
         .contentShape(Rectangle())
         // Feeds `rowGeometry.hovered`, which the outer `.onTapGesture` reads so a plain click on a

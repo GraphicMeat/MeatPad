@@ -1,5 +1,17 @@
 import SwiftUI
 import AppKit
+import os
+
+/// Quick Look's double-click path, logged end to end: whether the double-click reached the
+/// monitor, whether it found a tile, which file `AttachmentStrip` asked to preview, and whether
+/// the panel was up half a second later. This round of "double-click doesn't always open
+/// Quick Look" was found by exactly these lines (see `QuickLookHost`), so they stay for the
+/// next miss:
+///   log stream --level debug --predicate 'subsystem == "com.thecoldzero.MeatPad" && category == "quicklook"'
+/// No double-click line = the second click never counted as one; a line with no tile = the
+/// hit test landed elsewhere (the class says where); an open with "panel NOT up" = the
+/// presentation side.
+let quickLookLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.thecoldzero.MeatPad", category: "quicklook")
 
 /// "Double-click me" as an AppKit view rather than a `TapGesture(count: 2)`. A SwiftUI
 /// double-tap on an attachment tile loses to whatever else is watching the row — the card's
@@ -61,7 +73,16 @@ final class DoubleClickCatcherView: NSView {
     static func installMonitor() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
-            guard event.clickCount == 2, let catcher = catcher(for: event) else { return event }
+            guard event.clickCount == 2 else { return event }
+            guard let catcher = catcher(for: event) else {
+                let hit = event.window?.contentView?.hitTest(event.locationInWindow)
+                let hitClass = hit.map { String(describing: type(of: $0)) } ?? "nil"
+                let windowClass = event.window.map { String(describing: type(of: $0)) } ?? "nil"
+                let point = "\(event.locationInWindow)"
+                quickLookLog.debug("double-click, no tile: hit \(hitClass, privacy: .public) in \(windowClass, privacy: .public) at \(point, privacy: .public)")
+                return event
+            }
+            quickLookLog.debug("double-click on a tile")
             catcher.onDoubleClick()
             // Swallowed: the double-click belongs to the tile, and the row underneath must not
             // also act on it.

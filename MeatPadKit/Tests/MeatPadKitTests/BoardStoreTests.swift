@@ -909,6 +909,62 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertFalse(card.matches(labels: [b], text: "crash"))
     }
 
+    // MARK: - search highlight ranges
+
+    private func matched(_ query: String, in text: String) -> [String] {
+        Card.matchRanges(of: query, in: text).map { (text as NSString).substring(with: $0) }
+    }
+
+    func testMatchRangesFindsEveryOccurrenceIgnoringCase() {
+        XCTAssertEqual(matched("ab", in: "Ab cab ABBA"), ["Ab", "ab", "AB"])
+        XCTAssertEqual(Card.matchRanges(of: "ab", in: "Ab cab ABBA"),
+                       [NSRange(location: 0, length: 2), NSRange(location: 4, length: 2), NSRange(location: 7, length: 2)])
+    }
+
+    /// The Lithuanian sample from the search's own rule: diacritics don't count, so the plain
+    /// query finds — and highlights — the accented letters the text really has.
+    func testMatchRangesIgnoresDiacritics() {
+        XCTAssertEqual(matched("saltib", in: "Šaltibarščiai ir šaltibarščių sriuba"), ["Šaltib", "šaltib"])
+        XCTAssertEqual(matched("barsc", in: "Šaltibarščiai"), ["baršč"])
+    }
+
+    /// Ranges are UTF-16 offsets into what `NSAttributedString` holds — an emoji ahead of the
+    /// hit is two units there and one Character in Swift, and the range must land on the hit.
+    func testMatchRangesAreUTF16OffsetsPastAnEmoji() {
+        XCTAssertEqual(matched("fix", in: "🔥🔥 Fix it"), ["Fix"])
+        XCTAssertEqual(Card.matchRanges(of: "fix", in: "🔥🔥 Fix it").first?.location, 5)
+    }
+
+    func testMatchRangesTrimsTheQueryAndIgnoresABlankOne() {
+        XCTAssertEqual(matched("  parser \n", in: "the Parser"), ["Parser"])
+        XCTAssertTrue(Card.matchRanges(of: "   ", in: "anything").isEmpty)
+        XCTAssertTrue(Card.matchRanges(of: "zzz", in: "anything").isEmpty)
+        XCTAssertTrue(Card.matchRanges(of: "a", in: "").isEmpty)
+    }
+
+    /// The whole point of sharing a rule with `matches`: a card the search keeps always has a
+    /// highlight to show, and a card with nothing to highlight is never kept.
+    func testEveryMatchingCardHasSomethingToHighlightAndViceVersa() {
+        let column = UUID()
+        let cards = [
+            Card(title: "Réfactor the Parser", columnID: column),
+            Card(title: "Ship it", body: "blocked on notarization\nsecond line", columnID: column),
+            Card(title: "Šaltibarščiai", body: "Rožinė sriuba", columnID: column),
+            Card(title: "🔥 Hotfix", body: "straße", columnID: column),
+            Card(title: "", body: "ÉCOLE", columnID: column),
+        ]
+        let queries = ["parser", "refactor", "or the par", "NOTARIZATION", "second", "saltib", "rozine",
+                       "fix", "🔥", "strasse", "straße", "ecole", "e", "zzz", "Ship it blocked", "  sriuba  "]
+        for card in cards {
+            for query in queries {
+                let hits = Card.matchRanges(of: query, in: card.title).count
+                    + Card.matchRanges(of: query, in: card.body ?? "").count
+                XCTAssertEqual(card.matches(labels: [], text: query), hits > 0,
+                               "“\(query)” on “\(card.title)” / “\(card.body ?? "")”")
+            }
+        }
+    }
+
     // MARK: - legacy files
 
     func testStoreWrittenBeforeLabelsStillDecodes() throws {
@@ -1247,5 +1303,122 @@ final class BoardStoreTests: XCTestCase {
         XCTAssertTrue(Card(title: "", columnID: UUID()).isBlank)
         XCTAssertFalse(Card(title: "T", columnID: UUID()).isBlank)
         XCTAssertFalse(Card(title: "", body: "n", columnID: UUID()).isBlank)
+    }
+
+    // MARK: - split into cards
+
+    func testSplitCardPutsEachLineUnderTheOriginalInItsColumn() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "b")
+        let todo = board.extraColumns[0].id
+        let doing = board.extraColumns[1].id
+        _ = try store.addCard(boardID: board.id, columnID: todo, title: "before")
+        let source = try store.addCard(boardID: board.id, columnID: todo, title: "- one", body: "two\n\n  * three  ")
+        // A card from another column sits between them in the flat array — the split must
+        // land right after the original, not after whatever the flat order holds next.
+        _ = try store.addCard(boardID: board.id, columnID: doing, title: "elsewhere")
+        _ = try store.addCard(boardID: board.id, columnID: todo, title: "after")
+
+        let added = try store.splitCard(boardID: board.id, cardID: source.id)
+
+        XCTAssertEqual(added.map(\.title), ["two", "three"])
+        XCTAssertEqual(store.boards[0].cards.map(\.title), ["before", "one", "two", "three", "elsewhere", "after"])
+        XCTAssertEqual(store.cards(in: store.boards[0], column: todo).map(\.title), ["before", "one", "two", "three", "after"])
+        XCTAssertEqual(store.boards[0].cards[1].id, source.id)
+        XCTAssertNil(store.boards[0].cards[1].body)
+        XCTAssertEqual(try makeStore().boards[0].cards.map(\.title), ["before", "one", "two", "three", "elsewhere", "after"])
+    }
+
+    /// The original stays the card it was; the new ones are filed like it and own nothing.
+    func testSplitCardKeepsTheOriginalsIdentityAndCopiesOnlyLabelsAndColour() throws {
+        let store = try makeStore()
+        let board = try store.createBoard(name: "b")
+        let column = board.extraColumns[0].id
+        let label = try store.createLabel(name: "Bug")
+        var source = try store.addCard(boardID: board.id, columnID: column, title: "one", body: "two")
+        let name = try store.addAttachment(boardID: board.id, cardID: source.id, data: Data([1]), ext: "png")
+        source = store.boards[0].cards[0]
+        let due = Date(timeIntervalSince1970: 1_800_000_000)
+        let note = UUID()
+        let color = CardLabel.palette[3]
+        source.due = due
+        source.noteID = note
+        source.labelIDs = [label.id]
+        source.color = color
+        try store.updateCard(boardID: board.id, card: source)
+        try store.setArchived(boardID: board.id, cardIDs: [source.id], true)
+
+        try store.splitCard(boardID: board.id, cardID: source.id)
+
+        let head = store.boards[0].cards[0]
+        XCTAssertEqual(head.id, source.id)
+        XCTAssertEqual(head.title, "one")
+        XCTAssertNil(head.body)
+        XCTAssertEqual(head.attachments, [name])
+        XCTAssertEqual(head.due, due)
+        XCTAssertEqual(head.noteID, note)
+        XCTAssertEqual(head.labelIDs, [label.id])
+        XCTAssertEqual(head.color, color)
+        XCTAssertNotNil(head.archived)
+
+        let new = store.boards[0].cards[1]
+        XCTAssertEqual(new.title, "two")
+        XCTAssertNil(new.body)
+        XCTAssertEqual(new.columnID, column)
+        XCTAssertEqual(new.labelIDs, [label.id])
+        XCTAssertEqual(new.color, color)
+        XCTAssertNil(new.attachments)
+        XCTAssertNil(new.due)
+        XCTAssertNil(new.noteID)
+    }
+
+    func testSplitCardWithFewerThanTwoLinesDoesNothing() throws {
+        let store = try makeStore()
+        let undo = undoable(store)
+        let board = try store.createBoard(name: "b")
+        let column = board.extraColumns[0].id
+        let single = try store.addCard(boardID: board.id, columnID: column, title: "only", body: "  \n ")
+        let blank = try store.addCard(boardID: board.id, columnID: column, title: "")
+        let before = store.boards[0].cards
+        undo.removeAllActions()
+
+        XCTAssertEqual(try store.splitCard(boardID: board.id, cardID: single.id), [])
+        XCTAssertEqual(try store.splitCard(boardID: board.id, cardID: blank.id), [])
+        XCTAssertEqual(store.boards[0].cards, before)
+        XCTAssertFalse(undo.canUndo, "a no-op split left an undo step")
+        XCTAssertThrowsError(try store.splitCard(boardID: board.id, cardID: UUID()))
+    }
+
+    /// One ⌘Z puts the board back exactly — the original's text and `modified` stamp, no extra
+    /// cards — and leaves nothing in the Board Trash: the split-off cards never existed before.
+    /// Redo brings back the very same cards, ids included.
+    func testSplitCardUndoesInOneStepWithoutTrashAndRedoesTheSameCards() throws {
+        let store = try makeStore()
+        let undo = undoable(store)
+        let board = try store.createBoard(name: "b")
+        let column = board.extraColumns[0].id
+        _ = try store.addCard(boardID: board.id, columnID: column, title: "first")
+        let source = try store.addCard(boardID: board.id, columnID: column, title: "a", body: "b\nc")
+        _ = try store.addCard(boardID: board.id, columnID: column, title: "last")
+        let before = store.boards[0].cards
+
+        try store.splitCard(boardID: board.id, cardID: source.id)
+        let after = store.boards[0].cards
+        XCTAssertEqual(after.count, 5)
+
+        undo.undo()
+        XCTAssertEqual(store.boards[0].cards, before)
+        XCTAssertTrue(store.trash.isEmpty, "undoing a split trashed the split-off cards")
+        // On disk too — compared by id and text, since the file's ISO 8601 dates drop the
+        // sub-second part every in-memory stamp carries.
+        XCTAssertEqual(try makeStore().boards[0].cards.map(\.id), before.map(\.id))
+        XCTAssertEqual(try makeStore().boards[0].cards.map(\.body), before.map(\.body))
+
+        undo.redo()
+        XCTAssertEqual(store.boards[0].cards, after)
+        XCTAssertTrue(store.trash.isEmpty)
+
+        undo.undo()
+        XCTAssertEqual(store.boards[0].cards, before)
     }
 }

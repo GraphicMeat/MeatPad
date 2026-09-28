@@ -1,5 +1,6 @@
 import SwiftUI
 import QuickLook
+import QuickLookUI
 import MeatPadKit
 
 /// A row of thumbnails with Quick Look on double-click and, when `onRemove` is given, a hover
@@ -20,6 +21,9 @@ struct AttachmentStrip: View {
 
     @State private var preview: URL?
     @State private var hovering: Int?
+    /// Set by a view that owns Quick Look for everything under it (the board) — then this
+    /// strip carries no `.quickLookPreview` of its own. See `QuickLookHost`.
+    @Environment(\.quickLookHost) private var host
 
     var body: some View {
         let shown = limit.map { Array(urls.prefix($0)) } ?? urls
@@ -71,15 +75,26 @@ struct AttachmentStrip: View {
                     }
             }
         }
-        .quickLookPreview($preview)
+        .modifier(OwnQuickLook(preview: $preview, enabled: host == nil))
     }
 
     /// SwiftUI doesn't always write `nil` back when the Quick Look panel goes away. A switch to
     /// another view does it, and then the next double-click on the same image assigns the same
     /// URL and nothing happens. Clearing first makes every open a real change.
     private func open(_ url: URL) {
-        preview = nil
-        DispatchQueue.main.async { preview = url }
+        let name = url.lastPathComponent
+        quickLookLog.debug("open \(name, privacy: .public)")
+        if let host {
+            host.open(url)
+        } else {
+            preview = nil
+            DispatchQueue.main.async { preview = url }
+        }
+        // The last stage of the path: did the panel actually come up for it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let up = QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible
+            quickLookLog.debug("0.5s after open \(name, privacy: .public): panel \(up ? "up" : "NOT up", privacy: .public)")
+        }
     }
 
     /// A drag out of the app never hands out the stored file directly — a Finder drop can move
@@ -100,5 +115,67 @@ struct AttachmentStrip: View {
             try FileManager.default.copyItem(at: url, to: copy)
         } catch { return NSItemProvider() }
         return NSItemProvider(contentsOf: copy) ?? NSItemProvider()
+    }
+}
+
+/// The strip's own `.quickLookPreview`, only where no ancestor hosts Quick Look instead.
+private struct OwnQuickLook: ViewModifier {
+    @Binding var preview: URL?
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if enabled { content.quickLookPreview($preview) } else { content }
+    }
+}
+
+/// One `.quickLookPreview` for a whole view, handed down to every `AttachmentStrip` under it.
+///
+/// Per-strip modifiers broke on the board: switch the sidebar from one board to another (or
+/// to All Boards) and no double-click opened Quick Look until the view changed again — the
+/// tile was found and the preview was set, the panel just never came up. Proven under UI
+/// test (`BoardCardFaceUITests`, the All Boards probes and the board-switch test): it failed
+/// only when one set of strips left and another arrived in the SAME update. The same
+/// All Boards reached by way of a note (strips leave, then arrive, in separate updates), or
+/// refreshed with Compact then Full, opened every time. So the switch itself orphans the
+/// arriving strips' `.quickLookPreview` — SwiftUI's internals, not ours to fix — and the way
+/// out is a modifier that never leaves when the board's content swaps: this one, on the
+/// board view, which keeps its identity across every board and All Boards.
+struct QuickLookHost: ViewModifier {
+    @StateObject private var request = QuickLookRequest()
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.quickLookHost, request)
+            .quickLookPreview($request.url)
+    }
+}
+
+/// What a strip under a `QuickLookHost` asks to preview. A reference, so the environment
+/// value handed to every strip stays the same object across renders and invalidates nothing.
+final class QuickLookRequest: ObservableObject {
+    @Published var url: URL?
+
+    /// A different file is set straight through: the panel is shared by every tile on the
+    /// board, and clearing it first would dismiss the image already up, whose closing then
+    /// swallows the next one (probe c in `BoardCardFaceUITests`). Only the same file again
+    /// takes the strip's clear-then-set, since an unchanged binding opens nothing.
+    func open(_ url: URL) {
+        guard self.url == url else {
+            self.url = url
+            return
+        }
+        self.url = nil
+        DispatchQueue.main.async { self.url = url }
+    }
+}
+
+private struct QuickLookHostKey: EnvironmentKey {
+    static let defaultValue: QuickLookRequest? = nil
+}
+
+extension EnvironmentValues {
+    var quickLookHost: QuickLookRequest? {
+        get { self[QuickLookHostKey.self] }
+        set { self[QuickLookHostKey.self] = newValue }
     }
 }

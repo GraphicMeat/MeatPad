@@ -27,6 +27,9 @@ final class BoardSearchUITests: XCTestCase {
             "-meatpad.storageRootOverride", storageRoot.path,
             "-meatpad.revealBoard", boardID.uuidString,
             "-hasSeenFirstRunIntro", "YES",
+            // Notes folded to their first line, so a hit further down has something to open.
+            // Titles are drawn whole either way — nothing the filter tests read changes.
+            "-board.cardDisplay", "titles",
         ]
         app.launch()
         XCTAssertTrue(cardTitles.firstMatch.waitForExistence(timeout: 20), "board never rendered")
@@ -77,6 +80,41 @@ final class BoardSearchUITests: XCTestCase {
         field.typeKey(.delete, modifierFlags: [])
 
         XCTAssertTrue(waitForCardTitles(["Alpha", "Beta"]), "visible cards: \(visibleCardTitles)")
+    }
+
+    /// Folded notes show one line, so a hit on the second would keep the card with no visible
+    /// reason. While the query hits the notes they draw whole; clearing it folds them again.
+    func testANotesHitBelowTheFoldOpensTheNotesUntilTheSearchIsCleared() {
+        let notes = app.descendants(matching: .any).matching(identifier: "card.notes")
+            .matching(NSPredicate(format: "value BEGINSWITH %@", "blocked on review")).firstMatch
+        XCTAssertTrue(notes.waitForExistence(timeout: 5), "Alpha's notes never drew")
+        XCTAssertFalse(noteText(notes).contains("notarization"), "folded notes already show line two: \(noteText(notes))")
+
+        search("notarization")
+        XCTAssertTrue(waitForCardTitles(["Alpha"]), "visible cards: \(visibleCardTitles)")
+        XCTAssertTrue(poll { self.noteText(notes).contains("waiting for notarization") },
+                      "the hit stayed folded away: \(noteText(notes))")
+
+        let field = searchField
+        field.click()
+        field.typeKey("a", modifierFlags: .command)
+        field.typeKey(.delete, modifierFlags: [])
+        XCTAssertTrue(waitForCardTitles(["Alpha", "Beta"]), "visible cards: \(visibleCardTitles)")
+        XCTAssertTrue(poll { !self.noteText(notes).contains("notarization") },
+                      "the notes stayed open after the search was cleared: \(noteText(notes))")
+    }
+
+    private func noteText(_ element: XCUIElement) -> String {
+        element.value as? String ?? element.label
+    }
+
+    private func poll(_ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            if condition() { return true }
+            usleep(200_000)
+        }
+        return false
     }
 
     // MARK: - Driving the board
@@ -137,7 +175,9 @@ final class BoardSearchUITests: XCTestCase {
             [
                 "id": UUID().uuidString,
                 "title": "Alpha",
-                "body": "blocked on notarization",
+                // The unique word sits on the second line: folded notes hide it, which is what
+                // the notes-hit test needs, while the body-search test still finds it.
+                "body": "blocked on review\nwaiting for notarization",
                 "columnID": columnID.uuidString,
                 "created": stamp,
                 "modified": stamp,

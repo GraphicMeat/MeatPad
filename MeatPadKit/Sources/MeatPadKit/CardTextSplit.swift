@@ -35,6 +35,20 @@ public enum CardTextSplit {
         draft(from: text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n"))
     }
 
+    /// One entry per non-blank line, trimmed, list marker gone — the whole line, never split
+    /// into sentences the way `drafts` does: a card split line by line is the user saying
+    /// where the cards are, not asking the text to be guessed at.
+    public static func lines(from text: String) -> [String] {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
+            .map { line in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                return stripMarker(trimmed) ?? trimmed
+            }
+            .filter { !$0.isEmpty }
+    }
+
     // MARK: - Grouping
 
     /// Groups lines by list marker ("1.", "2)", "-", "•", …). nil when the text isn't a list,

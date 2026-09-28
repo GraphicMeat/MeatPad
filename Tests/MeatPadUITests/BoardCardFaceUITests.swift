@@ -1,4 +1,5 @@
 import XCTest
+import os
 
 /// The card face renders Text until a row is clicked. That is what lets a drag start on the
 /// title and what makes ⌘Z reach the store instead of an NSTextField — neither is visible
@@ -19,6 +20,15 @@ final class BoardCardFaceUITests: XCTestCase {
     private let cardBID = UUID()
     private let noteID = UUID()
     private let noteTitle = "Note C"
+
+    // The Quick Look probe board: two cards stacked in one column, each with its own image,
+    // the upper one carrying notes to click into. Named "Probe" rather than one letter so it
+    // collides with nothing (see `selectSidebarRow`).
+    private let probeBoardID = UUID()
+    private let probeCard1ID = UUID()
+    private let probeCard2ID = UUID()
+    /// The probe board's third column, so the card menu's move items have two destinations.
+    private let doneColumnID = UUID()
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -189,6 +199,9 @@ final class BoardCardFaceUITests: XCTestCase {
     /// likely to have written `preview` back to `nil` on its own. The other three below press
     /// Escape first (a clean close) before switching, so pre-fix they may not reproduce H5;
     /// this is the one that carries the regression weight.
+    /// Red from d97ec51 (when `previewIsUp` started detecting the panel for real) until
+    /// `QuickLookHost`: a board-to-board switch orphaned the arriving strips' own
+    /// `.quickLookPreview` — see that type's doc and `testProbeQuickLookInAllBoards`.
     func testQuickLookOpensAgainAfterClosingItAndSwitchingBoards() throws {
         launchOnBoardA()
         let tile = app.descendants(matching: .any)["card.attachment"].firstMatch
@@ -266,6 +279,218 @@ final class BoardCardFaceUITests: XCTestCase {
         try shoot("board-note-after-switch")
     }
 
+    // MARK: - Split into Cards
+
+    /// Seeded Alpha is "Alpha" over "first line\nsecond line": three lines, three cards, in
+    /// order, in the same column — and one ⌘Z takes the split back.
+    func testSplitIntoCardsMakesACardPerLineUnderTheOriginal() throws {
+        cardMenuItem("Split into Cards", on: title).click()
+
+        XCTAssertTrue(poll { (try? self.storedTitles()) == ["Alpha", "first line", "second line"] },
+                      "stored after the split: \(String(describing: try? storedTitles()))")
+        XCTAssertEqual(try storedCard()["id"] as? String, cardID.uuidString, "the original lost its place or id")
+        XCTAssertNil(try storedCard()["body"], "the original kept its notes")
+        let cards = try XCTUnwrap(boardJSON()["cards"] as? [[String: Any]])
+        XCTAssertEqual(Set(cards.map { $0["columnID"] as? String }), [columnID.uuidString])
+        XCTAssertTrue(poll { self.faceTitlesTopDown() == ["Alpha", "first line", "second line"] },
+                      "the column shows \(faceTitlesTopDown())")
+
+        // A one-line card has nothing to split: the item is gone, the menu itself is not.
+        let single = app.descendants(matching: .any).matching(identifier: "card.title")
+            .matching(NSPredicate(format: "value == %@", "second line")).firstMatch
+        XCTAssertTrue(cardMenuItem("Delete Card", on: single).exists)
+        XCTAssertFalse(app.menuItems["Split into Cards"].exists, "a one-line card offers to split")
+        app.typeKey(.escape, modifierFlags: [])
+
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(poll { (try? self.storedTitles()) == ["Alpha"] }, "⌘Z left \(String(describing: try? storedTitles()))")
+        XCTAssertTrue(waitForStoredBody("first line\nsecond line"), "⌘Z did not give the original its notes back")
+    }
+
+    /// The card's own context menu, retried the way `BoardArchiveUITests` does: the menu
+    /// occasionally does not come up on the first right-click after the window takes focus.
+    private func cardMenuItem(_ item: String, on card: XCUIElement) -> XCUIElement {
+        XCTAssertTrue(card.waitForExistence(timeout: 5), "no card to right-click")
+        let entry = app.menuItems[item].firstMatch
+        for _ in 0..<3 {
+            card.rightClick()
+            if entry.waitForExistence(timeout: 3) { return entry }
+            app.typeKey(.escape, modifierFlags: [])
+        }
+        XCTFail("no “\(item)” item in the card's context menu")
+        return entry
+    }
+
+    private func faceTitlesTopDown() -> [String] {
+        app.descendants(matching: .any).matching(identifier: "card.title").allElementsBoundByIndex
+            .sorted { $0.frame.minY < $1.frame.minY }
+            .map(faceText)
+    }
+
+    // MARK: - Move to column
+
+    /// The card menu leads with one "Move to …" per other column of the card's board — never
+    /// the one it is already in — and a move is one ⌘Z.
+    func testTheCardMenuMovesACardToAnotherColumn() throws {
+        launch(onBoard: probeBoardID)
+        let card = probeTitle("Card P2")
+        let move = cardMenuItem("Move to Doing", on: card)
+        XCTAssertTrue(app.menuItems["Move to Done"].exists, "no item for the board's third column")
+        XCTAssertFalse(app.menuItems["Move to Todo"].exists, "the menu offers the card's own column")
+        move.click()
+
+        XCTAssertTrue(poll { self.probeColumn(of: self.probeCard2ID) == self.secondColumnID.uuidString },
+                      "the card never left Todo")
+        XCTAssertEqual(probeColumn(of: probeCard1ID), columnID.uuidString, "the move took the other card along")
+
+        // Now in Doing: the menu offers Todo back, and not Doing.
+        XCTAssertTrue(cardMenuItem("Move to Todo", on: card).exists)
+        XCTAssertFalse(app.menuItems["Move to Doing"].exists, "the menu offers the column the card just moved to")
+        app.typeKey(.escape, modifierFlags: [])
+
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(poll { self.probeColumn(of: self.probeCard2ID) == self.columnID.uuidString }, "⌘Z left the card in Doing")
+    }
+
+    private func probeColumn(of card: UUID) -> String? {
+        let url = storageRoot.appendingPathComponent("Boards/\(probeBoardID.uuidString).json")
+        let json = (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let cards = json?["cards"] as? [[String: Any]] ?? []
+        return cards.first { $0["id"] as? String == card.uuidString }?["columnID"] as? String
+    }
+
+    // MARK: - Quick Look probes
+
+    // Round four of "double-clicking an image doesn't always open Quick Look" — these each
+    // stage one suspected circumstance and assert the panel still comes up. Every probe marks
+    // its start in the same unified-log category the app's Quick Look path logs to, so a
+    // `log stream` running alongside shows, per probe, whether the double-click reached the
+    // monitor, found a tile, and opened a file.
+
+    private static let probeLog = Logger(subsystem: "com.thecoldzero.MeatPad", category: "quicklook")
+    private func mark(_ probe: String) { Self.probeLog.notice("PROBE \(probe, privacy: .public)") }
+
+    /// The probe board's tiles, top first — AX order isn't layout order.
+    private func probeTiles() -> [XCUIElement] {
+        let tiles = app.descendants(matching: .any).matching(identifier: "card.attachment")
+        XCTAssertTrue(poll { tiles.count >= 2 }, "the probe board shows \(tiles.count) tiles")
+        return tiles.allElementsBoundByIndex.sorted { $0.frame.minY < $1.frame.minY }
+    }
+
+    private func probeTitle(_ text: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "card.title")
+            .matching(NSPredicate(format: "value == %@", text)).firstMatch
+    }
+
+    /// a) A card nobody has touched yet — the first click of the double-click is also the one
+    /// that selects it, so the selection re-render lands between the two clicks.
+    func testProbeQuickLookOnAnUnselectedCard() throws {
+        launch(onBoard: probeBoardID)
+        mark("a-unselected")
+        probeTiles()[1].doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp() }, "no Quick Look on a card that was not selected")
+    }
+
+    /// a) The same card already selected (⌘-click selects without starting an edit), with a
+    /// pause well past the double-click interval before the double-click.
+    func testProbeQuickLookOnAnAlreadySelectedCard() throws {
+        launch(onBoard: probeBoardID)
+        let card = probeTitle("Card P2")
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCUIElement.perform(withKeyModifiers: .command) { card.click() }
+        sleep(1)
+        mark("a-selected")
+        probeTiles()[1].doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp() }, "no Quick Look on a card that was already selected")
+    }
+
+    /// b) Right after the card above was being edited: the first click of the double-click
+    /// blurs that field, the row turns back into a label, and the layout can shift under the
+    /// pointer before the second click lands.
+    func testProbeQuickLookRightAfterEditingTheCardAbove() throws {
+        launch(onBoard: probeBoardID)
+        let notesAbove = app.descendants(matching: .any).matching(identifier: "card.notes")
+            .matching(NSPredicate(format: "value BEGINSWITH %@", "probe notes")).firstMatch
+        XCTAssertTrue(notesAbove.waitForExistence(timeout: 5))
+        notesAbove.click()
+        XCTAssertTrue(app.textFields["card.notes"].waitForExistence(timeout: 5), "the notes never opened a field")
+        mark("b-after-edit")
+        probeTiles()[1].doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp() }, "no Quick Look right after editing the card above")
+    }
+
+    /// c) While the panel already shows another card's image. The window is titled "Quick
+    /// Look" whatever it shows, so the panel's tree is printed for the record, and the log's
+    /// `open` lines say which file each double-click asked for.
+    func testProbeQuickLookWhileAnotherCardsImageIsShowing() throws {
+        launch(onBoard: probeBoardID)
+        let tiles = probeTiles()
+        mark("c-first")
+        tiles[0].doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp() }, "the first image never opened")
+        print("QLPROBE panel after p1: \(app.windows["Quick Look"].debugDescription)")
+        mark("c-second")
+        tiles[1].doubleClick()
+        sleep(2)
+        XCTAssertTrue(previewIsUp(), "the panel went away on the second card's double-click")
+        print("QLPROBE panel after p2: \(app.windows["Quick Look"].debugDescription)")
+        let names = app.windows["Quick Look"].descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@ OR title CONTAINS %@ OR value CONTAINS %@", "p2", "p2", "p2"))
+        print("QLPROBE elements naming p2: \(names.count)")
+    }
+
+    /// d) The All Boards overview, where every board's cards (and tiles) share one set of
+    /// columns and each card carries a board badge.
+    func testProbeQuickLookInAllBoards() throws {
+        launch(onBoard: probeBoardID)
+        selectSidebarRow("All Boards")
+        let tile = app.descendants(matching: .any)["card.attachment"].firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 5), "All Boards shows no tiles")
+        mark("d-all-boards")
+        tile.doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp() }, "no Quick Look in All Boards")
+    }
+
+    /// d2) As d, but the strips are then taken away and brought back on their own (Compact,
+    /// then Full) before the double-click — no other strip leaving in the same update.
+    func testProbeQuickLookInAllBoardsAfterCompactAndBack() throws {
+        launch(onBoard: probeBoardID)
+        selectSidebarRow("All Boards")
+        selectCardDisplay("Compact")
+        selectCardDisplay("Full")
+        let tile = app.descendants(matching: .any)["card.attachment"].firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 5), "All Boards shows no tiles")
+        mark("d2-all-boards-compact-full")
+        tile.doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp() }, "no Quick Look in All Boards after Compact and back")
+    }
+
+    /// d3) All Boards reached by way of a note, so the board's strips leave (board -> note)
+    /// and All Boards' strips arrive (note -> All Boards) in separate updates.
+    func testProbeQuickLookInAllBoardsReachedFromANote() throws {
+        launch(onBoard: probeBoardID)
+        selectSidebarRow("Notes")
+        selectSidebarRow(noteTitle)
+        selectSidebarRow("All Boards")
+        let tile = app.descendants(matching: .any)["card.attachment"].firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 5), "All Boards shows no tiles")
+        mark("d3-all-boards-via-note")
+        tile.doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp() }, "no Quick Look in All Boards reached from a note")
+    }
+
+    /// f) MeatPad in the background: the catcher claims first mouse so a tile in an inactive
+    /// window opens on one gesture — nothing covered that until now.
+    func testProbeQuickLookWhileTheAppIsInTheBackground() throws {
+        launch(onBoard: probeBoardID)
+        let tile = probeTiles()[1]
+        XCUIApplication(bundleIdentifier: "com.apple.finder").activate()
+        sleep(1)
+        mark("f-background")
+        tile.doubleClick()
+        XCTAssertTrue(poll { self.previewIsUp() }, "no Quick Look from a background window")
+    }
+
     /// The runner's own tmp dir, because its sandbox cannot write anywhere else (same pattern
     /// as `BoardPresentUITests.shoot`). Not just layout sign-off here: if `previewIsUp()`'s
     /// assumption that the Quick Look window's title contains the filename turns out wrong,
@@ -304,15 +529,17 @@ final class BoardCardFaceUITests: XCTestCase {
     /// stay untouched; the view-switch tests need Board A on screen instead, with its own
     /// `a.png` tile already resolvable — relaunched the same way `BoardLabelUITests.showAllBoards()`
     /// switches views.
-    private func launchOnBoardA() {
+    private func launchOnBoardA() { launch(onBoard: boardAID) }
+
+    private func launch(onBoard id: UUID) {
         app.terminate()
         app.launchArguments = [
             "-meatpad.storageRootOverride", storageRoot.path,
-            "-meatpad.revealBoard", boardAID.uuidString,
+            "-meatpad.revealBoard", id.uuidString,
             "-hasSeenFirstRunIntro", "YES",
         ]
         app.launch()
-        XCTAssertTrue(title.waitForExistence(timeout: 20), "board A never rendered")
+        XCTAssertTrue(title.waitForExistence(timeout: 20), "board \(id) never rendered")
     }
 
     /// The Quick Look panel is its own window — titled literally "Quick Look" on this macOS
@@ -335,6 +562,9 @@ final class BoardCardFaceUITests: XCTestCase {
         try XCTUnwrap((boardJSON()["cards"] as? [[String: Any]])?.first)
     }
     private func storedTitle() throws -> String { try XCTUnwrap(storedCard()["title"] as? String) }
+    private func storedTitles() throws -> [String] {
+        try XCTUnwrap(boardJSON()["cards"] as? [[String: Any]]).compactMap { $0["title"] as? String }
+    }
     private func waitForStoredBody(_ expected: String) -> Bool { poll { (try? self.storedCard()["body"] as? String) == expected } }
     private func waitForStoredColumn(_ id: UUID) -> Bool { poll { (try? self.storedCard()["columnID"] as? String) == id.uuidString } }
     private func poll(timeout: TimeInterval = 10, _ condition: () -> Bool) -> Bool {
@@ -349,7 +579,7 @@ final class BoardCardFaceUITests: XCTestCase {
         let boards = storageRoot.appendingPathComponent("Boards", isDirectory: true)
         try FileManager.default.createDirectory(at: boards, withIntermediateDirectories: true)
         let index: [String: Any] = [
-            "boardOrder": [boardID.uuidString, boardAID.uuidString, boardBID.uuidString],
+            "boardOrder": [boardID.uuidString, boardAID.uuidString, boardBID.uuidString, probeBoardID.uuidString],
         ]
         try JSONSerialization.data(withJSONObject: index).write(to: boards.appendingPathComponent("boards.json"))
         let columns: [[String: Any]] = [
@@ -388,6 +618,30 @@ final class BoardCardFaceUITests: XCTestCase {
                 ]],
             ]
             try JSONSerialization.data(withJSONObject: sideBoard).write(to: boards.appendingPathComponent("\(id.uuidString).json"))
+            let dir = boards.appendingPathComponent("Attachments/\(card.uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try Self.onePixelPNG.write(to: dir.appendingPathComponent(attachment))
+        }
+
+        // The Quick Look probe board.
+        let probe: [String: Any] = [
+            "id": probeBoardID.uuidString, "name": "Probe",
+            "extraColumns": columns + [["id": doneColumnID.uuidString, "name": "Done", "isDone": true, "emoji": "✅"]],
+            "cards": [
+                [
+                    "id": probeCard1ID.uuidString, "title": "Card P1", "body": "probe notes\nsecond probe line",
+                    "columnID": columnID.uuidString, "created": stamp, "modified": stamp,
+                    "attachments": ["p1.png"],
+                ],
+                [
+                    "id": probeCard2ID.uuidString, "title": "Card P2",
+                    "columnID": columnID.uuidString, "created": stamp, "modified": stamp,
+                    "attachments": ["p2.png"],
+                ],
+            ],
+        ]
+        try JSONSerialization.data(withJSONObject: probe).write(to: boards.appendingPathComponent("\(probeBoardID.uuidString).json"))
+        for (card, attachment) in [(probeCard1ID, "p1.png"), (probeCard2ID, "p2.png")] {
             let dir = boards.appendingPathComponent("Attachments/\(card.uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try Self.onePixelPNG.write(to: dir.appendingPathComponent(attachment))

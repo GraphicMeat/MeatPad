@@ -62,4 +62,23 @@ final class CardTextSplitTests: XCTestCase {
         XCTAssertEqual(drafts[0].title, "Heading without a period")
         XCTAssertEqual(drafts[0].body, "the detail after it")
     }
+
+    // MARK: - lines(from:)
+
+    /// Whole lines, never sentences: "Split into Cards" makes one card per line the user
+    /// wrote, however many sentences a line holds.
+    func testLinesKeepsWholeLinesStripsMarkersAndDropsBlanks() {
+        let text = "  Buy milk. And eggs.  \r\n\n- first\n* second\n• third\n1. fourth\n2) fifth\n   \nplain"
+        XCTAssertEqual(CardTextSplit.lines(from: text),
+                       ["Buy milk. And eggs.", "first", "second", "third", "fourth", "fifth", "plain"])
+    }
+
+    /// A number without a list separator is text, the same bound `drafts` keeps.
+    func testLinesLeavesUnmarkedNumbersAlone() {
+        XCTAssertEqual(CardTextSplit.lines(from: "2026. metai\n-5 degrees"), ["2026. metai", "-5 degrees"])
+    }
+
+    func testLinesOfBlankTextIsEmpty() {
+        XCTAssertEqual(CardTextSplit.lines(from: " \n\t\n"), [])
+    }
 }

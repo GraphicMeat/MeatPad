@@ -51,6 +51,8 @@ struct CardView: View {
     let display: CardDisplay
     /// "Present Card" in the card's menu. nil where the board has nowhere to present it.
     var onPresent: (() -> Void)? = nil
+    /// The board's search query, marked wherever it hits the title or notes on the face.
+    var highlight: String = ""
 
     /// Which of the two text rows currently holds a live field. The face renders a label until
     /// a row is clicked: an `NSTextField` takes every mouse-down for caret placement, which is
@@ -209,7 +211,9 @@ struct CardView: View {
                     font: .systemFont(ofSize: fontSize(.body), weight: .semibold),
                     color: title.isEmpty ? .secondaryLabelColor : .labelColor,
                     lineLimit: display.titleLines,
-                    markdown: markdown
+                    markdown: markdown,
+                    // Never on the grey "Title" placeholder: it is chrome, not the card's text.
+                    highlight: title.isEmpty ? "" : highlight
                 )
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background { editTapLayer { editing = .title; focus = .title } }
@@ -255,20 +259,24 @@ struct CardView: View {
                 .accessibilityLabel(Text("Paste from Clipboard"))
                 .accessibilityIdentifier("card.paste")
             }
-            Button(action: copyText) {
-                Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
-                    .font(.system(size: fontSize(.body)))
-                    .foregroundStyle(copied ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
-                    .frame(width: 22 * scale, height: 18 * scale)
-                    .contentShape(Rectangle())
-                    .contentTransition(.symbolEffect(.replace))
+            // Gone, not just transparent, on a blank card: there is nothing to copy, and the
+            // paste button beside it is the one action that card has.
+            if !card.isBlank {
+                Button(action: copyText) {
+                    Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
+                        .font(.system(size: fontSize(.body)))
+                        .foregroundStyle(copied ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+                        .frame(width: 22 * scale, height: 18 * scale)
+                        .contentShape(Rectangle())
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .buttonStyle(.plain)
+                .opacity(hovering || copied ? 1 : 0)
+                .help(String(localized: "Copy Title and Notes"))
+                .accessibilityLabel(Text("Copy"))
+                .accessibilityValue(copied ? "copied" : "")
+                .accessibilityIdentifier("card.copy")
             }
-            .buttonStyle(.plain)
-            .opacity(hovering || copied ? 1 : 0)
-            .help(String(localized: "Copy Title and Notes"))
-            .accessibilityLabel(Text("Copy"))
-            .accessibilityValue(copied ? "copied" : "")
-            .accessibilityIdentifier("card.copy")
             if let onPresent {
                 Button(action: onPresent) {
                     Image(systemName: "play.rectangle")
@@ -309,6 +317,9 @@ struct CardView: View {
                 isPresented: $editorShown,
                 startsCreatingLabel: editorLabelForm
             )
+            // The popover is its own window: its strip keeps its own Quick Look, as it always
+            // had, rather than reaching back to the board's.
+            .environment(\.quickLookHost, nil)
         }
     }
 
@@ -358,6 +369,18 @@ struct CardView: View {
     private func copyTitleOnly() { copyToPasteboard(card.title) }
     private func copyNotesOnly() { copyAndFlash((card.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines), flag: $copiedNotes) }
 
+    /// "Split into Cards". A draft still waiting on its debounce is committed first, inside
+    /// the same undo group, so the split works on what the card shows and one ⌘Z takes the
+    /// whole gesture back.
+    private func splitIntoCards() {
+        titleDebouncer.cancel()
+        bodyDebouncer.cancel()
+        try? store.grouped {
+            commit()
+            try store.splitCard(boardID: boardID, cardID: card.id)
+        }
+    }
+
     /// The empty-notes field doubles as the only in-app hint that card text takes markdown —
     /// gated on the setting that renders it, or it would advertise syntax the card shows
     /// literally. The idle face keeps its plain "Add Notes"; a hint belongs where you type.
@@ -366,7 +389,17 @@ struct CardView: View {
     }
 
     private var faceNotes: String {
-        body_.isEmpty ? String(localized: "Add Notes") : (expanded ? body_ : firstLine)
+        body_.isEmpty ? String(localized: "Add Notes") : (notesOpen ? body_ : firstLine)
+    }
+
+    /// Whether the face draws the whole notes. Folded notes show one line, so a search hit on
+    /// the third would leave a card in the results with no visible reason — while the query
+    /// hits the notes they draw whole. Derived rather than written into `expanded`, so
+    /// clearing the search puts the card back exactly as the user left it.
+    private var notesOpen: Bool {
+        guard !expanded else { return true }
+        let needle = highlight.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !needle.isEmpty && body_.localizedStandardContains(needle)
     }
 
     /// Same rule as `faceTitleAX`, for the notes row.
@@ -457,6 +490,17 @@ struct CardView: View {
     /// that only answers to the context menu hides half its features.
     @ViewBuilder
     private var cardMenu: some View {
+        // First and flat, one click each: moving a card along the board ("Todo" to "In
+        // Progress") is the thing a card's menu gets opened for most, and a submenu would
+        // make it two. Every column of the card's own board but the one it is in, in the
+        // board's order — the card's own `boardID`, so the All Boards view offers the same.
+        let destinations = otherColumns
+        if !destinations.isEmpty {
+            ForEach(destinations) { column in
+                Button("Move to \(column.name)") { move(to: column) }
+            }
+            Divider()
+        }
         Menu("Due Date") {
             Button("Today") { setDue(CardDue.today()) }
             Button("Tomorrow") { setDue(CardDue.morning(daysFromNow: 1)) }
@@ -487,12 +531,23 @@ struct CardView: View {
         if summarizable {
             Button("Summarize into Title") { summarize() }
         }
+        if card.splitLines.count >= 2 {
+            Button("Split into Cards", action: splitIntoCards)
+        }
         if card.noteID != nil {
             Button("Unlink") { update { $0.noteID = nil } }
         }
-        Button("Copy Text", action: copyText)
-        Button("Copy Title", action: copyTitleOnly)
-        Button("Copy Notes", action: copyNotesOnly)
+        // Each copy only when it would put something on the pasteboard — a blank card offers
+        // none of them, a card without notes no "Copy Notes".
+        if !card.isBlank {
+            Button("Copy Text", action: copyText)
+        }
+        if !card.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Button("Copy Title", action: copyTitleOnly)
+        }
+        if !(card.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Button("Copy Notes", action: copyNotesOnly)
+        }
         Button(card.archived == nil ? "Archive Card" : "Unarchive Card") {
             try? store.setArchived(boardID: boardID, cardIDs: [card.id], card.archived == nil)
         }
@@ -501,6 +556,19 @@ struct CardView: View {
             bodyDebouncer.cancel()
             try? store.deleteCard(boardID: boardID, cardID: card.id)
         }
+    }
+
+    private var otherColumns: [BoardColumn] {
+        guard let board = store.boards.first(where: { $0.id == boardID }) else { return [] }
+        return store.columns(for: board).filter { $0.id != card.columnID }
+    }
+
+    /// To the bottom of the destination, where a card dragged into the column's empty space
+    /// lands too. `moveCard` registers its own undo, so ⌘Z brings the card back.
+    private func move(to column: BoardColumn) {
+        guard let board = store.boards.first(where: { $0.id == boardID }) else { return }
+        let end = store.cards(in: board, column: column.id).count
+        try? store.moveCard(id: card.id, boardID: boardID, toColumn: column.id, index: end)
     }
 
     // MARK: - Labels
@@ -645,8 +713,9 @@ struct CardView: View {
                     text: faceNotes,
                     font: .systemFont(ofSize: fontSize(.callout)),
                     color: body_.isEmpty ? .secondaryLabelColor : .labelColor,
-                    lineLimit: expanded ? 0 : 1,
-                    markdown: markdown
+                    lineLimit: notesOpen ? 0 : 1,
+                    markdown: markdown,
+                    highlight: body_.isEmpty ? "" : highlight
                 )
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background { editTapLayer { expanded = true; editing = .notes; focus = .notes } }

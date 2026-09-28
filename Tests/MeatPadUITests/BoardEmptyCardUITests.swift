@@ -83,6 +83,39 @@ final class BoardEmptyCardUITests: XCTestCase {
         XCTAssertTrue(paste.exists)
     }
 
+    /// A blank card has nothing to copy, so it offers no copy at all — the header button is
+    /// gone rather than transparent (a transparent one still `exists` for XCUITest and
+    /// VoiceOver), and the context menu has no Copy items. Hovered first, so the absence is
+    /// real and not the button's hover-only opacity. Filling the card brings the button back.
+    func testABlankCardOffersNoCopyUntilItHasText() throws {
+        plus.click()
+        let paste = app.buttons["card.paste"].firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 5), "the header row never drew")
+        title.hover()
+        let copy = app.buttons["card.copy"].firstMatch
+        XCTAssertFalse(copy.waitForExistence(timeout: 2), "a blank card offers to copy nothing")
+
+        // The menu is up (Delete Card is always in it) and has no copy entries.
+        let delete = app.menuItems["Delete Card"].firstMatch
+        for _ in 0..<3 {
+            title.rightClick()
+            if delete.waitForExistence(timeout: 3) { break }
+            app.typeKey(.escape, modifierFlags: [])
+        }
+        XCTAssertTrue(delete.exists, "the card's context menu never came up")
+        for item in ["Copy Text", "Copy Title", "Copy Notes"] {
+            XCTAssertFalse(app.menuItems[item].exists, "a blank card's menu offers “\(item)”")
+        }
+        app.typeKey(.escape, modifierFlags: [])
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("Filled", forType: .string)
+        paste.click()
+        XCTAssertTrue(poll { (try? self.storedCards().first?["title"] as? String) == "Filled" }, "the paste never landed")
+        title.hover()
+        XCTAssertTrue(copy.waitForExistence(timeout: 5), "the filled card never got its copy button")
+    }
+
     // MARK: - Harness
 
     private func seedBoard() throws {

@@ -120,6 +120,37 @@ public struct Card: Identifiable, Codable, Equatable, Sendable {
         return title.localizedStandardContains(needle) || body?.localizedStandardContains(needle) == true
     }
 
+    /// Every place `query` occurs in `text`, by the same rule `matches` filters with — so a
+    /// card the search keeps always has something to highlight. `localizedStandardContains`
+    /// is documented as exactly these options with the current locale; spelling them out is
+    /// what lets this walk every occurrence instead of answering yes/no.
+    ///
+    /// NSRanges converted from the String ranges Foundation hands back, never counted from
+    /// `needle.count`: a diacritic-insensitive hit can be a different length from the query,
+    /// and anything past an emoji is a different offset in UTF-16 than in Characters.
+    public static func matchRanges(of query: String, in text: String) -> [NSRange] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return [] }
+        var ranges: [NSRange] = []
+        var searchFrom = text.startIndex
+        while searchFrom < text.endIndex,
+              let hit = text.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive],
+                                   range: searchFrom..<text.endIndex, locale: .current) {
+            ranges.append(NSRange(hit, in: text))
+            // An empty hit can't happen for a non-empty needle, but a loop that doesn't
+            // advance would hang the card face — step at least one character regardless.
+            searchFrom = hit.upperBound > hit.lowerBound ? hit.upperBound : text.index(after: hit.lowerBound)
+        }
+        return ranges
+    }
+
+    /// The card's text as separate lines, for "Split into Cards": the title's lines, then the
+    /// notes', each trimmed and stripped of a list marker, blank lines dropped. Fewer than two
+    /// means there is nothing to split.
+    public var splitLines: [String] {
+        CardTextSplit.lines(from: title + "\n" + (body ?? ""))
+    }
+
     /// What the card's copy button puts on the pasteboard: the title, then the notes after a
     /// blank line when there are any.
     public var clipboardText: String {

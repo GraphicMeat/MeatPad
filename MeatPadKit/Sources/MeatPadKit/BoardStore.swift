@@ -484,6 +484,64 @@ public final class BoardStore: ObservableObject {
         }
     }
 
+    /// "Split into Cards": every line of the card (`Card.splitLines`) becomes its own card,
+    /// directly under the original in the same column. The original keeps everything that
+    /// makes it *that* card — id, attachments, due date, note link, archive state — and takes
+    /// line one as its title with no notes. The new cards inherit only how it is filed
+    /// (labels, colour); a due date or a file copied onto five cards would be five reminders
+    /// and five owners of one file. Returns the new cards; fewer than two lines is a no-op.
+    ///
+    /// Inserted into the flat array right after the original, not appended via `addCard`:
+    /// flat order IS column order, and a split that scattered its lines to the column's end
+    /// would read as cards lost. Undo is one step and never goes through `deleteCard`, which
+    /// would leave every split-off line in the Board Trash — see `unsplit`.
+    @discardableResult
+    public func splitCard(boardID: UUID, cardID: UUID) throws -> [Card] {
+        let idx = try boardIndex(boardID)
+        guard let original = boards[idx].cards.first(where: { $0.id == cardID }) else {
+            throw BoardStoreError.cardNotFound(cardID)
+        }
+        let lines = original.splitLines
+        guard lines.count >= 2 else { return [] }
+        var head = original
+        head.title = Self.trimmedCardTitle(lines[0])
+        head.body = nil
+        head.modified = Date()
+        let added = lines.dropFirst().map {
+            Card(title: Self.trimmedCardTitle($0), columnID: original.columnID,
+                 labelIDs: original.labelIDs, color: original.color)
+        }
+        try resplit(boardID: boardID, previous: original, head: head, added: added)
+        return added
+    }
+
+    /// The forward half of a split, shared by `splitCard` and redo — so a redo puts back the
+    /// very same cards (ids, stamps and all) rather than minting new ones.
+    private func resplit(boardID: UUID, previous: Card, head: Card, added: [Card]) throws {
+        let idx = try boardIndex(boardID)
+        guard let cardIdx = boards[idx].cards.firstIndex(where: { $0.id == head.id }) else {
+            throw BoardStoreError.cardNotFound(head.id)
+        }
+        boards[idx].cards[cardIdx] = head
+        boards[idx].cards.insert(contentsOf: added, at: cardIdx + 1)
+        try persist(at: idx)
+        registerUndo { try? $0.unsplit(boardID: boardID, previous: previous, head: head, added: added) }
+    }
+
+    /// The inverse: the split-off cards simply go (they never existed before the split, so
+    /// there is nothing to trash) and the original is put back exactly as it was, `modified`
+    /// included — which is why this doesn't route through `updateCard`, which restamps it.
+    private func unsplit(boardID: UUID, previous: Card, head: Card, added: [Card]) throws {
+        let idx = try boardIndex(boardID)
+        let ids = Set(added.map(\.id))
+        boards[idx].cards.removeAll { ids.contains($0.id) }
+        if let cardIdx = boards[idx].cards.firstIndex(where: { $0.id == previous.id }) {
+            boards[idx].cards[cardIdx] = previous
+        }
+        try persist(at: idx)
+        registerUndo { try? $0.resplit(boardID: boardID, previous: previous, head: head, added: added) }
+    }
+
     /// Several card mutations that should undo as one ⌘Z (bulk delete/archive/move).
     public func grouped(_ body: () throws -> Void) rethrows {
         undoManager?.beginUndoGrouping()

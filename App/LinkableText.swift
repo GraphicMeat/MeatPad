@@ -29,6 +29,9 @@ final class LinkLabel: NSView {
         let color: NSColor
         let lineLimit: Int
         let markdown: Bool
+        /// Part of the cache key like everything else that changes the glyphs — leave it out
+        /// and a card keeps the highlight of whatever was typed when its text last changed.
+        let highlight: String
     }
 
     override init(frame frameRect: NSRect) {
@@ -124,6 +127,9 @@ struct LinkableText: NSViewRepresentable {
     /// Inline markdown on the card face — off for anything that must render exactly as typed
     /// (the live `TextField`s never set this; only the read-only face does).
     var markdown: Bool = false
+    /// The board search's query, painted over every hit the way Finder and Mail mark a find.
+    /// Empty paints nothing.
+    var highlight: String = ""
 
     func makeNSView(context: Context) -> LinkLabel {
         let view = LinkLabel()
@@ -132,7 +138,8 @@ struct LinkableText: NSViewRepresentable {
     }
 
     func updateNSView(_ view: LinkLabel, context: Context) {
-        let input = LinkLabel.Input(text: text, font: font, color: color, lineLimit: lineLimit, markdown: markdown)
+        let input = LinkLabel.Input(text: text, font: font, color: color, lineLimit: lineLimit,
+                                    markdown: markdown, highlight: highlight)
         guard view.rendered != input else { return }
         view.rendered = input
         if markdown {
@@ -149,7 +156,22 @@ struct LinkableText: NSViewRepresentable {
                     range: link.range
                 )
             }
+            markHits(in: attributed)
             view.apply(attributed, links: links, lineLimit: lineLimit)
+        }
+    }
+
+    /// Paints the search hits, last so its black-on-yellow wins over a link's colour — the
+    /// find highlight is what the user is looking for right now. Measured against the string
+    /// actually drawn: in markdown that is the rendered text, which is shorter than the
+    /// source by every `**` and `[](…)`, the same trap as the link ranges below. Same matching
+    /// rule as the filter (`Card.matchRanges`), so every card the search keeps shows why.
+    private func markHits(in attributed: NSMutableAttributedString) {
+        for range in Card.matchRanges(of: highlight, in: attributed.string) {
+            attributed.addAttributes(
+                [.backgroundColor: NSColor.findHighlightColor, .foregroundColor: NSColor.black],
+                range: range
+            )
         }
     }
 
@@ -208,6 +230,7 @@ struct LinkableText: NSViewRepresentable {
         }
 
         let links = (markdownLinks + bareLinks).sorted { $0.range.location < $1.range.location }
+        markHits(in: attributed)
         view.apply(attributed, links: links, lineLimit: lineLimit)
     }
 
