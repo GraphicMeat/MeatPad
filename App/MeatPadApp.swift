@@ -22,6 +22,13 @@ struct MeatPadApp: App {
                 NoteWindow(noteID: noteID)
                     .environmentObject(AppModel.shared)
                     .keyboardFocusRingOnly()
+            } else {
+                // SwiftUI opens this group's window with no value on its own — at launch when
+                // session restore opened no note (only All Notes, a project, or nothing), and on
+                // some Dock clicks. That was a blank "Note" window nobody asked for; it closes
+                // itself unseen. `.defaultLaunchBehavior(.suppressed)` is macOS 15+, and a
+                // SceneBuilder can't branch on availability with an else.
+                UnrequestedWindowCloser()
             }
         }
         .commands {
@@ -813,5 +820,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor @objc private func dockOpen() {
         AppModel.shared.openProjectPanel()
+    }
+}
+
+/// Stands in for a note in the window SwiftUI opens unasked — see the `WindowGroup("Note")`
+/// above. Dismissed through SwiftUI (closing the NSWindow behind its back while SwiftUI is still
+/// putting it on screen leaves it ordered in anyway); until then it is see-through and
+/// click-through, so it can't flash or swallow a click meant for the window under it.
+private struct UnrequestedWindowCloser: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .background(Hider())
+            .onAppear { DispatchQueue.main.async { dismiss() } }
+    }
+
+    private struct Hider: NSViewRepresentable {
+        final class HiderView: NSView {
+            override func viewDidMoveToWindow() {
+                super.viewDidMoveToWindow()
+                window?.alphaValue = 0
+                window?.ignoresMouseEvents = true
+            }
+        }
+
+        func makeNSView(context: Context) -> NSView { HiderView() }
+        func updateNSView(_ nsView: NSView, context: Context) {}
     }
 }

@@ -42,9 +42,10 @@ final class BoardIconSettingsUITests: XCTestCase {
 
         let toggle = app.descendants(matching: .any).matching(identifier: "settings.board.coloredIcons").firstMatch
         XCTAssertTrue(toggle.waitForExistence(timeout: 5), "the Boards tab has no Colored icons switch")
-        let before = toggle.value as? String
+        // A switch reports 0/1, not a string.
+        let before = "\(toggle.value ?? "")"
         toggle.click()
-        XCTAssertTrue(poll { (toggle.value as? String) != before }, "clicking the switch changed nothing")
+        XCTAssertTrue(poll { "\(toggle.value ?? "")" != before }, "clicking the switch changed nothing")
 
         let resetAll = app.descendants(matching: .any).matching(identifier: "settings.board.iconColors.resetAll").firstMatch
         XCTAssertTrue(resetAll.exists, "no Reset All Colors button")
@@ -52,7 +53,7 @@ final class BoardIconSettingsUITests: XCTestCase {
 
         // Back to how it was found.
         toggle.click()
-        XCTAssertTrue(poll { (toggle.value as? String) == before }, "could not put the switch back")
+        XCTAssertTrue(poll { "\(toggle.value ?? "")" == before }, "could not put the switch back")
     }
 
     private func poll(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {

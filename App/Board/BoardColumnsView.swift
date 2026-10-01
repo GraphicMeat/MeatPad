@@ -108,8 +108,9 @@ struct BoardColumnsView: View {
     @State private var selectableOrder: [UUID] = []
     /// The card a column should scroll to once its row exists — set by every path that makes a
     /// card (the + button, Return in the add-card field, the split dialog, a dropped file),
-    /// cleared by the column that owns the card. Not a scroll offset: this only changes when a
-    /// card is added, so it costs nothing on the scroll path (see `rowGeometry`).
+    /// cleared once the `RevealInScrollView` behind that card's row has scrolled it into view.
+    /// Not a scroll offset: this only changes when a card is added, so it costs nothing on the
+    /// scroll path (see `rowGeometry`).
     @State private var scrollToCard: UUID?
 
     private struct SplitTarget {
@@ -783,26 +784,23 @@ struct BoardColumnsView: View {
 
             // Only the cards scroll: the header and the add-card field stay put, and a
             // column taller than the window stops overflowing off both ends of it.
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in
-                            insertionBar(for: column, at: index)
-                            cardRow(ref, in: cardColumn, at: index, visible: items, space: space)
-                                .id(ref.card.id)
-                        }
-                        insertionBar(for: column, at: items.count)
-                        dropGhost(for: column)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in
+                        insertionBar(for: column, at: index)
+                        cardRow(ref, in: cardColumn, at: index, visible: items, space: space)
+                            .background {
+                                if scrollToCard == ref.card.id {
+                                    RevealInScrollView { scrollToCard = nil }
+                                }
+                            }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    insertionBar(for: column, at: items.count)
+                    dropGhost(for: column)
                 }
-                .scrollBounceBehavior(.basedOnSize)
-                // Both triggers, because either can come first: the id is set in the same pass
-                // that adds the card, and whichever of the two changes lands once the row is
-                // in `items` is the one that scrolls.
-                .onChange(of: scrollToCard) { _, _ in revealPendingCard(in: items, proxy: proxy) }
-                .onChange(of: items.count) { _, _ in revealPendingCard(in: items, proxy: proxy) }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .scrollBounceBehavior(.basedOnSize)
         }
         .frame(width: columnWidth, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .top)
@@ -881,20 +879,6 @@ struct BoardColumnsView: View {
     /// answer unless exactly one board exists, and guessing is worse than refusing.
     private var newCardBoard: UUID? {
         board?.id ?? (store.boards.count == 1 ? store.boards[0].id : nil)
-    }
-
-    /// Scrolls this column to the card `scrollToCard` names, if this column holds it — every
-    /// column hears the change, only the owner acts. A turn later, not in the pass that added
-    /// the card: `scrollTo` run in the same pass finds no row yet and does nothing.
-    /// `.bottom`, so a card added below the fold ends up entirely in view rather than peeking
-    /// in at the edge.
-    private func revealPendingCard(in items: [CardRef], proxy: ScrollViewProxy) {
-        guard let id = scrollToCard, items.contains(where: { $0.id == id }) else { return }
-        DispatchQueue.main.async {
-            guard scrollToCard == id else { return }
-            withAnimation(.snappy) { proxy.scrollTo(id, anchor: .bottom) }
-            scrollToCard = nil
-        }
     }
 
     private func attach(_ cardID: UUID, _ drop: CardDrop) -> Bool {
@@ -1229,4 +1213,46 @@ private struct BoardWindowAccessor: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+
+/// Scrolls the column so the row it sits behind is fully in view — the new card `scrollToCard`
+/// names. AppKit's own `scrollToVisible`, not `ScrollViewReader`: `scrollTo` on a card that was
+/// just appended measured it before it had a height and stopped one card short every time,
+/// even run again later. This view is a real subview of the column's scroll view, so
+/// `scrollToVisible` moves exactly that clip view, and only as far as the row needs.
+private struct RevealInScrollView: NSViewRepresentable {
+    var done: () -> Void
+
+    func makeNSView(context: Context) -> NSView { RevealView(done: done) }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class RevealView: NSView {
+        private let done: () -> Void
+        private var scheduled = false
+
+        init(done: @escaping () -> Void) {
+            self.done = done
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil, !scheduled else { return }
+            scheduled = true
+            // Once on the next turn, once more after SwiftUI has grown the row to its height.
+            DispatchQueue.main.async { [weak self] in self?.reveal() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                self?.reveal()
+                self?.done()
+            }
+        }
+
+        private func reveal() {
+            guard window != nil, !bounds.isEmpty else { return }
+            scrollToVisible(bounds)
+        }
+    }
 }
