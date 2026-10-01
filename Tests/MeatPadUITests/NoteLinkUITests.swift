@@ -61,7 +61,9 @@ final class NoteLinkUITests: XCTestCase {
         XCTAssertTrue(menu.waitForExistence(timeout: 20), "no File menu")
         menu.click()
         app.menuItems["New Note"].firstMatch.click()
-        XCTAssertTrue(app.windows["Note"].waitForExistence(timeout: 10), "New Note opened no window")
+        // A fresh note's window is titled "New Note". A window titled "Note" was SwiftUI's own
+        // valueless launch window, which no longer appears.
+        XCTAssertTrue(app.windows["New Note"].waitForExistence(timeout: 10), "New Note opened no window")
     }
 
     /// The runner is sandboxed out of /private/tmp, so PNGs go to its own container tmp and

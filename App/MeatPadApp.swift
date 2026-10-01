@@ -824,25 +824,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 /// Stands in for a note in the window SwiftUI opens unasked — see the `WindowGroup("Note")`
-/// above. Dismissed through SwiftUI (closing the NSWindow behind its back while SwiftUI is still
-/// putting it on screen leaves it ordered in anyway); until then it is see-through and
-/// click-through, so it can't flash or swallow a click meant for the window under it.
+/// above. See-through and click-through while it is up, so it can't flash or swallow a click
+/// meant for the window under it, and dismissed through SwiftUI (closing the NSWindow behind
+/// SwiftUI's back while it is still putting it on screen leaves it ordered in anyway).
+/// Both are undone if a note arrives first: a window SwiftUI builds before handing it its value
+/// is a real note window and must neither vanish nor stay invisible.
 private struct UnrequestedWindowCloser: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var token = Token()
+
+    final class Token { var live = true }
 
     var body: some View {
         Color.clear
             .frame(width: 1, height: 1)
             .background(Hider())
-            .onAppear { DispatchQueue.main.async { dismiss() } }
+            .onAppear {
+                let token = token
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    if token.live { dismiss() }
+                }
+            }
+            .onDisappear { token.live = false }
     }
 
     private struct Hider: NSViewRepresentable {
         final class HiderView: NSView {
+            private weak var hiddenWindow: NSWindow?
+
             override func viewDidMoveToWindow() {
                 super.viewDidMoveToWindow()
-                window?.alphaValue = 0
-                window?.ignoresMouseEvents = true
+                guard let window else { return }
+                window.alphaValue = 0
+                window.ignoresMouseEvents = true
+                hiddenWindow = window
+            }
+
+            override func viewWillMove(toWindow newWindow: NSWindow?) {
+                super.viewWillMove(toWindow: newWindow)
+                guard newWindow == nil, let hiddenWindow else { return }
+                hiddenWindow.alphaValue = 1
+                hiddenWindow.ignoresMouseEvents = false
+                self.hiddenWindow = nil
             }
         }
 
