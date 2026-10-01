@@ -774,6 +774,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// SwiftUI's default reopen (a blank parameterized WindowGroup window).
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard !flag else { return true }
+        // A minimised window isn't "visible", but it is what the click is for: let AppKit
+        // restore it rather than opening a second window next to the one in the Dock.
+        if NSApp.windows.contains(where: { $0.isMiniaturized }) { return true }
         if UserDefaults.standard.string(forKey: "dockClickAction") == "newNote" {
             dockNewNote()
         } else {

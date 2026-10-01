@@ -365,9 +365,11 @@ final class AppModel: ObservableObject {
 
     /// Called from `applicationDidFinishLaunching`: reopens whatever was open at last
     /// quit, dropping ids for notes and project roots that no longer exist on disk.
-    /// Falls back to one fresh note when there's nothing valid to restore, so launch
-    /// never shows zero windows. Duplicate saved roots collapse to one restored window —
-    /// `WindowGroup(for:)` dedups by value.
+    /// Falls back to what a Dock click would open ("dockClickAction": the All Notes browser
+    /// by default, a fresh note if the user chose that) when there's nothing valid to
+    /// restore, so launch never shows zero windows — and never mints a blank note the user
+    /// didn't ask for just because they closed everything last time. Duplicate saved roots
+    /// collapse to one restored window — `WindowGroup(for:)` dedups by value.
     func restoreSession() {
         guard let openWindowAction else { return }
         let state = SessionState.load(from: sessionURL)
@@ -378,12 +380,16 @@ final class AppModel: ObservableObject {
         }
 
         // A revealBoard launch override implies the browser, whatever the session says —
-        // otherwise the fallback below would answer it with a blank note window.
+        // otherwise the fallback below would answer it with another window.
         let browserWanted = state?.browserOpen == true || pendingBoardReveal != nil
 
         guard !idsToRestore.isEmpty || browserWanted || !projectsToRestore.isEmpty else {
-            if let note = try? noteStore.createNote() {
-                openWindowAction(value: note.id)
+            if UserDefaults.standard.string(forKey: "dockClickAction") == "newNote" {
+                if let note = try? noteStore.createNote() {
+                    openWindowAction(value: note.id)
+                }
+            } else {
+                openWindowAction(id: "all-notes")
             }
             return
         }

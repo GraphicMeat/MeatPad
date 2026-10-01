@@ -408,14 +408,19 @@ struct NotesBrowserWindow: View {
                 LinkOpener.open(AboutPanel.studio)
             } label: {
                 if let mark = NSImage(named: "GraphicMeatLogo") {
-                    // Aspect FILL, not fit: the mark spans the sidebar's full width at 150pt
-                    // tall and is cropped rather than letterboxed — the outer frame + clip is
-                    // what keeps the overflow out of the pinned footer's layout.
+                    // Aspect FIT inside a 120pt-tall slot, with air around it. The mark is opaque
+                    // edge to edge (420x358, measured: its opaque box leaves ~1% on the sides), so
+                    // shrinking the frame of a scaledToFill version only crops more of it; fit
+                    // is what makes the whole lockup 30pt shorter than the old 150pt fill and
+                    // keeps it uncropped at any sidebar width. The padding is inside the button
+                    // so the air around the mark still opens graphicmeat.com.
                     Image(nsImage: mark)
                         .resizable()
-                        .scaledToFill()
-                        .frame(maxWidth: .infinity, minHeight: 150, maxHeight: 150)
-                        .clipped()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: 120)
+                        .padding(.horizontal, 18)
+                        .padding(.top, 10)
+                        .padding(.bottom, 6)
                 } else {
                     Text("Graphic Meat")
                         .font(.caption.weight(.medium))

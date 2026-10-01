@@ -4,10 +4,10 @@ import MeatPadKit
 /// The Settings tabs, by name — so another window can ask for one (the note editor's link
 /// paste hint sends the user to General, where the setting it describes lives).
 enum SettingsTab: Hashable {
-    case general, themes, snippets, commands, privacy
+    case general, boards, themes, snippets, commands, privacy
 }
 
-/// `Settings` scene: General (font, wrap, links) + Themes + Snippets + Commands + Privacy.
+/// `Settings` scene: General (font, wrap, links) + Boards (card icon colours) + Themes + Snippets + Commands + Privacy.
 struct SettingsView: View {
     @EnvironmentObject private var appModel: AppModel
 
@@ -32,6 +32,12 @@ struct SettingsView: View {
             GeneralSettingsView()
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .tag(SettingsTab.general)
+            BoardsSettingsView()
+                .tabItem {
+                    Label("Boards", systemImage: "rectangle.split.3x1")
+                        .accessibilityIdentifier("settings-boards-tab")
+                }
+                .tag(SettingsTab.boards)
             ThemesSettingsView(themeStore: appModel.themeStore)
                 .tabItem {
                     Label("Themes", systemImage: "paintpalette")

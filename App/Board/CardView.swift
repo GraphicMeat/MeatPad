@@ -85,6 +85,10 @@ struct CardView: View {
     /// setting says so. Board-wide, not per-card: a mixed board reading half-rendered would be
     /// worse than either extreme.
     @AppStorage("board.markdown") private var markdown = true
+    /// Icon colours (Settings ▸ Boards): two keys for the whole palette rather than one wrapper
+    /// per kind, so a card watches two strings, not eleven. `iconPalette` reads them.
+    @AppStorage(CardIconPalette.enabledKey) private var coloredIcons = false
+    @AppStorage(CardIconPalette.colorsKey) private var iconColors = ""
     /// The field editor's own drag registration, saved off while a title/notes field is
     /// focused — see `suspendFieldEditorDragTypes` below.
     @State private var suspendedFieldEditor: NSTextView?
@@ -124,7 +128,7 @@ struct CardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background { cellBackground }
         .opacity(card.archived != nil ? 0.55 : 1)
-        .contextMenu { cardMenu }
+        .contextMenu { cardMenu.labelStyle(.titleAndIcon) }
         // Calendar's own shape for "pick an exact time": a popover, not a field wedged into
         // the card — the card face carries the date, never the picker.
         .popover(isPresented: $editingDue) {
@@ -199,7 +203,10 @@ struct CardView: View {
                         // moves first responder.
                         DispatchQueue.main.async { focus = .title }
                     }
-                    .onChange(of: title) { _, _ in titleDebouncer.call { commit() } }
+                    .onChange(of: title) { _, _ in
+                        titleDebouncer.call { commit() }
+                        if editing == .title { FieldEditorScroll.revealCaret() }
+                    }
                     .accessibilityIdentifier("card.title")
             } else {
                 LinkableText(
@@ -489,15 +496,18 @@ struct CardView: View {
             }
         }
 
-        var symbol: String {
+        /// The icon colour this category answers to; its sub-items inherit it.
+        var kind: CardIconKind {
             switch self {
-            case .move: "arrow.right.circle"
-            case .due: "calendar"
-            case .labels: "tag"
-            case .copy: "doc.on.doc"
-            case .split: "rectangle.split.3x1"
+            case .move: .move
+            case .due: .due
+            case .labels: .labels
+            case .copy: .copy
+            case .split: .split
             }
         }
+
+        var symbol: String { kind.symbol }
 
         var identifier: String {
             switch self {
@@ -534,34 +544,52 @@ struct CardView: View {
         }
     }
 
-    /// Every menu entry is an icon and a name.
-    private func item(_ title: LocalizedStringKey, _ symbol: String, role: ButtonRole? = nil,
-                      action: @escaping () -> Void) -> some View {
-        Button(role: role, action: action) { Label(title, systemImage: symbol) }
+    /// The icon settings, decoded once per body pass (`CardIconPalette` memoises the JSON).
+    private var iconPalette: CardIconPalette {
+        CardIconPalette(enabled: coloredIcons, json: iconColors)
+    }
+
+    /// Every menu entry is an icon and a name. The icon is an `Image(nsImage:)` made by
+    /// `CardIcon`, never `Label(systemImage:)`, which a macOS menu draws without its icon.
+    private func menuLabel(_ title: LocalizedStringKey, _ symbol: String, _ kind: CardIconKind) -> some View {
+        Label {
+            Text(title)
+        } icon: {
+            Image(nsImage: CardIcon.image(symbol, color: iconPalette.color(for: kind)))
+        }
+    }
+
+    private func item(_ kind: CardIconKind, _ title: LocalizedStringKey, _ symbol: String,
+                      role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
+        Button(role: role, action: action) { menuLabel(title, symbol, kind) }
     }
 
     @ViewBuilder
     private var cardMenu: some View {
         ForEach(categories, id: \.self) { category in
-            Menu { items(for: category) } label: { Label(category.title, systemImage: category.symbol) }
+            Menu {
+                items(for: category)
+            } label: {
+                menuLabel(category.title, category.symbol, category.kind)
+            }
         }
         Divider()
-        item(expanded ? "Hide Notes" : "Show Notes", "text.alignleft") { expanded.toggle() }
+        item(.notes, expanded ? "Hide Notes" : "Show Notes", CardIconKind.notes.symbol) { expanded.toggle() }
         if let onPresent {
-            item("Present Card", "play.rectangle") { onPresent() }
+            item(.present, "Present Card", CardIconKind.present.symbol) { onPresent() }
         }
         if summarizable {
-            item("Summarize into Title", "sparkles") { summarize() }
+            item(.summarize, "Summarize into Title", CardIconKind.summarize.symbol) { summarize() }
         }
         if card.noteID != nil {
-            item("Unlink", "link.badge.minus") { update { $0.noteID = nil } }
+            item(.unlink, "Unlink", CardIconKind.unlink.symbol) { update { $0.noteID = nil } }
         }
         Divider()
-        item(card.archived == nil ? "Archive Card" : "Unarchive Card",
-             card.archived == nil ? "archivebox" : "tray.and.arrow.up") {
+        item(.archive, card.archived == nil ? "Archive Card" : "Unarchive Card",
+             card.archived == nil ? CardIconKind.archive.symbol : "tray.and.arrow.up") {
             try? store.setArchived(boardID: boardID, cardIDs: [card.id], card.archived == nil)
         }
-        item("Delete Card", "trash", role: .destructive) {
+        item(.delete, "Delete Card", CardIconKind.delete.symbol, role: .destructive) {
             bodyDebouncer.cancel()
             try? store.deleteCard(boardID: boardID, cardID: card.id)
         }
@@ -580,7 +608,7 @@ struct CardView: View {
                     if let image = ColumnMenuIcon.image(for: column, in: store) {
                         Image(nsImage: image)
                     } else {
-                        Image(systemName: "rectangle.split.3x1")
+                        Image(nsImage: CardIcon.image("rectangle.split.3x1", color: iconPalette.color(for: .move)))
                     }
                 }
             }
@@ -589,16 +617,16 @@ struct CardView: View {
 
     @ViewBuilder
     private var dueItems: some View {
-        item("Today", "sun.max") { setDue(CardDue.today()) }
-        item("Tomorrow", "sunrise") { setDue(CardDue.morning(daysFromNow: 1)) }
-        item("Next Week", "calendar.badge.clock") { setDue(CardDue.morning(daysFromNow: 7)) }
-        item("Custom…", "calendar") {
+        item(.due, "Today", "sun.max") { setDue(CardDue.today()) }
+        item(.due, "Tomorrow", "sunrise") { setDue(CardDue.morning(daysFromNow: 1)) }
+        item(.due, "Next Week", "calendar.badge.clock") { setDue(CardDue.morning(daysFromNow: 7)) }
+        item(.due, "Custom…", "calendar") {
             if card.due == nil { setDue(CardDue.today()) }
             editingDue = true
         }
         if card.due != nil {
             Divider()
-            item("Remove Due Date", "calendar.badge.minus") { update { $0.due = nil } }
+            item(.due, "Remove Due Date", "calendar.badge.minus") { update { $0.due = nil } }
         }
     }
 
@@ -608,7 +636,7 @@ struct CardView: View {
             Toggle(label.name, isOn: labelBinding(label.id))
         }
         if !store.labels.isEmpty { Divider() }
-        item("New Label…", "plus") {
+        item(.labels, "New Label…", "plus") {
             editorLabelForm = true
             editorShown = true
         }
@@ -618,20 +646,20 @@ struct CardView: View {
     /// offers no "Copy Notes".
     @ViewBuilder
     private var copyItems: some View {
-        item("Copy Text", "doc.on.doc", action: copyText)
+        item(.copy, "Copy Text", "doc.on.doc", action: copyText)
         if !card.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            item("Copy Title", "textformat", action: copyTitleOnly)
+            item(.copy, "Copy Title", "textformat", action: copyTitleOnly)
         }
         if !(card.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            item("Copy Notes", "note.text", action: copyNotesOnly)
+            item(.copy, "Copy Notes", "note.text", action: copyNotesOnly)
         }
     }
 
     @ViewBuilder
     private var splitItems: some View {
-        item("Split into Titles", "textformat") { splitIntoCards(.titles) }
-        item("Split into Notes", "note.text") { splitIntoCards(.notes()) }
-        item("Split into Notes with Titles", "sparkles", action: splitIntoNotesWithTitles)
+        item(.split, "Split into Titles", "textformat") { splitIntoCards(.titles) }
+        item(.split, "Split into Notes", "note.text") { splitIntoCards(.notes()) }
+        item(.split, "Split into Notes with Titles", "sparkles", action: splitIntoNotesWithTitles)
     }
 
     // MARK: - Action row
@@ -643,10 +671,10 @@ struct CardView: View {
         HStack(spacing: 2 * scale) {
             ForEach(categories, id: \.self) { category in
                 let flashing = category == .copy && copied
-                Menu { items(for: category) } label: {
+                Menu { items(for: category).labelStyle(.titleAndIcon) } label: {
                     Image(systemName: flashing ? "checkmark.circle.fill" : category.symbol)
                         .font(.system(size: fontSize(.callout)))
-                        .foregroundStyle(flashing ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+                        .foregroundStyle(flashing ? AnyShapeStyle(.green) : iconStyle(category.kind))
                         .frame(width: 22 * scale, height: 18 * scale)
                         .contentShape(Rectangle())
                         .contentTransition(.symbolEffect(.replace))
@@ -662,9 +690,9 @@ struct CardView: View {
             Spacer(minLength: 0)
             if let onPresent {
                 Button(action: onPresent) {
-                    Image(systemName: "play.rectangle")
+                    Image(systemName: CardIconKind.present.symbol)
                         .font(.system(size: fontSize(.callout)))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(iconStyle(.present))
                         .frame(width: 22 * scale, height: 18 * scale)
                         .contentShape(Rectangle())
                 }
@@ -692,6 +720,12 @@ struct CardView: View {
             .accessibilityIdentifier("card.notesToggle")
         }
         .padding(.top, 4)
+    }
+
+    /// The action row's icon colour: the kind's own when colouring is on, as quiet as ever
+    /// when it is off.
+    private func iconStyle(_ kind: CardIconKind) -> AnyShapeStyle {
+        iconPalette.color(for: kind).map { AnyShapeStyle(Color(nsColor: $0)) } ?? AnyShapeStyle(.secondary)
     }
 
     private var otherColumns: [BoardColumn] {
@@ -841,7 +875,11 @@ struct CardView: View {
                         // which is the assignment that actually lands.
                         DispatchQueue.main.async { focus = .notes }
                     }
-                    .onChange(of: body_) { _, _ in bodyDebouncer.call { commit() } }
+                    .onChange(of: body_) { _, _ in
+                        bodyDebouncer.call { commit() }
+                        // The field grows with its text; follow the caret down the column.
+                        if editing == .notes { FieldEditorScroll.revealCaret() }
+                    }
                     .accessibilityIdentifier("card.notes")
             } else {
                 LinkableText(

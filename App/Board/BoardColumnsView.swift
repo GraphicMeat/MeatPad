@@ -106,6 +106,11 @@ struct BoardColumnsView: View {
     /// across renders, so the monitor reads through it instead. Named apart from the unrelated
     /// local `order` (column order) inside `columnView(_:)`.
     @State private var selectableOrder: [UUID] = []
+    /// The card a column should scroll to once its row exists — set by every path that makes a
+    /// card (the + button, Return in the add-card field, the split dialog, a dropped file),
+    /// cleared by the column that owns the card. Not a scroll offset: this only changes when a
+    /// card is added, so it costs nothing on the scroll path (see `rowGeometry`).
+    @State private var scrollToCard: UUID?
 
     private struct SplitTarget {
         let boardID: UUID
@@ -778,18 +783,26 @@ struct BoardColumnsView: View {
 
             // Only the cards scroll: the header and the add-card field stay put, and a
             // column taller than the window stops overflowing off both ends of it.
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in
-                        insertionBar(for: column, at: index)
-                        cardRow(ref, in: cardColumn, at: index, visible: items, space: space)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in
+                            insertionBar(for: column, at: index)
+                            cardRow(ref, in: cardColumn, at: index, visible: items, space: space)
+                                .id(ref.card.id)
+                        }
+                        insertionBar(for: column, at: items.count)
+                        dropGhost(for: column)
                     }
-                    insertionBar(for: column, at: items.count)
-                    dropGhost(for: column)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .scrollBounceBehavior(.basedOnSize)
+                // Both triggers, because either can come first: the id is set in the same pass
+                // that adds the card, and whichever of the two changes lands once the row is
+                // in `items` is the one that scrolls.
+                .onChange(of: scrollToCard) { _, _ in revealPendingCard(in: items, proxy: proxy) }
+                .onChange(of: items.count) { _, _ in revealPendingCard(in: items, proxy: proxy) }
             }
-            .scrollBounceBehavior(.basedOnSize)
         }
         .frame(width: columnWidth, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .top)
@@ -870,6 +883,20 @@ struct BoardColumnsView: View {
         board?.id ?? (store.boards.count == 1 ? store.boards[0].id : nil)
     }
 
+    /// Scrolls this column to the card `scrollToCard` names, if this column holds it — every
+    /// column hears the change, only the owner acts. A turn later, not in the pass that added
+    /// the card: `scrollTo` run in the same pass finds no row yet and does nothing.
+    /// `.bottom`, so a card added below the fold ends up entirely in view rather than peeking
+    /// in at the edge.
+    private func revealPendingCard(in items: [CardRef], proxy: ScrollViewProxy) {
+        guard let id = scrollToCard, items.contains(where: { $0.id == id }) else { return }
+        DispatchQueue.main.async {
+            guard scrollToCard == id else { return }
+            withAnimation(.snappy) { proxy.scrollTo(id, anchor: .bottom) }
+            scrollToCard = nil
+        }
+    }
+
     private func attach(_ cardID: UUID, _ drop: CardDrop) -> Bool {
         guard case .file(let data, let ext, _) = drop,
               let owner = store.boards.first(where: { $0.cards.contains { $0.id == cardID } })
@@ -880,7 +907,10 @@ struct BoardColumnsView: View {
     private func newCard(_ drop: CardDrop, in columnID: UUID, on boardID: UUID) -> Bool {
         guard case .file(let data, let ext, let name) = drop else { return false }
         let title = BoardDropPlacement.newCardTitle(fileName: name, fallback: String(localized: "File"))
-        return (try? store.addCard(boardID: boardID, columnID: columnID, title: title, image: data, ext: ext)) != nil
+        guard let card = try? store.addCard(boardID: boardID, columnID: columnID, title: title, image: data, ext: ext)
+        else { return false }
+        scrollToCard = card.id
+        return true
     }
 
     /// The gap a dropped card would slot into. Zero height until it is the live target, so
@@ -1154,13 +1184,13 @@ struct BoardColumnsView: View {
         // Its face carries the paste affordance, so "add a card now, fill it in a second" is
         // one click rather than a click plus a detour through the field.
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            _ = try? store.addCard(boardID: board.id, columnID: column.id, title: "")
+            scrollToCard = (try? store.addCard(boardID: board.id, columnID: column.id, title: ""))?.id
             return
         }
         let items = CardTextSplit.drafts(from: text)
         guard items.count > 1 else {
             if let draft = CardTextSplit.single(from: text) {
-                _ = try? store.addCard(boardID: board.id, columnID: column.id, title: draft.title, body: draft.body)
+                scrollToCard = (try? store.addCard(boardID: board.id, columnID: column.id, title: draft.title, body: draft.body))?.id
             }
             drafts[column.id] = ""
             return
@@ -1173,9 +1203,12 @@ struct BoardColumnsView: View {
     private func commitSplit(asSeparateCards separate: Bool) {
         guard let target = splitTarget else { return }
         let items = separate ? target.drafts : [CardTextSplit.single(from: target.text)].compactMap { $0 }
+        var last: UUID?
         for item in items {
-            _ = try? store.addCard(boardID: target.boardID, columnID: target.columnID, title: item.title, body: item.body)
+            last = (try? store.addCard(boardID: target.boardID, columnID: target.columnID, title: item.title, body: item.body))?.id ?? last
         }
+        // The last card made, which sits at the bottom of the column with the rest above it.
+        scrollToCard = last
         drafts[target.columnID] = ""
         splitTarget = nil
     }
