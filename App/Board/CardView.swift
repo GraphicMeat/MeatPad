@@ -104,15 +104,6 @@ struct CardView: View {
         NSFont.preferredFont(forTextStyle: style).pointSize * scale
     }
 
-    /// Points added between lines for the line-spacing setting — the face only. A macOS
-    /// `TextField` ignores `.lineSpacing` and sizes from its cell (paragraph style in the field
-    /// editor drew spaced lines clipped to the unspaced height), so above 1× a card's text
-    /// closes up while it is being edited.
-    private func leading(_ style: NSFont.TextStyle) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: fontSize(style))
-        return (lineSpacing - 1) * (font.ascender - font.descender + font.leading)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             titleRow
@@ -200,12 +191,23 @@ struct CardView: View {
                 // what the board's display setting allows. No `newlineOnModifiedReturn` here
                 // on purpose: wrapping is layout, and a title with a literal newline in it is
                 // a title nothing can render.
-                TextField("Title", text: $title, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: fontSize(.body), weight: .semibold))
-                    .lineLimit(display.titleLines)
+                Group {
+                    if lineSpacing != 1 {
+                        SpacedTextField(text: $title, placeholder: String(localized: "Title"),
+                                        font: .systemFont(ofSize: fontSize(.body), weight: .semibold),
+                                        lineHeightMultiple: lineSpacing, lineLimit: display.titleLines,
+                                        identifier: "card.title", isFocused: focus == .title,
+                                        onSubmit: { focus = nil },
+                                        onEndEditing: { if focus == .title { focus = nil } })
+                    } else {
+                        TextField("Title", text: $title, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: fontSize(.body), weight: .semibold))
+                            .lineLimit(display.titleLines)
+                            .onSubmit { focus = nil }
+                    }
+                }
                     .focused($focus, equals: .title)
-                    .onSubmit { focus = nil }
                     .onAppear {
                         // The tap below already set `focus`, but SwiftUI can ignore a focus
                         // assignment made in the same transaction that inserts this field —
@@ -225,7 +227,7 @@ struct CardView: View {
                     font: .systemFont(ofSize: fontSize(.body), weight: .semibold),
                     color: title.isEmpty ? .secondaryLabelColor : .labelColor,
                     lineLimit: display.titleLines,
-                    lineSpacing: leading(.body),
+                    lineHeightMultiple: lineSpacing,
                     markdown: markdown,
                     // Never on the grey "Title" placeholder: it is chrome, not the card's text.
                     highlight: title.isEmpty ? "" : highlight
@@ -875,12 +877,22 @@ struct CardView: View {
                 // and unlike TextEditor it takes the caret on a single click. No upper line
                 // limit: a capped field clips the rest of the text AND eats the scroll wheel,
                 // so the column underneath can't be scrolled while the pointer is over it.
-                TextField(notesPlaceholder, text: $body_, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: fontSize(.callout)))
-                    .lineLimit(1...)
+                Group {
+                    if lineSpacing != 1 {
+                        SpacedTextField(text: $body_, placeholder: notesPlaceholder,
+                                        font: .systemFont(ofSize: fontSize(.callout)),
+                                        lineHeightMultiple: lineSpacing, identifier: "card.notes",
+                                        newlineChords: true, isFocused: focus == .notes,
+                                        onEndEditing: { if focus == .notes { focus = nil } })
+                    } else {
+                        TextField(notesPlaceholder, text: $body_, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: fontSize(.callout)))
+                            .lineLimit(1...)
+                            .newlineOnModifiedReturn()
+                    }
+                }
                     .focused($focus, equals: .notes)
-                    .newlineOnModifiedReturn()
                     .onAppear {
                         // Same seam as the title field's onAppear above: the tap sets `focus`
                         // once, this sets it again after SwiftUI's insert transaction closes,
@@ -899,7 +911,7 @@ struct CardView: View {
                     font: .systemFont(ofSize: fontSize(.callout)),
                     color: body_.isEmpty ? .secondaryLabelColor : .labelColor,
                     lineLimit: notesOpen ? 0 : 1,
-                    lineSpacing: leading(.callout),
+                    lineHeightMultiple: lineSpacing,
                     markdown: markdown,
                     highlight: body_.isEmpty ? "" : highlight
                 )

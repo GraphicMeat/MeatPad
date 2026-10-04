@@ -28,7 +28,7 @@ final class LinkLabel: NSView {
         let font: NSFont
         let color: NSColor
         let lineLimit: Int
-        let lineSpacing: CGFloat
+        let lineHeightMultiple: CGFloat
         let markdown: Bool
         /// Part of the cache key like everything else that changes the glyphs — leave it out
         /// and a card keeps the highlight of whatever was typed when its text last changed.
@@ -125,8 +125,8 @@ struct LinkableText: NSViewRepresentable {
     let color: NSColor
     /// 0 means no limit — the same shape `NSTextContainer` uses.
     var lineLimit: Int = 0
-    /// Points between lines (the card line-spacing setting); 0 is the font's own spacing.
-    var lineSpacing: CGFloat = 0
+    /// Line height as a multiple of the font's own (the card line-spacing setting).
+    var lineHeightMultiple: CGFloat = 1
     /// Inline markdown on the card face — off for anything that must render exactly as typed
     /// (the live `TextField`s never set this; only the read-only face does).
     var markdown: Bool = false
@@ -142,7 +142,7 @@ struct LinkableText: NSViewRepresentable {
 
     func updateNSView(_ view: LinkLabel, context: Context) {
         let input = LinkLabel.Input(text: text, font: font, color: color, lineLimit: lineLimit,
-                                    lineSpacing: lineSpacing, markdown: markdown, highlight: highlight)
+                                    lineHeightMultiple: lineHeightMultiple, markdown: markdown, highlight: highlight)
         guard view.rendered != input else { return }
         view.rendered = input
         if markdown {
@@ -164,9 +164,13 @@ struct LinkableText: NSViewRepresentable {
         }
     }
 
-    private var paragraph: NSParagraphStyle {
+    private var paragraph: NSParagraphStyle { Self.paragraph(lineHeightMultiple) }
+
+    /// The card text's paragraph style — shared with `SpacedTextField`, so the face and the
+    /// field lay a card out alike.
+    static func paragraph(_ lineHeightMultiple: CGFloat) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
-        style.lineSpacing = lineSpacing
+        style.lineHeightMultiple = lineHeightMultiple
         return style
     }
 
