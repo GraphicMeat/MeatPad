@@ -89,6 +89,8 @@ struct CardView: View {
     /// per kind, so a card watches two strings, not eleven. `iconPalette` reads them.
     @AppStorage(CardIconPalette.enabledKey) private var coloredIcons = false
     @AppStorage(CardIconPalette.colorsKey) private var iconColors = ""
+    /// Settings ▸ Boards line spacing, as a multiple of the font's own line height.
+    @AppStorage("board.lineSpacing") private var lineSpacing = 1.0
     /// The field editor's own drag registration, saved off while a title/notes field is
     /// focused — see `suspendFieldEditorDragTypes` below.
     @State private var suspendedFieldEditor: NSTextView?
@@ -100,6 +102,15 @@ struct CardView: View {
 
     private func fontSize(_ style: NSFont.TextStyle) -> CGFloat {
         NSFont.preferredFont(forTextStyle: style).pointSize * scale
+    }
+
+    /// Points added between lines for the line-spacing setting — the face only. A macOS
+    /// `TextField` ignores `.lineSpacing` and sizes from its cell (paragraph style in the field
+    /// editor drew spaced lines clipped to the unspaced height), so above 1× a card's text
+    /// closes up while it is being edited.
+    private func leading(_ style: NSFont.TextStyle) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: fontSize(style))
+        return (lineSpacing - 1) * (font.ascender - font.descender + font.leading)
     }
 
     var body: some View {
@@ -214,6 +225,7 @@ struct CardView: View {
                     font: .systemFont(ofSize: fontSize(.body), weight: .semibold),
                     color: title.isEmpty ? .secondaryLabelColor : .labelColor,
                     lineLimit: display.titleLines,
+                    lineSpacing: leading(.body),
                     markdown: markdown,
                     // Never on the grey "Title" placeholder: it is chrome, not the card's text.
                     highlight: title.isEmpty ? "" : highlight
@@ -887,6 +899,7 @@ struct CardView: View {
                     font: .systemFont(ofSize: fontSize(.callout)),
                     color: body_.isEmpty ? .secondaryLabelColor : .labelColor,
                     lineLimit: notesOpen ? 0 : 1,
+                    lineSpacing: leading(.callout),
                     markdown: markdown,
                     highlight: body_.isEmpty ? "" : highlight
                 )

@@ -11,6 +11,7 @@ struct NoteWindow: View {
     @ObservedObject private var executor = AppModel.shared.commandExecutor
     /// Raised by a paste that brought a link in; drawn by `.linkPasteHint` below.
     @StateObject private var linkHint = LinkPasteHintState()
+    @AppStorage(CodeEditor.noteLineSpacingKey) private var lineSpacing = CodeEditor.noteLineSpacingDefault
 
     init(noteID: UUID) {
         _viewModel = StateObject(wrappedValue: EditorRegistry.shared.noteViewModel(for: noteID))
@@ -44,6 +45,7 @@ struct NoteWindow: View {
                     theme: appModel.theme,
                     fontSize: appModel.fontSize,
                     softWrap: appModel.softWrap,
+                    lineSpacing: lineSpacing,
                     initialCursor: appModel.noteStore.notes.first(where: { $0.id == viewModel.noteID })?.cursor,
                     snippetController: snippetController,
                     onCursorChange: viewModel.cursorDidChange,

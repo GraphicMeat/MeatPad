@@ -28,6 +28,7 @@ final class LinkLabel: NSView {
         let font: NSFont
         let color: NSColor
         let lineLimit: Int
+        let lineSpacing: CGFloat
         let markdown: Bool
         /// Part of the cache key like everything else that changes the glyphs — leave it out
         /// and a card keeps the highlight of whatever was typed when its text last changed.
@@ -124,6 +125,8 @@ struct LinkableText: NSViewRepresentable {
     let color: NSColor
     /// 0 means no limit — the same shape `NSTextContainer` uses.
     var lineLimit: Int = 0
+    /// Points between lines (the card line-spacing setting); 0 is the font's own spacing.
+    var lineSpacing: CGFloat = 0
     /// Inline markdown on the card face — off for anything that must render exactly as typed
     /// (the live `TextField`s never set this; only the read-only face does).
     var markdown: Bool = false
@@ -139,7 +142,7 @@ struct LinkableText: NSViewRepresentable {
 
     func updateNSView(_ view: LinkLabel, context: Context) {
         let input = LinkLabel.Input(text: text, font: font, color: color, lineLimit: lineLimit,
-                                    markdown: markdown, highlight: highlight)
+                                    lineSpacing: lineSpacing, markdown: markdown, highlight: highlight)
         guard view.rendered != input else { return }
         view.rendered = input
         if markdown {
@@ -148,7 +151,7 @@ struct LinkableText: NSViewRepresentable {
             let links = LinkScanner.links(in: text)
             let attributed = NSMutableAttributedString(
                 string: text,
-                attributes: [.font: font, .foregroundColor: color]
+                attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
             )
             for link in links {
                 attributed.addAttributes(
@@ -159,6 +162,12 @@ struct LinkableText: NSViewRepresentable {
             markHits(in: attributed)
             view.apply(attributed, links: links, lineLimit: lineLimit)
         }
+    }
+
+    private var paragraph: NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = lineSpacing
+        return style
     }
 
     /// Paints the search hits, last so its black-on-yellow wins over a link's colour — the
@@ -186,7 +195,7 @@ struct LinkableText: NSViewRepresentable {
         let rendered = CardMarkdown.attributed(text)
         let attributed = NSMutableAttributedString(rendered)
         let fullRange = NSRange(location: 0, length: attributed.length)
-        attributed.addAttributes([.font: font, .foregroundColor: color], range: fullRange)
+        attributed.addAttributes([.font: font, .foregroundColor: color, .paragraphStyle: paragraph], range: fullRange)
 
         var markdownLinks: [DetectedLink] = []
         for run in rendered.runs {

@@ -10,6 +10,8 @@ import AppKit
 struct BoardsSettingsView: View {
     @AppStorage(CardIconPalette.enabledKey) private var coloredIcons = false
     @AppStorage(CardIconPalette.colorsKey) private var iconColors = ""
+    // Read by the card face (CardView) via the same key.
+    @AppStorage("board.lineSpacing") private var lineSpacing = 1.0
 
     private var custom: [CardIconKind: String] { CardIconPalette.decode(iconColors) }
 
@@ -28,6 +30,16 @@ struct BoardsSettingsView: View {
 
                 ScrollView {
                     VStack(spacing: 0) {
+                        HStack {
+                            Label("Line spacing in cards", systemImage: "arrow.up.and.down.text.horizontal")
+                            Spacer()
+                            LineSpacingStepper(value: $lineSpacing)
+                                .accessibilityIdentifier("settings.board.lineSpacing")
+                        }
+                        .padding(14)
+
+                        Divider().opacity(0.45).padding(.leading, 44)
+
                         Toggle(isOn: $coloredIcons) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Label("Colored icons", systemImage: "paintpalette")

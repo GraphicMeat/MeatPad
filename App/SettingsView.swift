@@ -73,6 +73,8 @@ private struct GeneralSettingsView: View {
     // Read by the board card face (BoardColumnsView/CardView) via the same key — this toggle
     // just exposes it in Settings.
     @AppStorage("board.markdown") private var cardMarkdown = true
+    // Read by both note editors (NoteWindow, the All Notes detail pane) via the same key.
+    @AppStorage(CodeEditor.noteLineSpacingKey) private var noteLineSpacing = CodeEditor.noteLineSpacingDefault
 
     var body: some View {
         ZStack {
@@ -94,6 +96,16 @@ private struct GeneralSettingsView: View {
                                 .monospacedDigit()
                                 .frame(width: 42, alignment: .trailing)
                         }
+                    }
+                    .padding(14)
+
+                    Divider().opacity(0.45).padding(.leading, 44)
+
+                    HStack {
+                        Label("Line spacing in notes", systemImage: "arrow.up.and.down.text.horizontal")
+                        Spacer()
+                        LineSpacingStepper(value: $noteLineSpacing)
+                            .accessibilityIdentifier("settings.notes.lineSpacing")
                     }
                     .padding(14)
 
@@ -165,6 +177,20 @@ private struct GeneralSettingsView: View {
                 Spacer()
             }
             .padding(24)
+        }
+    }
+}
+
+/// A line-height multiple, 1× to 2× in tenths — the notes setting here and the board cards'
+/// in the Boards tab.
+struct LineSpacingStepper: View {
+    @Binding var value: Double
+
+    var body: some View {
+        Stepper(value: $value, in: 1...2, step: 0.1) {
+            Text(verbatim: value.formatted(.number.precision(.fractionLength(1))) + "×")
+                .monospacedDigit()
+                .frame(width: 42, alignment: .trailing)
         }
     }
 }

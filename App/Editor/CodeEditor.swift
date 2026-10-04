@@ -19,6 +19,9 @@ struct CodeEditor: NSViewRepresentable {
     var theme: Theme
     var fontSize: CGFloat = 13
     var softWrap: Bool = true
+    /// Line height as a multiple of the font's own (1 = what the font asks for). Notes pass
+    /// the Settings value; project files keep 1.
+    var lineSpacing: CGFloat = 1
     /// UTF-16 offset to place the caret at on first appearance (e.g. the note's
     /// persisted cursor). Applied once in `makeNSView` only — never in `updateNSView`,
     /// so it can never fight a live selection the user is making.
@@ -71,6 +74,11 @@ struct CodeEditor: NSViewRepresentable {
     /// Fired after a paste brought a link in, so the note window can say once what opens it.
     /// `nil` alongside `linkActivation`.
     var onLinkPaste: (() -> Void)? = nil
+
+    /// Settings ▸ General's notes line spacing. 1.3 puts SF Mono 13 pt on a 21 pt line —
+    /// Zed's "comfortable" buffer line height (1.618 × the font size).
+    static let noteLineSpacingKey = "notes.lineSpacing"
+    static let noteLineSpacingDefault = 1.3
 
     /// SF Mono at the given point size.
     static func font(size: CGFloat) -> NSFont {
@@ -153,6 +161,9 @@ struct CodeEditor: NSViewRepresentable {
         // underscore.
         textView.shouldDimissCompletionOnSelectionChange = false
 
+        // Before the text goes in: an empty note's caret line takes its height from the
+        // default paragraph style captured when its layout fragment is made.
+        coord.applyLineSpacing(lineSpacing)
         textView.text = text
         if let initialCursor, initialCursor <= (text as NSString).length {
             textView.textSelection = NSRange(location: initialCursor, length: 0)
@@ -205,6 +216,7 @@ struct CodeEditor: NSViewRepresentable {
         }
 
         coord.applyFontSize(fontSize)
+        coord.applyLineSpacing(lineSpacing)
         coord.applySoftWrap(softWrap)
         coord.applyTheme(theme)
         coord.lspController.setDiagnostics(diagnostics)
@@ -252,6 +264,8 @@ struct CodeEditor: NSViewRepresentable {
         private var linkedSet = IndexSet()
         private var lastFontSize: CGFloat?
         private var lastSoftWrap: Bool?
+        /// Carried by `resetAttributes`, which replaces every attribute it touches.
+        private var paragraphStyle = NSParagraphStyle.default
         private var pendingHighlight: DispatchWorkItem?
         /// Pre-edit range of the change in flight, captured in `willChangeTextIn` (where
         /// buffer offsets are unambiguous) and consumed in `didChangeTextIn` — only while a
@@ -440,6 +454,21 @@ struct CodeEditor: NSViewRepresentable {
             lastFontSize = size
             textView.font = CodeEditor.font(size: size)
             repaintHighlight()
+        }
+
+        /// `lineHeightMultiple`, not `lineSpacing`: it is what STTextLayoutFragment and the
+        /// gutter both read, so line numbers stay level with their lines.
+        func applyLineSpacing(_ multiple: CGFloat) {
+            // 0 is the default style's "use the font's own" — the same as 1, so project files
+            // (always 1) are never touched.
+            guard max(paragraphStyle.lineHeightMultiple, 1) != multiple, let textView else { return }
+            let style = NSMutableParagraphStyle()
+            style.lineHeightMultiple = multiple
+            paragraphStyle = style
+            textView.defaultParagraphStyle = style
+            textView.typingAttributes[.paragraphStyle] = style
+            let length = (textView.text as NSString? ?? "").length
+            if length > 0 { textView.addAttributes([.paragraphStyle: style], range: NSRange(location: 0, length: length)) }
         }
 
         func applySoftWrap(_ wrap: Bool) {
@@ -636,7 +665,8 @@ struct CodeEditor: NSViewRepresentable {
 
         private func resetAttributes(over range: NSRange) {
             textView?.setAttributes(
-                [.foregroundColor: NSColor(parent.theme.editorForeground), .font: CodeEditor.font(size: parent.fontSize)],
+                [.foregroundColor: NSColor(parent.theme.editorForeground), .font: CodeEditor.font(size: parent.fontSize),
+                 .paragraphStyle: paragraphStyle],
                 range: range
             )
         }

@@ -903,6 +903,7 @@ private struct NoteDetailEditor: View {
     @ObservedObject private var executor = AppModel.shared.commandExecutor
     /// Raised by a paste that brought a link in; drawn by `.linkPasteHint` below.
     @StateObject private var linkHint = LinkPasteHintState()
+    @AppStorage(CodeEditor.noteLineSpacingKey) private var lineSpacing = CodeEditor.noteLineSpacingDefault
     private let onOpenInNewWindow: () -> Void
 
     init(noteID: UUID, onOpenInNewWindow: @escaping () -> Void) {
@@ -937,6 +938,7 @@ private struct NoteDetailEditor: View {
                     theme: appModel.theme,
                     fontSize: appModel.fontSize,
                     softWrap: appModel.softWrap,
+                    lineSpacing: lineSpacing,
                     initialCursor: appModel.noteStore.notes.first(where: { $0.id == viewModel.noteID })?.cursor,
                     reveal: viewModel.revealTarget,
                     onRevealApplied: { viewModel.revealConsumed(token: $0) },
