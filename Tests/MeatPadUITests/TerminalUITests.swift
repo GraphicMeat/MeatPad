@@ -54,19 +54,26 @@ final class TerminalUITests: FileTreeMenuUITestCase {
             .max { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) }?.processIdentifier ?? 0
     }
 
-    /// `pgrep -lP <app pid>` lines whose command is a shell (`zsh`, `bash`, `fish`, `sh`).
+    /// `"<pid> <name>"` for each direct child of the app whose command is a shell (`zsh`, `bash`,
+    /// `fish`, `sh`). Reads the kernel process table with `sysctl` rather than running `pgrep`:
+    /// the UI-test runner is sandboxed, and there `pgrep` and `ps` cannot reach `sysmond` and
+    /// list nothing.
     private func childShells() -> [String] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        process.arguments = ["-lP", String(appPID)]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try? process.run()
-        process.waitUntilExit()
-        let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        return output.split(separator: "\n").map(String.init).filter { line in
-            let name = line.split(separator: " ").last.map(String.init) ?? ""
-            return ["zsh", "bash", "fish", "sh", "-zsh", "-bash", "-fish"].contains(name)
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+        // Headroom: processes can appear between the size query and the read.
+        var procs = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride + 32)
+        size = procs.count * MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, 3, &procs, &size, nil, 0) == 0 else { return [] }
+        let parent = appPID
+        let shells: Set<String> = ["zsh", "bash", "fish", "sh", "-zsh", "-bash", "-fish"]
+        return procs.prefix(size / MemoryLayout<kinfo_proc>.stride).compactMap { proc in
+            guard proc.kp_eproc.e_ppid == parent else { return nil }
+            let name = withUnsafeBytes(of: proc.kp_proc.p_comm) { raw in
+                String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+            }
+            return shells.contains(name) ? "\(proc.kp_proc.p_pid) \(name)" : nil
         }
     }
 
