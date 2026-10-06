@@ -558,3 +558,165 @@ final class LSPProjectManagerTests: XCTestCase {
         return Set(output.split(separator: "\n").compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) })
     }
 }
+
+// MARK: - Deferred environment
+
+/// The app resolves the user's login-shell environment (PATH) by running a shell — slow, and a
+/// wait on the main thread spins the run loop in the middle of a SwiftUI update, which
+/// aborts the app. The manager therefore takes the environment as something that *arrives*: it
+/// never blocks for it, and documents opened in the meantime start their servers when it lands.
+@MainActor
+final class LSPProjectManagerDeferredEnvironmentTests: XCTestCase {
+    private var tempDir: URL!
+
+    override func setUpWithError() throws {
+        tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+
+    /// A provider that stays pending until `release()` — the shell still running.
+    private struct Gate {
+        let stream: AsyncStream<Void>
+        let continuation: AsyncStream<Void>.Continuation
+        init() { (stream, continuation) = AsyncStream.makeStream(of: Void.self) }
+        func release() { continuation.yield() }
+        func provider(_ environment: LSPEnvironment) -> @Sendable () async -> LSPEnvironment {
+            let stream = stream
+            return {
+                for await _ in stream { break }
+                return environment
+            }
+        }
+    }
+
+    private func makeManager(_ gate: Gate, resolved: LSPEnvironment, factory: SpyChannelFactory) -> LSPProjectManager {
+        LSPProjectManager(projectRoot: tempDir, channelFactory: factory, environmentProvider: gate.provider(resolved))
+    }
+
+    private let swiftEnvironment = LSPEnvironment(
+        detected: [DetectedServer(languageIDs: ["swift"], binaryURL: URL(fileURLWithPath: "/usr/bin/sourcekit-lsp"),
+                                  launchArguments: [], installHint: "", displayName: "sourcekit-lsp")],
+        userEnvironment: ["PATH": "/from/the/login/shell"]
+    )
+
+    private func waitUntil(timeout: TimeInterval = 2, _ condition: () -> Bool) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline {
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+
+    func testNothingStartsWhileTheEnvironmentIsStillResolving() async {
+        let factory = SpyChannelFactory()
+        let manager = makeManager(Gate(), resolved: swiftEnvironment, factory: factory)
+
+        manager.documentOpened(url: tempDir.appendingPathComponent("a.swift"), languageID: "swift", text: "struct A {}")
+        try? await Task.sleep(nanoseconds: 30_000_000)
+
+        XCTAssertTrue(factory.calls.isEmpty, "a server was launched before the environment was known")
+        XCTAssertNil(manager.server(for: "swift"))
+        XCTAssertNil(manager.statusByLanguage["swift"], "reported a status before it could know whether the server exists")
+    }
+
+    func testDocumentOpenedEarlyStartsItsServerOnceTheEnvironmentArrives() async {
+        let factory = SpyChannelFactory()
+        let gate = Gate()
+        let manager = makeManager(gate, resolved: swiftEnvironment, factory: factory)
+
+        manager.documentOpened(url: tempDir.appendingPathComponent("a.swift"), languageID: "swift", text: "struct A {}")
+        gate.release()
+
+        await waitUntil { factory.calls.count == 1 }
+        XCTAssertEqual(factory.calls.count, 1)
+        XCTAssertEqual(factory.calls.first?.detected.displayName, "sourcekit-lsp")
+        XCTAssertEqual(factory.calls.first?.environment["PATH"], "/from/the/login/shell",
+                       "the server was launched with the app's environment, not the login shell's")
+    }
+
+    func testLanguageWithNoServerIsReportedNotInstalledOnceTheEnvironmentArrives() async {
+        let factory = SpyChannelFactory()
+        let gate = Gate()
+        let manager = makeManager(gate, resolved: LSPEnvironment(detected: [], userEnvironment: [:]), factory: factory)
+
+        manager.documentOpened(url: tempDir.appendingPathComponent("a.rs"), languageID: "rust", text: "fn main() {}")
+        gate.release()
+
+        await waitUntil { manager.statusByLanguage["rust"] != nil }
+        XCTAssertEqual(manager.statusByLanguage["rust"], .notInstalled(installHint: "rustup component add rust-analyzer"))
+        XCTAssertTrue(factory.calls.isEmpty)
+    }
+
+    func testDocumentClosedBeforeTheEnvironmentArrivesIsNeverOpened() async {
+        let factory = SpyChannelFactory()
+        let gate = Gate()
+        let manager = makeManager(gate, resolved: swiftEnvironment, factory: factory)
+        let url = tempDir.appendingPathComponent("a.swift")
+
+        manager.documentOpened(url: url, languageID: "swift", text: "struct A {}")
+        manager.documentClosed(url: url, languageID: "swift")
+        gate.release()
+
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertTrue(factory.calls.isEmpty, "a closed document still started a server")
+        XCTAssertNil(manager.server(for: "swift"))
+    }
+
+    func testShutdownBeforeTheEnvironmentArrivesStartsNothing() async {
+        let factory = SpyChannelFactory()
+        let gate = Gate()
+        let manager = makeManager(gate, resolved: swiftEnvironment, factory: factory)
+
+        manager.documentOpened(url: tempDir.appendingPathComponent("a.swift"), languageID: "swift", text: "struct A {}")
+        manager.shutdown()
+        gate.release()
+
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertTrue(factory.calls.isEmpty, "a server was launched after shutdown")
+    }
+
+    func testDocumentsOpenedAfterTheEnvironmentArrivesStartImmediately() async {
+        let factory = SpyChannelFactory()
+        let gate = Gate()
+        let manager = makeManager(gate, resolved: swiftEnvironment, factory: factory)
+        gate.release()
+        await waitUntil { manager.isEnvironmentResolved }
+
+        manager.documentOpened(url: tempDir.appendingPathComponent("a.swift"), languageID: "swift", text: "struct A {}")
+
+        XCTAssertEqual(manager.statusByLanguage["swift"], .starting, "a late open should behave like the eager initializer")
+        XCTAssertNotNil(manager.server(for: "swift"))
+    }
+}
+
+// MARK: - Status reporting with a deferred environment
+
+/// The sidebar banner ("rust-analyzer isn't installed") is driven by `onStatusChange`. With a
+/// deferred environment the status doesn't exist when `documentOpened` returns, so the
+/// callback — not a read of `statusByLanguage` right afterwards — has to carry it.
+@MainActor
+final class LSPProjectManagerDeferredStatusTests: XCTestCase {
+    func testOnStatusChangeReportsNotInstalledOnceTheEnvironmentArrives() async {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let (stream, continuation) = AsyncStream.makeStream(of: Void.self)
+        let manager = LSPProjectManager(projectRoot: dir, channelFactory: SpyChannelFactory(), environmentProvider: {
+            for await _ in stream { break }
+            return LSPEnvironment(detected: [], userEnvironment: [:])
+        })
+        var reported: [[String: LSPServerStatus]] = []
+        manager.onStatusChange = { reported.append($0) }
+
+        manager.documentOpened(url: dir.appendingPathComponent("a.rs"), languageID: "rust", text: "fn main() {}")
+        XCTAssertTrue(reported.isEmpty, "reported before it could know")
+        XCTAssertNil(manager.statusByLanguage["rust"])
+
+        continuation.yield()
+        let deadline = Date().addingTimeInterval(2)
+        while reported.isEmpty, Date() < deadline { try? await Task.sleep(nanoseconds: 1_000_000) }
+
+        XCTAssertEqual(reported.last?["rust"], .notInstalled(installHint: "rustup component add rust-analyzer"))
+    }
+}

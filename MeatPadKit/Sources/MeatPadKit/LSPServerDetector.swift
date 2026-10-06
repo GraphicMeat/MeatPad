@@ -1,5 +1,17 @@
 import Foundation
 
+/// What it takes to find and launch language servers: the servers found installed, and the
+/// user's login-shell environment they run in. Produced off the main thread (it runs a shell).
+public struct LSPEnvironment: Sendable {
+    public let detected: [DetectedServer]
+    public let userEnvironment: [String: String]
+
+    public init(detected: [DetectedServer], userEnvironment: [String: String]) {
+        self.detected = detected
+        self.userEnvironment = userEnvironment
+    }
+}
+
 /// A language server MeatPad found installed on the machine, ready to launch.
 public struct DetectedServer: Equatable, Sendable {
     public let languageIDs: [String]

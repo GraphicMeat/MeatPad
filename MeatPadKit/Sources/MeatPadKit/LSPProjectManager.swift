@@ -104,9 +104,18 @@ struct LocalProcessChannelFactory: LSPChannelFactory {
 @MainActor
 public final class LSPProjectManager {
     private let projectRoot: URL
-    private let detectedByLanguage: [String: DetectedServer]
-    private let userEnvironment: [String: String]
+    private var detectedByLanguage: [String: DetectedServer]
+    private var userEnvironment: [String: String]
     private let channelFactory: LSPChannelFactory
+    /// False only between a deferred-environment init and the moment its provider answers.
+    /// Until then nothing can be launched or reported — whether a server exists is unknown.
+    private var isConfigured: Bool
+    /// Test-only window onto `isConfigured`.
+    var isEnvironmentResolved: Bool { isConfigured }
+    /// Documents opened before the environment arrived: uri → languageID. They start their
+    /// servers, with the text they hold by then, the moment it does.
+    private var awaitingEnvironment: [String: String] = [:]
+    private var environmentTask: Task<Void, Never>?
 
     private var servers: [String: LSPServerHandle] = [:]
     /// Open-document bookkeeping keyed by URI string. languageID isn't stored here — it's
@@ -162,14 +171,51 @@ public final class LSPProjectManager {
         self.projectRoot = projectRoot
         self.userEnvironment = userEnvironment
         self.channelFactory = channelFactory
+        self.detectedByLanguage = Self.byLanguage(detected)
+        self.isConfigured = true
+    }
 
+    /// For when the login-shell environment has to be fetched by running a shell: that wait must
+    /// never happen on the main thread (it spins the run loop inside a SwiftUI update and aborts
+    /// the app), so the environment arrives through `environmentProvider` instead. Until it does,
+    /// opened documents are remembered and nothing is launched or reported.
+    public convenience init(projectRoot: URL, environmentProvider: @escaping @Sendable () async -> LSPEnvironment) {
+        self.init(projectRoot: projectRoot, channelFactory: LocalProcessChannelFactory(), environmentProvider: environmentProvider)
+    }
+
+    init(projectRoot: URL, channelFactory: LSPChannelFactory, environmentProvider: @escaping @Sendable () async -> LSPEnvironment) {
+        self.projectRoot = projectRoot
+        self.userEnvironment = [:]
+        self.channelFactory = channelFactory
+        self.detectedByLanguage = [:]
+        self.isConfigured = false
+        environmentTask = Task { @MainActor [weak self] in
+            let environment = await environmentProvider()
+            guard !Task.isCancelled else { return }
+            self?.apply(environment)
+        }
+    }
+
+    private static func byLanguage(_ detected: [DetectedServer]) -> [String: DetectedServer] {
         var byLanguage: [String: DetectedServer] = [:]
         for server in detected {
             for languageID in server.languageIDs {
                 byLanguage[languageID] = server
             }
         }
-        self.detectedByLanguage = byLanguage
+        return byLanguage
+    }
+
+    private func apply(_ environment: LSPEnvironment) {
+        detectedByLanguage = Self.byLanguage(environment.detected)
+        userEnvironment = environment.userEnvironment
+        isConfigured = true
+        let waiting = awaitingEnvironment.sorted { $0.key < $1.key }
+        awaitingEnvironment = [:]
+        for (uri, languageID) in waiting {
+            guard let document = openDocuments[uri], let url = URL(string: uri) else { continue }
+            documentOpened(url: url, languageID: languageID, text: document.text)
+        }
     }
 
     public func server(for languageID: String) -> LSPServerHandle? {
@@ -185,6 +231,10 @@ public final class LSPProjectManager {
         let uri = url.absoluteString
         openDocuments[uri] = (version: 1, text: text)
 
+        guard isConfigured else {
+            awaitingEnvironment[uri] = languageID
+            return
+        }
         guard let handle = startServerIfNeeded(languageID: languageID) else { return }
 
         enqueue(languageID: languageID) { [weak self] in
@@ -232,6 +282,7 @@ public final class LSPProjectManager {
     public func documentClosed(url: URL, languageID: String) {
         let uri = url.absoluteString
         openDocuments.removeValue(forKey: uri)
+        awaitingEnvironment[uri] = nil
 
         guard let handle = servers[languageID] else { return }
         enqueue(languageID: languageID) {
@@ -313,6 +364,8 @@ public final class LSPProjectManager {
         for task in diagnosticsTaps.values {
             task.cancel()
         }
+        environmentTask?.cancel()
+        awaitingEnvironment.removeAll()
         let handles = servers
         let terminators = forceTerminators
         servers.removeAll()

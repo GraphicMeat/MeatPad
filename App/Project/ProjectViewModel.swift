@@ -61,6 +61,10 @@ final class ProjectViewModel: ObservableObject {
     private var lspBannerShownLanguages: Set<String> = []
     /// Cmd+T quick-open overlay, toggled by the app-level command.
     @Published var quickOpenVisible = false
+    /// The file-tree row whose right-click menu is open — drawn highlighted until it closes.
+    @Published var contextMenuTarget: URL?
+    /// A file-tree New File / New Folder / Rename waiting for its name (shown as a sheet).
+    @Published var fileTreePrompt: FileTreeNamePrompt?
     @Published var sidebarMode: SidebarMode = .files
     /// Find References results (Task 5) — sidebar's `.references` mode content. Overwritten
     /// wholesale by each new request, same one-slot-no-history shape as `referencesResults`'
@@ -107,13 +111,10 @@ final class ProjectViewModel: ObservableObject {
     init(root: URL) {
         self.root = root
         // GUI apps launched from Finder don't inherit the login shell's PATH (the LSP
-        // plan's "CRITICAL gotcha"); `ProcessInfo.userEnvironment` (ChimeHQ's ProcessEnv,
-        // already a transitive build dependency via MeatPadKit) reconstructs it by
-        // shelling out to the user's shell once. Detection AND every server process
-        // launch use this same resolved environment, never the app's own.
-        let userEnvironment = ProcessInfo.processInfo.userEnvironment
-        let detected = LSPServerDetector.detect(userEnvironment: userEnvironment)
-        self.lspManager = LSPProjectManager(projectRoot: root, detected: detected, userEnvironment: userEnvironment)
+        // plan's "CRITICAL gotcha"), so detection AND every server launch use the login
+        // shell's environment. Fetching it runs a shell, so it arrives asynchronously: waiting
+        // here, inside a SwiftUI update, aborts the app (see `UserShellEnvironment`).
+        self.lspManager = LSPProjectManager(projectRoot: root, environmentProvider: { await UserShellEnvironment.resolved() })
         // Shows the window instantly with just the top level, then `rescan()` below
         // fills in the full tree off the main thread — opening a big repo no longer
         // blocks the window from appearing.
@@ -218,7 +219,19 @@ final class ProjectViewModel: ObservableObject {
         let isNew = !tabs.contains(file)
         if isNew { tabs.append(file) }
         selectedTab = file
-        if isNew { notifyLSPDocumentOpened(file) }
+        if isNew {
+            notifyLSPDocumentOpened(file)
+            prewarmHighlighting(for: [file])
+        }
+    }
+
+    /// Compiles the syntax-highlighting grammars these files will need on a background thread, so
+    /// the editor built when you switch to one of them finds them ready instead of compiling them
+    /// on the main thread mid-switch (the largest single cost of a tab switch).
+    private func prewarmHighlighting(for urls: [URL]) {
+        let languageIDs = Set(urls.compactMap { EditorRegistry.shared.fileViewModel(for: $0)?.language?.id }).sorted()
+        guard !languageIDs.isEmpty else { return }
+        Task { await HighlightEngine.prewarm(languageIDs: languageIDs) }
     }
 
     /// Same as `open(file:)`, plus a one-shot reveal of `range` in the newly-shown editor
@@ -675,9 +688,10 @@ final class ProjectViewModel: ObservableObject {
         return languageID
     }
 
-    /// Sends `textDocument/didOpen` (lazily starting that language's server on first
-    /// use) and, the first time this project sees that language come up missing,
-    /// raises the install-hint banner.
+    /// Sends `textDocument/didOpen` (lazily starting that language's server on first use).
+    /// The missing-server banner is raised from `raiseMissingServerBanner`, not here: whether a
+    /// server exists isn't known until the login-shell environment has arrived, which for
+    /// restored tabs is after this returns.
     private func notifyLSPDocumentOpened(_ url: URL) {
         guard let vm = EditorRegistry.shared.fileViewModel(for: url),
               let languageID = vm.language?.id, Self.lspKnownLanguageIDs.contains(languageID) else { return }
