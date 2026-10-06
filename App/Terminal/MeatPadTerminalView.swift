@@ -2,8 +2,9 @@ import AppKit
 import SwiftTerm
 
 /// SwiftTerm's local-process terminal, with two MeatPad additions: it is one accessibility
-/// text area whose value is the visible screen (VoiceOver and the UI tests read it), and after
-/// the shell exits it swallows input until ⏎, which asks the controller for a fresh shell.
+/// text area whose value is the active buffer's text, scrollback included (VoiceOver and the UI
+/// tests read it), and after the shell exits it swallows input until ⏎, which asks the
+/// controller for a fresh shell.
 final class MeatPadTerminalView: LocalProcessTerminalView {
     /// Set by `ProjectTerminalController` when the shell is gone; `nil` while it runs.
     var exitCode: Int32?
@@ -19,8 +20,8 @@ final class MeatPadTerminalView: LocalProcessTerminalView {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    /// The active screen as text, one line per row. Read on the main thread by accessibility
-    /// clients; never called from a terminal delegate callback.
+    /// The whole active buffer as text, scrollback included, one line per row. Read on the main
+    /// thread by accessibility clients; never called from a terminal delegate callback.
     override func accessibilityValue() -> Any? {
         String(decoding: getTerminal().getBufferAsData(kind: .active), as: UTF8.self)
     }

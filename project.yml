@@ -30,7 +30,8 @@ packages:
   # Terminal panel (App/Terminal). Pinned exact: 1.11.0 is the last tag without a Metal shader
   # (1.12+ need Xcode's optional Metal Toolchain, absent on the build box and on GitHub's
   # macos-26 image); main is the 2.0 pre-release (removes getTerminal(), package traits).
-  # Declares a build-tool plugin, so every scripted xcodebuild passes -skipPackagePluginValidation.
+  # Its manifest uses a benchmark plugin on a target we never build; Xcode still validates it,
+  # so every scripted xcodebuild passes -skipPackagePluginValidation.
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm
     exactVersion: 1.11.0

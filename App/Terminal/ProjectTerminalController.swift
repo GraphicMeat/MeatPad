@@ -22,6 +22,11 @@ final class ProjectTerminalController: NSObject, ObservableObject {
     /// Input handed to `send(_:)` before the shell was running; flushed right after launch.
     private var pendingInput: [String] = []
     private var lastFont: NSFont?
+    /// Colours last handed to the view; `applyAppearance` only assigns the ones that changed.
+    private var lastBackground: NSColor?
+    private var lastForeground: NSColor?
+    private var lastCaret: NSColor?
+    private var lastSelection: NSColor?
 
     var isRunning: Bool { view.process?.running ?? false }
 
@@ -31,7 +36,9 @@ final class ProjectTerminalController: NSObject, ObservableObject {
         view = MeatPadTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
         super.init()
         view.processDelegate = self
-        view.optionAsMetaKey = true
+        // Off, like Terminal.app: on, Option+key sends ESC+char and breaks layouts that type with
+        // Option (Lithuanian digits, DE/FR `@[]{}|~`).
+        view.optionAsMetaKey = false
         view.onRestartRequested = { [weak self] in self?.restart() }
     }
 
@@ -40,7 +47,7 @@ final class ProjectTerminalController: NSObject, ObservableObject {
         guard startTask == nil, !isRunning else { return }
         startTask = Task { [weak self] in
             let environment = await UserShellEnvironment.resolved().userEnvironment
-            guard let self else { return }
+            guard !Task.isCancelled, let self else { return }
             self.start(userEnvironment: environment)
         }
     }
@@ -50,30 +57,36 @@ final class ProjectTerminalController: NSObject, ObservableObject {
     /// never a live shell to kill here.
     func restart() {
         guard !isRunning else { return }
-        startTask = nil
         startIfNeeded()
     }
 
-    /// Kills the shell and reaps it. SwiftTerm 1.11.0's `terminate()` closes the PTY master and
-    /// sends SIGTERM but never calls `waitpid` itself; its exit monitor stays armed and reaps
-    /// with WNOHANG once the child dies, which can race the loop below (`ECHILD` = the monitor
-    /// won). The loop finishes the job and escalates to SIGKILL after 5 s for a process that
-    /// ignores SIGTERM.
-    /// 1.11.0 also leaves its exit monitor armed, so a late `processTerminated` callback can
-    /// follow this call; it only feeds an exit line into a view whose window is closing, which
-    /// is harmless.
+    /// Kills the shell and reaps it, and cancels a start still waiting for the login-shell
+    /// environment. SwiftTerm 1.11.0's `terminate()` only sends SIGTERM, which interactive shells
+    /// ignore, and leaves the PTY master open, so the shell is also sent SIGHUP (what closing a
+    /// terminal sends: zsh/bash exit and hang up their jobs). SwiftTerm never calls `waitpid`
+    /// itself; its exit monitor stays armed and reaps with WNOHANG once the child dies, which can
+    /// race the loop below (`ECHILD` = the monitor won) and can deliver a late `processTerminated`
+    /// after this call; that only feeds an exit line into a view whose window is closing, which
+    /// is harmless. The loop escalates to SIGKILL after 5 s, always after a fresh failed check.
     func terminate() {
+        startTask?.cancel()
+        startTask = nil
         guard isRunning else { return }
         let pid = view.process.shellPid
         view.terminate()
         guard pid > 0 else { return }
+        kill(pid, SIGHUP)
         DispatchQueue.global(qos: .utility).async {
             var status: Int32 = 0
+            func reaped() -> Bool {
+                let result = waitpid(pid, &status, WNOHANG)
+                return result == pid || (result == -1 && errno == ECHILD)
+            }
             for _ in 0..<50 {
-                let reaped = waitpid(pid, &status, WNOHANG)
-                if reaped == pid || (reaped == -1 && errno == ECHILD) { return }
+                if reaped() { return }
                 usleep(100_000)
             }
+            if reaped() { return }
             kill(pid, SIGKILL)
             waitpid(pid, &status, 0)
         }
@@ -86,12 +99,31 @@ final class ProjectTerminalController: NSObject, ObservableObject {
 
     /// Colours from the active theme, the editor's monospaced font at `fontSize` (already
     /// multiplied by the project zoom by the caller). Cheap to call on every SwiftUI update:
-    /// the font is only reassigned when its size changes (SwiftTerm re-lays out on assignment).
+    /// each value is only assigned when it differs from the last one applied, because every
+    /// SwiftTerm colour assignment flushes its caches and queues a full redraw (the background
+    /// and foreground ones also rebuild the ANSI palette, discarding OSC 4 colours a running
+    /// program set), and a font assignment re-lays out the grid.
     func applyAppearance(theme: Theme, fontSize: CGFloat) {
-        view.nativeBackgroundColor = NSColor(theme.editorBackground)
-        view.nativeForegroundColor = NSColor(theme.editorForeground)
-        view.caretColor = NSColor(theme.caret)
-        view.selectedTextBackgroundColor = NSColor(theme.selection)
+        let background = NSColor(theme.editorBackground)
+        if background != lastBackground {
+            view.nativeBackgroundColor = background
+            lastBackground = background
+        }
+        let foreground = NSColor(theme.editorForeground)
+        if foreground != lastForeground {
+            view.nativeForegroundColor = foreground
+            lastForeground = foreground
+        }
+        let caret = NSColor(theme.caret)
+        if caret != lastCaret {
+            view.caretColor = caret
+            lastCaret = caret
+        }
+        let selection = NSColor(theme.selection)
+        if selection != lastSelection {
+            view.selectedTextBackgroundColor = selection
+            lastSelection = selection
+        }
         if lastFont?.pointSize != fontSize {
             let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
             view.font = font
@@ -103,20 +135,31 @@ final class ProjectTerminalController: NSObject, ObservableObject {
         let spec = TerminalLaunch.spec(root: root, userEnvironment: userEnvironment)
         exitCode = nil
         view.exitCode = nil
+        // SwiftTerm 1.11.0 never reports an exec failure (the forked child has no `_exit` after a
+        // failed `execve`, so it would carry on as a copy of MeatPad), so check up front.
+        guard FileManager.default.isExecutableFile(atPath: spec.executable) else {
+            failStart(spec.executable)
+            return
+        }
         view.startProcess(
             executable: spec.executable,
             args: spec.args,
             environment: spec.environment,
             currentDirectory: spec.currentDirectory
         )
-        // SwiftTerm 1.11.0's startProcess returns silently when forkpty/exec fails — no delegate call.
+        // Second line of defence: a forkpty failure makes `startProcess` return silently, with no
+        // delegate call.
         guard isRunning else {
-            view.feed(text: "\r\n" + String(localized: "Could not start \(spec.executable)") + "\r\n")
-            markExited(-1)
+            failStart(spec.executable)
             return
         }
         for text in pendingInput { view.send(txt: text) }
         pendingInput.removeAll()
+    }
+
+    private func failStart(_ executable: String) {
+        view.feed(text: "\r\n" + String(localized: "Could not start \(executable)") + "\r\n")
+        markExited(-1)
     }
 
     private func markExited(_ code: Int32) {
