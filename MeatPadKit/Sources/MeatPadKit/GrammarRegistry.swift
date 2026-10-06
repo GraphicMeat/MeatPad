@@ -65,8 +65,70 @@ enum GrammarRegistry {
         "markdown_inline": Spec(function: tree_sitter_markdown_inline, name: "MarkdownInline", bundleName: "TreeSitterMarkdown_TreeSitterMarkdownInline"),
     ]
 
+    /// One language's compiled configuration, behind its own lock so two threads asking for the
+    /// same language compile it once (the second waits for the first) while different languages
+    /// never block each other.
+    private final class Slot: @unchecked Sendable {
+        let lock = NSLock()
+        var isResolved = false
+        var value: LanguageConfiguration?
+    }
+
+    private static let slotsLock = NSLock()
+    private static var slots: [String: Slot] = [:]
+
+    private static func slot(for languageID: String) -> Slot {
+        slotsLock.lock()
+        defer { slotsLock.unlock() }
+        if let existing = slots[languageID] { return existing }
+        let created = Slot()
+        slots[languageID] = created
+        return created
+    }
+
     /// A parsed grammar language paired with its highlights query, or nil if unsupported.
+    ///
+    /// Compiled once per app run and shared: `ts_query_new` is by far the costliest part of
+    /// opening an editor (~35% of the main thread while flipping tabs), and the compiled query is
+    /// read-only, so every editor — and a prewarm on another thread — can use the same one. The
+    /// cost is a few MB for each language actually opened, none for the rest.
     static func configuration(for languageID: String) -> LanguageConfiguration? {
+        let slot = slot(for: languageID)
+        slot.lock.lock()
+        defer { slot.lock.unlock() }
+        if slot.isResolved { return slot.value }
+        slot.value = compile(languageID)
+        slot.isResolved = true
+        return slot.value
+    }
+
+    /// Compiles `languageIDs` now, on a background thread, so the editor that later asks for
+    /// them gets them from the cache instead of compiling on the main thread mid-tab-switch.
+    static func prewarm(_ languageIDs: [String]) async {
+        await Task.detached(priority: .utility) {
+            for id in languageIDs { _ = configuration(for: id) }
+        }.value
+    }
+
+    /// Whether `languageID` has already been compiled (test seam).
+    static func isCached(_ languageID: String) -> Bool {
+        slotsLock.lock()
+        let existing = slots[languageID]
+        slotsLock.unlock()
+        guard let existing else { return false }
+        existing.lock.lock()
+        defer { existing.lock.unlock() }
+        return existing.isResolved
+    }
+
+    /// Forgets every compiled language (test seam).
+    static func clearCache() {
+        slotsLock.lock()
+        slots.removeAll()
+        slotsLock.unlock()
+    }
+
+    private static func compile(_ languageID: String) -> LanguageConfiguration? {
         guard let spec = specs[languageID], let ptr = spec.function() else { return nil }
         let bundleName = spec.bundleName ?? "TreeSitter\(spec.name)_TreeSitter\(spec.name)"
         guard let queriesURL = queriesDirectory(bundleName: bundleName) else { return nil }

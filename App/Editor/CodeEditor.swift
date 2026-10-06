@@ -79,6 +79,10 @@ struct CodeEditor: NSViewRepresentable {
     /// Zed's "comfortable" buffer line height (1.618 × the font size).
     static let noteLineSpacingKey = "notes.lineSpacing"
     static let noteLineSpacingDefault = 1.3
+    /// Settings ▸ General's line height for code in project windows. 1.0 is the font's own line
+    /// height — what project files have always had — so nothing changes until it is raised.
+    static let codeLineSpacingKey = "code.lineSpacing"
+    static let codeLineSpacingDefault = 1.0
 
     /// SF Mono at the given point size.
     static func font(size: CGFloat) -> NSFont {
@@ -164,7 +168,9 @@ struct CodeEditor: NSViewRepresentable {
         // Before the text goes in: an empty note's caret line takes its height from the
         // default paragraph style captured when its layout fragment is made.
         coord.applyLineSpacing(lineSpacing)
+        coord.isSettingTextProgrammatically = true
         textView.text = text
+        coord.isSettingTextProgrammatically = false
         if let initialCursor, initialCursor <= (text as NSString).length {
             textView.textSelection = NSRange(location: initialCursor, length: 0)
         }
@@ -211,7 +217,9 @@ struct CodeEditor: NSViewRepresentable {
         // Text binding -> view. Guard against the re-entrant loop where our own
         // delegate callback pushed this string into the binding a moment ago.
         if textView.text != text {
+            coord.isSettingTextProgrammatically = true
             textView.text = text
+            coord.isSettingTextProgrammatically = false
             coord.scheduleHighlight()
         }
 
@@ -451,8 +459,22 @@ struct CodeEditor: NSViewRepresentable {
         /// token colors land on top of the new font run.
         func applyFontSize(_ size: CGFloat) {
             guard lastFontSize != size, let textView else { return }
+            let isChange = lastFontSize != nil
             lastFontSize = size
             textView.font = CodeEditor.font(size: size)
+            // A document with nothing painted by the highlighter (a plain-text file, most notes)
+            // keeps the font its characters already carry — setting `.font` only styles new text —
+            // so on a change the base attributes go back on over all of it. Not on the first
+            // call: a freshly loaded document already has the right size.
+            if isChange, paintedSet.isEmpty {
+                let length = (textView.text as NSString? ?? "").length
+                if length > 0 {
+                    let full = NSRange(location: 0, length: length)
+                    inOneEditingTransaction { resetAttributes(over: full) }
+                    renderLinks(over: full)
+                    lspController.render()
+                }
+            }
             repaintHighlight()
         }
 
@@ -496,6 +518,9 @@ struct CodeEditor: NSViewRepresentable {
                 }
             }
         }
+
+        /// True only while `makeNSView` / `updateNSView` assign the document text themselves.
+        var isSettingTextProgrammatically = false
 
         func scheduleHighlight() {
             pendingHighlight?.cancel()
@@ -548,12 +573,14 @@ struct CodeEditor: NSViewRepresentable {
             guard full.length > 0 else { return }
 
             let range = paintRange(in: textView)
-            resetAttributes(over: range)
             // Carry the previous pass's colours until the new ones land. On a small file the
             // parse finishes within the frame and this is invisible; on a large one it's the
             // difference between "colours lag an edit" and "the file flashes plain on every
             // keystroke".
-            paint(lastSpans, textLength: full.length)
+            inOneEditingTransaction {
+                resetAttributes(over: range)
+                paint(lastSpans, textLength: full.length)
+            }
 
             highlightGeneration += 1
             let generation = highlightGeneration
@@ -606,9 +633,11 @@ struct CodeEditor: NSViewRepresentable {
             let clipped = NSIntersectionRange(range, NSRange(location: 0, length: length))
             var painted = false
             if clipped.length > 0, let integers = Range(clipped) {
-                resetAttributes(over: clipped)
-                paint(spans, textLength: length)
-                renderLinks(over: clipped)
+                inOneEditingTransaction {
+                    resetAttributes(over: clipped)
+                    paint(spans, textLength: length)
+                    renderLinks(over: clipped)
+                }
                 paintedSet.insert(integersIn: integers)
                 painted = true
             }
@@ -628,15 +657,17 @@ struct CodeEditor: NSViewRepresentable {
             guard let textView else { return }
             let length = (textView.text as NSString? ?? "").length
             guard length > 0, !paintedSet.isEmpty else { return }
-            for region in paintedSet.rangeView {
-                let range = NSIntersectionRange(NSRange(location: region.lowerBound, length: region.count),
-                                                NSRange(location: 0, length: length))
-                guard range.length > 0 else { continue }
-                resetAttributes(over: range)
-            }
-            paint(lastSpans, textLength: length)
-            for region in paintedSet.rangeView {
-                renderLinks(over: NSRange(location: region.lowerBound, length: region.count))
+            inOneEditingTransaction {
+                for region in paintedSet.rangeView {
+                    let range = NSIntersectionRange(NSRange(location: region.lowerBound, length: region.count),
+                                                    NSRange(location: 0, length: length))
+                    guard range.length > 0 else { continue }
+                    resetAttributes(over: range)
+                }
+                paint(lastSpans, textLength: length)
+                for region in paintedSet.rangeView {
+                    renderLinks(over: NSRange(location: region.lowerBound, length: region.count))
+                }
             }
             lspController.render()
         }
@@ -662,6 +693,21 @@ struct CodeEditor: NSViewRepresentable {
 
         /// Characters painted beyond each edge of the viewport.
         private static let paintMargin = 20_000
+
+        /// Runs `body` as one text-storage edit. `paint` colours one span at a time, and each
+        /// `addAttributes` otherwise ends its own edit — a full layout synchronisation per span,
+        /// which for a file with thousands of spans was the biggest cost of opening an editor
+        /// (~45% of the main thread while flipping tabs). Edits nest, and layout is only
+        /// synchronised when the outermost one ends, so it happens once.
+        private func inOneEditingTransaction(_ body: () -> Void) {
+            guard let contentStorage = textView?.textContentManager as? NSTextContentStorage,
+                  let storage = contentStorage.textStorage else { return body() }
+            contentStorage.performEditingTransaction {
+                storage.beginEditing()
+                body()
+                storage.endEditing()
+            }
+        }
 
         private func resetAttributes(over range: NSRange) {
             textView?.setAttributes(
@@ -724,7 +770,10 @@ struct CodeEditor: NSViewRepresentable {
                 let new = textView.text ?? ""
                 if parent.text != new { parent.text = new }
                 scheduleHighlight()
-                completionController.syncPopup(textView: textView)
+                // Not for text we put in ourselves: no popup can be open, and asking STTextView
+                // whether one is builds a completion window controller for every editor opened
+                // (~8% of the main thread while flipping tabs).
+                if !isSettingTextProgrammatically { completionController.syncPopup(textView: textView) }
             }
         }
 

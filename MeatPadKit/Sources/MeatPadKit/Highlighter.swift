@@ -139,6 +139,12 @@ public actor HighlightEngine {
         self.highlighter = highlighter
     }
 
+    /// Compiles the grammars for `languageIDs` off the main thread ahead of the editors that will
+    /// want them (see `GrammarRegistry.configuration`). Unknown ids are ignored.
+    public static func prewarm(languageIDs: [String]) async {
+        await GrammarRegistry.prewarm(languageIDs)
+    }
+
     /// Reparse the whole document. Injections are left unresolved until `spans(in:)` asks
     /// for a range.
     public func replace(text: String) {

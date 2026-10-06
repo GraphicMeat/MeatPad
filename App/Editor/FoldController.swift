@@ -35,9 +35,13 @@ final class FoldController {
     /// keyed the same way. Rebuilt wholesale on every `refresh()`; `applyCollapse` patches it
     /// incrementally between refreshes since folding never edits the buffer.
     private var collapsedRanges: [Int: NSTextRange] = [:]
-    /// Head lines we've placed a gutter chevron on, so we can clear them before a rebuild
-    /// (STGutterView only removes markers by line number).
-    private var chevronLines: Set<Int> = []
+    /// The chevrons currently in the gutter: document line number → whether it is drawn folded.
+    /// STGutterView only removes markers by line number, and every add/remove re-lays-out every
+    /// marker, so a refresh touches only the lines whose chevron actually changed.
+    private var chevronState: [Int: Bool] = [:]
+    /// Head offset for each chevron's line, current as of the last refresh. A chevron's click
+    /// looks its head up here rather than capturing an offset that edits above it would stale.
+    private var headByLine: [Int: Int] = [:]
     /// UTF-16 span touched by the buffer edit(s) since the last `refresh()` (see
     /// `Coordinator.textView(_:didChangeTextIn:replacementString:)`). Multiple edits racing
     /// ahead of the 150ms debounce widen this to their bounding span.
@@ -170,19 +174,36 @@ final class FoldController {
     /// only rebuild on region/fold-state change, not on scroll.
     private func rebuildChevrons(text: String) {
         guard let gutter = textView?.gutterView else { return }
-        for line in chevronLines { gutter.removeMarker(lineNumber: line) }
-        chevronLines.removeAll()
 
-        let newlineOffsets = text.utf16.enumerated().compactMap { $0.element == 10 ? $0.offset : nil }
+        // 1-based document line number of each head (newlines strictly before it, + 1), found in
+        // one pass over the text — heads arrive in document order.
+        var desired: [Int: Bool] = [:]
+        var heads: [Int: Int] = [:]
+        var utf16 = text.utf16.makeIterator()
+        var offset = 0
+        var line = 1
         for region in regions {
             let head = region.headLineRange.lowerBound
-            // 1-based document line number = newlines strictly before the head + 1.
-            let lineNumber = newlineOffsets.partitioningIndex { $0 >= head } + 1
-            let view = ChevronMarkerView(folded: foldedHeads.contains(head)) { [weak self] in
-                self?.toggle(head: head, folded: !(self?.foldedHeads.contains(head) ?? false))
+            while offset < head, let unit = utf16.next() {
+                if unit == 10 { line += 1 }
+                offset += 1
             }
-            gutter.addMarker(STGutterMarker(lineNumber: lineNumber, view: view))
-            chevronLines.insert(lineNumber)
+            desired[line] = foldedHeads.contains(head)
+            heads[line] = head
+        }
+        headByLine = heads
+
+        for (line, folded) in chevronState where desired[line] != folded {
+            gutter.removeMarker(lineNumber: line)
+            chevronState[line] = nil
+        }
+        for (line, folded) in desired.sorted(by: { $0.key < $1.key }) where chevronState[line] == nil {
+            let view = ChevronMarkerView(folded: folded) { [weak self] in
+                guard let self, let head = self.headByLine[line] else { return }
+                self.toggle(head: head, folded: !self.foldedHeads.contains(head))
+            }
+            gutter.addMarker(STGutterMarker(lineNumber: line, view: view))
+            chevronState[line] = folded
         }
     }
 }
