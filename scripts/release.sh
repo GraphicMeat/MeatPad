@@ -185,6 +185,7 @@ PLIST
 rm -rf "$ARCHIVE_PATH" "$EXPORT_DIR"
 
 xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration Release \
+  -skipPackagePluginValidation \
   archive -archivePath "$ARCHIVE_PATH"
 
 xcodebuild -exportArchive \

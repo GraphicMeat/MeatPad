@@ -85,6 +85,7 @@ jobs:
         run: |
           VERSION=${{ steps.version.outputs.version }}
           xcodebuild archive \
+            -skipPackagePluginValidation \
             -project MeatPad.xcodeproj \
             -scheme "$SCHEME" \
             -configuration Release \

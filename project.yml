@@ -27,6 +27,13 @@ packages:
   ProcessEnv:
     url: https://github.com/ChimeHQ/ProcessEnv
     from: 1.0.0
+  # Terminal panel (App/Terminal). Pinned exact: 1.11.0 is the last tag without a Metal shader
+  # (1.12+ need Xcode's optional Metal Toolchain, absent on the build box and on GitHub's
+  # macos-26 image); main is the 2.0 pre-release (removes getTerminal(), package traits).
+  # Declares a build-tool plugin, so every scripted xcodebuild passes -skipPackagePluginValidation.
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    exactVersion: 1.11.0
 targets:
   MeatPad:
     type: application
@@ -42,6 +49,8 @@ targets:
         product: LanguageServerProtocol
       - package: ProcessEnv
         product: ProcessEnv
+      - package: SwiftTerm
+        product: SwiftTerm
     preBuildScripts:
       # First phase of every build: keeps the generated project in step with the folder on
       # disk. Xcode resolves the target's file list from the project it loaded BEFORE any
