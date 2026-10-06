@@ -16,6 +16,12 @@ struct ProjectWindow: View {
         _searchViewModel = StateObject(wrappedValue: ProjectSearchViewModel(root: root))
     }
 
+    /// The command-output panel's content, but only when it belongs to this window.
+    private var panelOutputForWindow: PanelOutput? {
+        guard let output = executor.panelOutput, output.hostID == AnyHashable(ObjectIdentifier(viewModel)) else { return nil }
+        return output
+    }
+
     /// True while the executor's filter request targets this window's editor.
     private var filterSheetShown: Binding<Bool> {
         Binding(
@@ -72,7 +78,7 @@ struct ProjectWindow: View {
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         VStack(spacing: 0) {
-                            if let output = executor.panelOutput, output.hostID == AnyHashable(ObjectIdentifier(viewModel)) {
+                            if let output = panelOutputForWindow {
                                 OutputPanelView(
                                     output: output,
                                     onClose: { executor.panelOutput = nil },
@@ -80,7 +86,12 @@ struct ProjectWindow: View {
                                 )
                             }
                             if viewModel.terminalVisible {
-                                TerminalPanelView(project: viewModel, controller: viewModel.terminal, containerHeight: geometry.size.height)
+                                TerminalPanelView(
+                                    project: viewModel,
+                                    controller: viewModel.terminal,
+                                    // The output panel stacks above it and takes its own height first.
+                                    containerHeight: geometry.size.height - (panelOutputForWindow != nil ? OutputPanelView.height : 0)
+                                )
                             }
                         }
                     }

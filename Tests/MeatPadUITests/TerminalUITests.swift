@@ -12,6 +12,12 @@ final class TerminalUITests: FileTreeMenuUITestCase {
     private var window: XCUIElement { app.windows["Proj"] }
     private var terminal: XCUIElement { window.textViews["project-terminal"] }
     private var terminalText: String { (terminal.value as? String) ?? "" }
+    /// The project editor: the window's text view that isn't the terminal. Its accessibility value
+    /// is the document text. Re-resolved on every use, so after a tab change it is the new tab's editor.
+    private var editor: XCUIElement {
+        window.textViews.matching(NSPredicate(format: "NOT (identifier == %@)", "project-terminal")).firstMatch
+    }
+    private var editorText: String { (editor.value as? String) ?? "" }
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -32,6 +38,19 @@ final class TerminalUITests: FileTreeMenuUITestCase {
         toggleTerminal()
         XCTAssertTrue(terminal.waitForExistence(timeout: 10), "⌃` opened no terminal panel")
         waitForShell()
+    }
+
+    /// Opens `name` from the file tree and waits for its tab and editor. Retried: the first click
+    /// after launch is sometimes swallowed in the full suite run (the OpenIn test's first right-click
+    /// was too), which says nothing about the terminal.
+    private func openInEditor(_ name: String) {
+        let tab = app.staticTexts["tab-\(name)"].firstMatch
+        for _ in 0..<3 where !tab.exists {
+            row(name).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+            _ = tab.waitForExistence(timeout: 4)
+        }
+        XCTAssertTrue(tab.exists, "clicking \(name) opened no tab")
+        XCTAssertTrue(editor.waitForExistence(timeout: 10), "\(name)'s tab showed no editor")
     }
 
     /// A child shell exists AND has drawn something (its prompt) — typing before the prompt
@@ -103,16 +122,7 @@ final class TerminalUITests: FileTreeMenuUITestCase {
     func testToggleHidesAndRestoresPanelWithScrollback() throws {
         // An open editor with the caret in it, so hiding the terminal can be shown to hand focus
         // back there. (Before the terminal is shown, the window's only text view is the editor.)
-        // Retried: the first click of a run can be swallowed (seen right after a test that failed
-        // with a context menu open), which says nothing about the terminal.
-        let tab = app.staticTexts["tab-alpha.txt"].firstMatch
-        for _ in 0..<3 where !tab.exists {
-            row("alpha.txt").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
-            _ = tab.waitForExistence(timeout: 4)
-        }
-        XCTAssertTrue(tab.exists, "clicking alpha.txt opened no tab")
-        let editor = window.textViews.matching(NSPredicate(format: "NOT (identifier == %@)", "project-terminal")).firstMatch
-        XCTAssertTrue(editor.waitForExistence(timeout: 10), "alpha.txt's tab showed no editor")
+        openInEditor("alpha.txt")
         editor.click()
         showTerminalAndWaitForShell()
         run("printf 'mp_%s\\n' kept")
@@ -124,15 +134,33 @@ final class TerminalUITests: FileTreeMenuUITestCase {
         // Focus went back to the editor it came from: typing lands in the document, not on the
         // bare window (which beeps and drops it). The marker isn't in "contents of alpha.txt".
         app.typeText("Zq9")
-        eventually("typing after hiding the terminal didn't reach the editor") {
-            (editor.value as? String)?.contains("Zq9") == true
-        }
+        eventually("typing after hiding the terminal didn't reach the editor") { self.editorText.contains("Zq9") }
 
         toggleTerminal()
         XCTAssertTrue(terminal.waitForExistence(timeout: 5), "⌃` didn't bring the terminal back")
         eventually("the scrollback was lost across hide/show") { self.terminalText.contains("mp_kept") }
         // Same pgrep line (same pid): the shell survived, it was not killed and re-spawned.
         XCTAssertEqual(childShells(), shellBefore, "hiding the panel killed or replaced the shell")
+    }
+
+    /// A tab change builds a fresh editor (`.id(url)`), so the view focus came from is gone by the
+    /// time the terminal hides: focus must land on the *current* editor, not on the bare window.
+    func testHideAfterTabChangeFocusesCurrentEditor() throws {
+        openInEditor("alpha.txt")
+        editor.click()
+        showTerminalAndWaitForShell()
+
+        openInEditor("beta.txt")
+        eventually("beta.txt's editor never replaced alpha's") { self.editorText.hasPrefix("contents of beta.txt") }
+        terminal.click()   // the terminal holds focus again, so ⌃` hides it
+        toggleTerminal()
+        XCTAssertTrue(terminal.waitForNonExistence(timeout: 5), "⌃` with the terminal focused didn't hide it")
+
+        // The fresh editor's caret is at the start, so the marker lands in front of beta's text.
+        app.typeText("Zq9")
+        eventually("typing after the tab change and hide didn't reach beta's editor") {
+            self.editorText.contains("contents of beta.txt") && self.editorText.contains("Zq9")
+        }
     }
 
     func testOpenInMeatPadTerminalChangesDirectory() throws {

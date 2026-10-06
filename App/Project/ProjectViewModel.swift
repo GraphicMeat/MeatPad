@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import MeatPadKit
 import LanguageServerProtocol
+import STTextView
 
 /// Owns one project window's state: the live file tree (rescanned on any change under
 /// `root`), the open tabs, and the save/close/external-change flows over them. The file
@@ -275,18 +276,32 @@ final class ProjectViewModel: ObservableObject {
     }
 
     /// Hides the panel. If the terminal holds focus, focus returns to where it was before the
-    /// terminal took it (the editor, the file tree, …), else to the window's initial responder.
+    /// terminal took it (the editor, the file tree, …). When that view is gone — a tab change
+    /// builds a fresh editor, so the remembered one is deallocated — the current editor's text
+    /// view gets focus; SwiftUI windows have no `initialFirstResponder`, and leaving focus on
+    /// the bare window makes every key beep.
     func hideTerminal() {
         let previous = responderBeforeTerminal
         responderBeforeTerminal = nil
         if isInsideTerminal(window?.firstResponder) {
             if let view = previous as? NSView, view.window === window {
                 window?.makeFirstResponder(view)
+            } else if let contentView = window?.contentView, let editor = editorTextView(in: contentView) {
+                window?.makeFirstResponder(editor)
             } else {
-                window?.makeFirstResponder(window?.initialFirstResponder)
+                window?.makeFirstResponder(nil)
             }
         }
         terminalVisible = false
+    }
+
+    /// The first `STTextView` under `view` (there is one editor per window), depth first.
+    private func editorTextView(in view: NSView) -> NSView? {
+        if view is STTextView { return view }
+        for subview in view.subviews {
+            if let found = editorTextView(in: subview) { return found }
+        }
+        return nil
     }
 
     /// File tree ▸ Open in MeatPad Terminal: show, focus, and `cd` into `directory`. A shell that

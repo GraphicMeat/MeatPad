@@ -4,6 +4,9 @@ import SwiftUI
 /// scrollback (stderr in red), exit-code footer, close button. Fixed height so the
 /// editor above keeps concrete bounds (CodeEditor placement rule).
 struct OutputPanelView: View {
+    /// The panel's fixed height; `ProjectWindow` subtracts it when sizing the terminal panel.
+    static let height: CGFloat = 180
+
     let output: PanelOutput
     let onClose: () -> Void
     let onCancel: () -> Void
@@ -51,7 +54,7 @@ struct OutputPanelView: View {
                 .padding(.vertical, 6)
             }
         }
-        .frame(height: 180)
+        .frame(height: Self.height)
         .background(.ultraThinMaterial)
         .overlay(alignment: .top) { Divider().opacity(0.45) }
     }
