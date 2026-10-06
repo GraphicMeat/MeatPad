@@ -51,7 +51,7 @@ public struct FileTreeShortcut: Equatable, Sendable {
 /// order is menu order.
 public enum FileTreeAction: String, CaseIterable, Codable, Sendable {
     case newFile, newFolder
-    case revealInFinder, openInPreview, openInTerminal
+    case revealInFinder, openInPreview, openInTerminal, openInMeatPadTerminal
     case findInFolder
     case cut, copy, paste
     case copyPath, copyRelativePath
@@ -61,7 +61,7 @@ public enum FileTreeAction: String, CaseIterable, Codable, Sendable {
     var group: Int {
         switch self {
         case .newFile, .newFolder: 0
-        case .revealInFinder, .openInPreview, .openInTerminal: 1
+        case .revealInFinder, .openInPreview, .openInTerminal, .openInMeatPadTerminal: 1
         case .findInFolder: 2
         case .cut, .copy, .paste: 3
         case .copyPath, .copyRelativePath: 4
@@ -81,7 +81,7 @@ public enum FileTreeAction: String, CaseIterable, Codable, Sendable {
         case .copyRelativePath: FileTreeShortcut(key: "c", modifiers: [.option, .shift, .command])
         case .rename: FileTreeShortcut(key: "↩", modifiers: [])
         case .delete: FileTreeShortcut(key: "⌫", modifiers: .command)
-        case .newFile, .newFolder, .openInPreview, .openInTerminal: nil
+        case .newFile, .newFolder, .openInPreview, .openInTerminal, .openInMeatPadTerminal: nil
         }
     }
 }

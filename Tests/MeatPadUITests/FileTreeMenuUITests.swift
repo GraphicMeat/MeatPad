@@ -117,7 +117,9 @@ class FileTreeMenuUITestCase: XCTestCase {
         app.menus.containing(.menuItem, identifier: "Reveal in Finder").firstMatch
     }
 
-    /// Right-clicks `name` and waits for the menu.
+    /// Right-clicks `name` and waits for the menu. On the mini the first right-click on a row is
+    /// sometimes swallowed, and now and then a menu closes again right after it opens, so the
+    /// click is retried (up to 3 times) until a menu is open and has stayed open for a moment.
     @discardableResult
     func openMenu(on name: String) -> XCUIElement {
         openMenu(onElement: row(name), named: name)
@@ -127,9 +129,15 @@ class FileTreeMenuUITestCase: XCTestCase {
     @discardableResult
     func openMenu(onElement target: XCUIElement, named name: String = "the row") -> XCUIElement {
         XCTAssertTrue(target.waitForExistence(timeout: 10), "no row named \(name)")
-        // By coordinate: XCUITest can call a row "not hittable" (e.g. zoomed) though a real click lands.
-        target.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
         let menu = contextMenu
+        for _ in 0..<3 {
+            // By coordinate: XCUITest can call a row "not hittable" (e.g. zoomed) though a real click lands.
+            target.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
+            if menu.waitForExistence(timeout: 3) {
+                Thread.sleep(forTimeInterval: 0.5)
+                if menu.exists { return menu }
+            }
+        }
         XCTAssertTrue(menu.waitForExistence(timeout: 5), "right-clicking \(name) opened no menu")
         return menu
     }
@@ -143,8 +151,12 @@ class FileTreeMenuUITestCase: XCTestCase {
     }
 
     func choose(_ item: String, on name: String) {
-        let menu = openMenu(on: name)
-        let entry = menuItem(item, in: menu)
+        // A menu that closed between opening and the lookup is reopened (twice at most) before
+        // the assertion below calls the item missing.
+        var entry = menuItem(item, in: openMenu(on: name))
+        for _ in 0..<2 where !entry.waitForExistence(timeout: 3) {
+            entry = menuItem(item, in: openMenu(on: name))
+        }
         XCTAssertTrue(entry.waitForExistence(timeout: 5), "no “\(item)” in the menu for \(name)")
         entry.click()
     }
@@ -193,7 +205,7 @@ final class FileTreeMenuUITests: FileTreeMenuUITestCase {
         let menu = openMenu(on: "alpha.txt")
         XCTAssertEqual(menuLayout(menu), [
             "New File…", "New Folder…", "|",
-            "Reveal in Finder", "Open in Preview", "Open in Terminal", "|",
+            "Reveal in Finder", "Open in Preview", "Open in Terminal", "Open in MeatPad Terminal", "|",
             "Find in Folder…", "|",
             "Cut", "Copy", "Paste", "|",
             "Copy Path", "Copy Relative Path", "|",
@@ -445,7 +457,7 @@ final class FileTreeMenuConfigUITests: FileTreeMenuUITestCase {
         let menu = openMenu(on: "alpha.txt")
         XCTAssertEqual(menuLayout(menu), [
             "New File…", "New Folder…", "|",
-            "Reveal in Finder", "Open in Preview", "Open in Terminal", "|",
+            "Reveal in Finder", "Open in Preview", "Open in Terminal", "Open in MeatPad Terminal", "|",
             "Cut", "Copy", "Paste", "|",
             "Copy Path", "Copy Relative Path",
         ])

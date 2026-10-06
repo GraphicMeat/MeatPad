@@ -12,6 +12,7 @@ extension FileTreeAction {
         case .revealInFinder: String(localized: "Reveal in Finder")
         case .openInPreview: String(localized: "Open in Preview")
         case .openInTerminal: String(localized: "Open in Terminal")
+        case .openInMeatPadTerminal: String(localized: "Open in MeatPad Terminal")
         case .findInFolder: String(localized: "Find in Folder…")
         case .cut: String(localized: "Cut")
         case .copy: String(localized: "Copy")
@@ -30,6 +31,7 @@ extension FileTreeAction {
         case .revealInFinder: "folder"
         case .openInPreview: "eye"
         case .openInTerminal: "terminal"
+        case .openInMeatPadTerminal: "apple.terminal"
         case .findInFolder: "magnifyingglass"
         case .cut: "scissors"
         case .copy: "doc.on.doc"

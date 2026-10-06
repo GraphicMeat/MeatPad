@@ -47,6 +47,14 @@ final class FileTreeMenuConfigTests: XCTestCase {
         XCTAssertTrue(FileTreeAction.allCases.allSatisfy(config.isVisible))
     }
 
+    func testOpenInMeatPadTerminalHasNoDefaultShortcutAndCanBeHidden() {
+        var config = FileTreeMenuConfig()
+        XCTAssertNil(config.shortcut(for: .openInMeatPadTerminal))
+        config.setVisible(false, for: .openInMeatPadTerminal)
+        XCTAssertFalse(config.isVisible(.openInMeatPadTerminal))
+        XCTAssertTrue(config.isVisible(.openInTerminal))
+    }
+
     func testOverrideReplacesTheDefaultShortcut() {
         var config = FileTreeMenuConfig()
         config.setShortcut(FileTreeShortcut(display: "⌘D"), for: .copy)
@@ -122,7 +130,7 @@ final class FileTreeMenuModelTests: XCTestCase {
         let entries = FileTreeMenu.entries(for: context("src/main.swift", isDirectory: false), config: FileTreeMenuConfig())
         XCTAssertEqual(shape(entries), [
             "newFile", "newFolder", "-",
-            "revealInFinder", "openInPreview", "openInTerminal", "-",
+            "revealInFinder", "openInPreview", "openInTerminal", "openInMeatPadTerminal", "-",
             "findInFolder", "-",
             "cut", "copy", "paste", "-",
             "copyPath", "copyRelativePath", "-",
@@ -134,6 +142,7 @@ final class FileTreeMenuModelTests: XCTestCase {
         let entries = FileTreeMenu.entries(for: context("src", isDirectory: true), config: FileTreeMenuConfig())
         XCTAssertFalse(shape(entries).contains("openInPreview"))
         XCTAssertTrue(shape(entries).contains("openInTerminal"))
+        XCTAssertTrue(shape(entries).contains("openInMeatPadTerminal"))
     }
 
     func testHidingAWholeGroupDropsItsSeparatorToo() {

@@ -104,6 +104,7 @@ extension ProjectViewModel {
         case .revealInFinder: NSWorkspace.shared.activateFileViewerSelecting([url])
         case .openInPreview: openWith(bundleID: "com.apple.Preview", url: url)
         case .openInTerminal: openWith(bundleID: "com.apple.Terminal", url: directory)
+        case .openInMeatPadTerminal: showTerminal(changingDirectoryTo: directory)
         case .findInFolder:
             sidebarMode = .search
             if directory.standardizedFileURL == root.standardizedFileURL {
