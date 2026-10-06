@@ -61,11 +61,18 @@ final class TerminalUITests: FileTreeMenuUITestCase {
     private func childShells() -> [String] {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
         var size = 0
-        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+        // A failed read must not look like "no shells": the reap test would pass on it.
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else {
+            XCTFail("sysctl(KERN_PROC_ALL) size query failed: errno \(errno)")
+            return []
+        }
         // Headroom: processes can appear between the size query and the read.
         var procs = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride + 32)
         size = procs.count * MemoryLayout<kinfo_proc>.stride
-        guard sysctl(&mib, 3, &procs, &size, nil, 0) == 0 else { return [] }
+        guard sysctl(&mib, 3, &procs, &size, nil, 0) == 0 else {
+            XCTFail("sysctl(KERN_PROC_ALL) read failed: errno \(errno)")
+            return []
+        }
         let parent = appPID
         let shells: Set<String> = ["zsh", "bash", "fish", "sh", "-zsh", "-bash", "-fish"]
         return procs.prefix(size / MemoryLayout<kinfo_proc>.stride).compactMap { proc in
@@ -94,6 +101,19 @@ final class TerminalUITests: FileTreeMenuUITestCase {
     }
 
     func testToggleHidesAndRestoresPanelWithScrollback() throws {
+        // An open editor with the caret in it, so hiding the terminal can be shown to hand focus
+        // back there. (Before the terminal is shown, the window's only text view is the editor.)
+        // Retried: the first click of a run can be swallowed (seen right after a test that failed
+        // with a context menu open), which says nothing about the terminal.
+        let tab = app.staticTexts["tab-alpha.txt"].firstMatch
+        for _ in 0..<3 where !tab.exists {
+            row("alpha.txt").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+            _ = tab.waitForExistence(timeout: 4)
+        }
+        XCTAssertTrue(tab.exists, "clicking alpha.txt opened no tab")
+        let editor = window.textViews.matching(NSPredicate(format: "NOT (identifier == %@)", "project-terminal")).firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 10), "alpha.txt's tab showed no editor")
+        editor.click()
         showTerminalAndWaitForShell()
         run("printf 'mp_%s\\n' kept")
         eventually("the command's output never appeared") { self.terminalText.contains("mp_kept") }
@@ -101,8 +121,12 @@ final class TerminalUITests: FileTreeMenuUITestCase {
 
         toggleTerminal()
         XCTAssertTrue(terminal.waitForNonExistence(timeout: 5), "⌃` with the terminal focused didn't hide it")
-        // Focus went back to the window: typing lands somewhere harmless, not in a dead responder.
-        app.typeText("x")
+        // Focus went back to the editor it came from: typing lands in the document, not on the
+        // bare window (which beeps and drops it). The marker isn't in "contents of alpha.txt".
+        app.typeText("Zq9")
+        eventually("typing after hiding the terminal didn't reach the editor") {
+            (editor.value as? String)?.contains("Zq9") == true
+        }
 
         toggleTerminal()
         XCTAssertTrue(terminal.waitForExistence(timeout: 5), "⌃` didn't bring the terminal back")

@@ -21,7 +21,7 @@ final class ProjectTerminalController: NSObject, ObservableObject {
     private var startTask: Task<Void, Never>?
     /// Input handed to `send(_:)` before the shell was running; flushed right after launch.
     private var pendingInput: [String] = []
-    private var lastFont: NSFont?
+    private var lastFontSize: CGFloat?
     /// Colours last handed to the view; `applyAppearance` only assigns the ones that changed.
     private var lastBackground: NSColor?
     private var lastForeground: NSColor?
@@ -122,10 +122,10 @@ final class ProjectTerminalController: NSObject, ObservableObject {
             view.selectedTextBackgroundColor = selection
             lastSelection = selection
         }
-        if lastFont?.pointSize != fontSize {
-            let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-            view.font = font
-            lastFont = font
+        // Compared against the requested size, not `NSFont.pointSize`, which AppKit may round.
+        if lastFontSize != fontSize {
+            view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+            lastFontSize = fontSize
         }
     }
 

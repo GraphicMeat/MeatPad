@@ -63,31 +63,35 @@ struct ProjectWindow: View {
             .background(.ultraThinMaterial)
             .navigationSplitViewColumnWidth(min: 250, ideal: 280, max: 340)
         } detail: {
-            DocumentHostView(viewModel: viewModel)
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    if viewModel.hasTabs { TabBarView(viewModel: viewModel) }
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(spacing: 0) {
-                        if let output = executor.panelOutput, output.hostID == AnyHashable(ObjectIdentifier(viewModel)) {
-                            OutputPanelView(
-                                output: output,
-                                onClose: { executor.panelOutput = nil },
-                                onCancel: { executor.cancel() }
-                            )
-                        }
-                        if viewModel.terminalVisible {
-                            TerminalPanelView(project: viewModel, controller: viewModel.terminal)
+            // The GeometryReader sits outside the insets so it measures the whole detail area; the
+            // terminal panel clamps its height against it.
+            GeometryReader { geometry in
+                DocumentHostView(viewModel: viewModel)
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        if viewModel.hasTabs { TabBarView(viewModel: viewModel) }
+                    }
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        VStack(spacing: 0) {
+                            if let output = executor.panelOutput, output.hostID == AnyHashable(ObjectIdentifier(viewModel)) {
+                                OutputPanelView(
+                                    output: output,
+                                    onClose: { executor.panelOutput = nil },
+                                    onCancel: { executor.cancel() }
+                                )
+                            }
+                            if viewModel.terminalVisible {
+                                TerminalPanelView(project: viewModel, controller: viewModel.terminal, containerHeight: geometry.size.height)
+                            }
                         }
                     }
-                }
-                .overlay {
-                    if viewModel.quickOpenVisible {
-                        QuickOpenView(viewModel: viewModel)
-                    } else if viewModel.documentSymbolsVisible {
-                        DocumentSymbolsView(viewModel: viewModel)
+                    .overlay {
+                        if viewModel.quickOpenVisible {
+                            QuickOpenView(viewModel: viewModel)
+                        } else if viewModel.documentSymbolsVisible {
+                            DocumentSymbolsView(viewModel: viewModel)
+                        }
                     }
-                }
+            }
         }
         .sheet(isPresented: filterSheetShown) {
             if let context = executor.filterContext {

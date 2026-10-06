@@ -89,6 +89,9 @@ final class ProjectViewModel: ObservableObject {
     /// show+focus request is made.
     @Published var terminalFocusToken: UUID?
     private var terminalController: ProjectTerminalController?
+    /// Where keyboard focus was just before the terminal took it; hiding the terminal hands focus
+    /// back there, so typing keeps landing in the editor instead of beeping on the bare window.
+    private weak var responderBeforeTerminal: NSResponder?
     @Published private(set) var documentSymbolResults: [DocumentSymbols.Item] = []
     /// The file `documentSymbolResults` was queried for — the response carries no per-item
     /// URI (unlike `findReferences`'s `Location`s), so `select()` must jump using this rather
@@ -258,20 +261,30 @@ final class ProjectViewModel: ObservableObject {
     /// focused → focus (the VS Code rule).
     func toggleTerminal() {
         guard terminalVisible else {
+            rememberResponderBeforeTerminal()
             terminalVisible = true
             terminalFocusToken = UUID()
             return
         }
-        if window?.firstResponder === terminal.view {
+        if isInsideTerminal(window?.firstResponder) {
             hideTerminal()
         } else {
+            rememberResponderBeforeTerminal()
             terminalFocusToken = UUID()
         }
     }
 
+    /// Hides the panel. If the terminal holds focus, focus returns to where it was before the
+    /// terminal took it (the editor, the file tree, …), else to the window's initial responder.
     func hideTerminal() {
-        if window?.firstResponder === terminalIfLoaded?.view {
-            window?.makeFirstResponder(nil)
+        let previous = responderBeforeTerminal
+        responderBeforeTerminal = nil
+        if isInsideTerminal(window?.firstResponder) {
+            if let view = previous as? NSView, view.window === window {
+                window?.makeFirstResponder(view)
+            } else {
+                window?.makeFirstResponder(window?.initialFirstResponder)
+            }
         }
         terminalVisible = false
     }
@@ -279,10 +292,23 @@ final class ProjectViewModel: ObservableObject {
     /// File tree ▸ Open in MeatPad Terminal: show, focus, and `cd` into `directory`. A shell that
     /// has exited is restarted first; `send` queues the `cd` until the new shell runs.
     func showTerminal(changingDirectoryTo directory: URL) {
+        rememberResponderBeforeTerminal()
         terminalVisible = true
         terminalFocusToken = UUID()
         if terminal.exitCode != nil { terminal.restart() }
         terminal.send(TerminalLaunch.changeDirectoryCommand(to: directory))
+    }
+
+    /// The terminal view or anything inside it — SwiftTerm's ⌘F find bar moves focus to a field
+    /// editor that is a subview of the terminal view, so `firstResponder === view` would miss it.
+    private func isInsideTerminal(_ responder: NSResponder?) -> Bool {
+        guard let terminalView = terminalController?.view else { return false }
+        return (responder as? NSView)?.isDescendant(of: terminalView) == true
+    }
+
+    private func rememberResponderBeforeTerminal() {
+        let current = window?.firstResponder
+        if !isInsideTerminal(current) { responderBeforeTerminal = current }
     }
 
     func open(file: URL) {
