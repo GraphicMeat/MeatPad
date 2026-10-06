@@ -76,7 +76,8 @@ final class TrackingMenu: NSMenu, NSMenuDelegate {
 /// has no second line under an item and Copy Path has to show what it copies.
 @MainActor
 enum FileTreeMenuBuilder {
-    static func menu(for entries: [FileTreeMenuEntry], showIcons: Bool,
+    /// `isRoot`: the menu is for the project folder itself, so Find in Folder is "Find in Project".
+    static func menu(for entries: [FileTreeMenuEntry], showIcons: Bool, isRoot: Bool = false,
                      perform: @escaping (FileTreeAction) -> Void) -> TrackingMenu {
         let menu = TrackingMenu(title: "")
         menu.autoenablesItems = false
@@ -85,7 +86,7 @@ enum FileTreeMenuBuilder {
             case .separator:
                 menu.addItem(.separator())
             case .item(let item):
-                menu.addItem(menuItem(for: item, showIcons: showIcons, perform: perform))
+                menu.addItem(menuItem(for: item, showIcons: showIcons, isRoot: isRoot, perform: perform))
             }
         }
         return menu
@@ -102,16 +103,17 @@ enum FileTreeMenuBuilder {
         return item
     }
 
-    private static func menuItem(for item: FileTreeMenuItem, showIcons: Bool,
+    private static func menuItem(for item: FileTreeMenuItem, showIcons: Bool, isRoot: Bool,
                                  perform: @escaping (FileTreeAction) -> Void) -> NSMenuItem {
         let action = item.action
-        let menuItem = ActionMenuItem(title: action.title) { perform(action) }
+        let title = isRoot && action == .findInFolder ? String(localized: "Find in Project…") : action.title
+        let menuItem = ActionMenuItem(title: title) { perform(action) }
         menuItem.isEnabled = item.isEnabled
         if showIcons {
             menuItem.image = NSImage(systemSymbolName: action.symbolName, accessibilityDescription: nil)
         }
         if let subtitle = item.subtitle {
-            applySubtitle(elided(subtitle), title: action.title, to: menuItem)
+            applySubtitle(elided(subtitle), title: title, to: menuItem)
         }
         if let shortcut = item.shortcut {
             menuItem.keyEquivalent = keyEquivalent(for: shortcut.key)

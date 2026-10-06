@@ -158,6 +158,9 @@ public struct FileTreeMenuContext: Sendable {
         self.root = root
         self.clipboardHasFiles = clipboardHasFiles
     }
+
+    /// The menu is for the project folder itself — the tree's top row.
+    public var isRoot: Bool { target.standardizedFileURL.path == root.standardizedFileURL.path }
 }
 
 public struct FileTreeMenuItem: Equatable, Sendable {
@@ -181,6 +184,7 @@ public enum FileTreeMenu {
         var lastGroup: Int?
         for action in FileTreeAction.allCases where config.isVisible(action) {
             if action == .openInPreview && context.isDirectory { continue }
+            if context.isRoot && rootOmits.contains(action) { continue }
             if let lastGroup, lastGroup != action.group { entries.append(.separator) }
             lastGroup = action.group
             entries.append(.item(FileTreeMenuItem(
@@ -192,6 +196,10 @@ public enum FileTreeMenu {
         }
         return entries
     }
+
+    /// Nothing on the project folder itself can be cut, copied, renamed or deleted, and its
+    /// relative path would be empty.
+    private static let rootOmits: Set<FileTreeAction> = [.cut, .copy, .rename, .delete, .copyRelativePath]
 
     private static func subtitle(for action: FileTreeAction, context: FileTreeMenuContext) -> String? {
         switch action {

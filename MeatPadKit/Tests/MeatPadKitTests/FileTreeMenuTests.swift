@@ -190,4 +190,44 @@ final class FileTreeMenuModelTests: XCTestCase {
         XCTAssertNil(items.first { $0.action == .delete }?.shortcut)
         XCTAssertEqual(items.first { $0.action == .cut }?.shortcut?.display, "⌘X")
     }
+
+    // MARK: - The project root
+
+    /// The tree's top row is the project folder itself.
+    private func rootContext(target: URL? = nil, clipboard: Bool = false) -> FileTreeMenuContext {
+        FileTreeMenuContext(target: target ?? root, isDirectory: true, root: root, clipboardHasFiles: clipboard)
+    }
+
+    func testRootMenuOmitsCutCopyRenameDeleteAndRelativePath() {
+        let names = shape(FileTreeMenu.entries(for: rootContext(), config: FileTreeMenuConfig()))
+        for omitted in ["cut", "copy", "rename", "delete", "copyRelativePath"] {
+            XCTAssertFalse(names.contains(omitted), "the root's menu offers \(omitted): \(names)")
+        }
+    }
+
+    func testRootMenuKeepsNewRevealTerminalFindPasteAndCopyPath() {
+        let names = shape(FileTreeMenu.entries(for: rootContext(), config: FileTreeMenuConfig()))
+        XCTAssertEqual(names, [
+            "newFile", "newFolder", "-",
+            "revealInFinder", "openInTerminal", "-",
+            "findInFolder", "-",
+            "paste", "-",
+            "copyPath",
+        ])
+    }
+
+    func testRootIsDetectedByStandardizedPath() {
+        let dotted = URL(fileURLWithPath: "/work/./proj", isDirectory: true)
+        XCTAssertNotEqual(dotted.path, root.path, "the case must not be trivially equal")
+        let names = shape(FileTreeMenu.entries(for: rootContext(target: dotted), config: FileTreeMenuConfig()))
+        XCTAssertFalse(names.contains("rename"), "/work/./proj wasn't recognised as the root: \(names)")
+        XCTAssertFalse(names.contains("delete"), "/work/./proj wasn't recognised as the root: \(names)")
+        // A sibling whose path merely starts with the root's is not the root.
+        let sibling = URL(fileURLWithPath: "/work/project", isDirectory: true)
+        let siblingNames = shape(FileTreeMenu.entries(for: rootContext(target: sibling), config: FileTreeMenuConfig()))
+        XCTAssertTrue(siblingNames.contains("rename"), "a sibling folder lost Rename: \(siblingNames)")
+        // An ordinary folder keeps everything.
+        XCTAssertTrue(shape(FileTreeMenu.entries(for: context("src", isDirectory: true), config: FileTreeMenuConfig()))
+            .contains("delete"))
+    }
 }

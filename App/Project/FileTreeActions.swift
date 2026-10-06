@@ -84,7 +84,8 @@ extension ProjectViewModel {
             clipboardHasFiles: FileTreeClipboard.hasFiles
         )
         let entries = FileTreeMenu.entries(for: context, config: settings)
-        let menu = FileTreeMenuBuilder.menu(for: entries, showIcons: settings.showIcons) { [weak self] action in
+        let menu = FileTreeMenuBuilder.menu(for: entries, showIcons: settings.showIcons,
+                                            isRoot: context.isRoot) { [weak self] action in
             self?.perform(action, on: node, search: search)
         }
         // The row is lit while its menu is open, so it is clear which item the actions apply to.
@@ -104,9 +105,13 @@ extension ProjectViewModel {
         case .openInPreview: openWith(bundleID: "com.apple.Preview", url: url)
         case .openInTerminal: openWith(bundleID: "com.apple.Terminal", url: directory)
         case .findInFolder:
-            search.scopeFolder = directory.standardizedFileURL == root.standardizedFileURL ? nil : directory
             sidebarMode = .search
-            search.requestFocus()
+            if directory.standardizedFileURL == root.standardizedFileURL {
+                search.findInProject()
+            } else {
+                search.scopeFolder = directory
+                search.requestFocus()
+            }
         case .cut: FileTreeClipboard.write([url], cut: true)
         case .copy: FileTreeClipboard.write([url], cut: false)
         case .paste: paste(into: directory)

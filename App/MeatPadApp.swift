@@ -454,7 +454,7 @@ private struct ProjectSearchCommand: View {
     var body: some View {
         Button("Find in Project…") {
             project?.sidebarMode = .search
-            search?.requestFocus()
+            search?.findInProject()
         }
         .keyboardShortcut("f", modifiers: [.command, .shift])
         .disabled(project == nil)

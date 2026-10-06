@@ -129,6 +129,9 @@ final class ProjectViewModel: ObservableObject {
         // fills in the full tree off the main thread — opening a big repo no longer
         // blocks the window from appearing.
         self.tree = ProjectScanner.scanShallow(root: root)
+        // The project folder is the tree's top row; it starts unfolded. Kept in the set, so a
+        // rescan (which replaces the tree) leaves it the way the user left it.
+        expandedFolders = [root]
         self.watcher = DirectoryWatcher(root: root) { [weak self] in
             self?.rescan()
         }

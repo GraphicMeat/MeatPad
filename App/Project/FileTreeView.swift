@@ -3,8 +3,10 @@ import AppKit
 import MeatPadKit
 
 /// Sidebar file tree: recursive disclosure over `TreeNode`, folder/doc SF Symbols,
-/// single click on a file opens it as a tab. Right-click opens the VS Code-style menu
-/// (new, reveal, find, cut/copy/paste, copy path, rename, delete), shaped by Settings ▸ File Tree.
+/// single click on a file opens it as a tab. The project folder itself is the top row (as in
+/// VS Code's Explorer), unfolded at first, and folds the whole tree like any folder.
+/// Right-click opens the VS Code-style menu (new, reveal, find, cut/copy/paste, copy path,
+/// rename, delete), shaped by Settings ▸ File Tree.
 struct FileTreeView: View {
     @ObservedObject var viewModel: ProjectViewModel
     let search: ProjectSearchViewModel
@@ -12,9 +14,7 @@ struct FileTreeView: View {
 
     var body: some View {
         List {
-            ForEach(viewModel.tree.children ?? [], id: \.id) { node in
-                nodeView(node)
-            }
+            nodeView(viewModel.tree, isRoot: true)
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
@@ -23,14 +23,14 @@ struct FileTreeView: View {
     /// A file is a row; a folder is a disclosure group whose open/closed state lives on the view
     /// model, so a click on the row can fold it as well as the chevron.
     @ViewBuilder
-    private func nodeView(_ node: TreeNode) -> some View {
+    private func nodeView(_ node: TreeNode, isRoot: Bool = false) -> some View {
         if node.isDirectory {
             DisclosureGroup(isExpanded: expansion(of: node.url)) {
                 ForEach(node.children ?? [], id: \.id) { child in
                     AnyView(nodeView(child))
                 }
             } label: {
-                row(for: node)
+                row(for: node, isRoot: isRoot)
             }
         } else {
             row(for: node)
@@ -47,7 +47,7 @@ struct FileTreeView: View {
     }
 
     @ViewBuilder
-    private func row(for node: TreeNode) -> some View {
+    private func row(for node: TreeNode, isRoot: Bool = false) -> some View {
         let isMenuTarget = viewModel.contextMenuTarget == node.url
         let isSelected = viewModel.selectedTreeItem == node.url
         HStack(spacing: 8) {
@@ -65,8 +65,10 @@ struct FileTreeView: View {
                 }
             Text(node.name).lineLimit(1)
                 // Explicit: a sidebar List imposes its own row font, so the window's environment font alone doesn't reach it.
-                .zoomFont(.body)
+                .zoomFont(.body, weight: isRoot ? .semibold : nil)
                 .accessibilityValue(isMenuTarget ? Text("Context menu open") : (isSelected ? Text("Selected") : Text(verbatim: "")))
+                // On the name, not the row: the window carries the folder's name too.
+                .accessibilityIdentifier(isRoot ? "file-tree-root" : "")
         }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())

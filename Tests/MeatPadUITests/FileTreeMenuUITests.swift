@@ -90,6 +90,28 @@ class FileTreeMenuUITestCase: XCTestCase {
             .matching(NSPredicate(format: "label == %@", name)).firstMatch
     }
 
+    /// A folder's disclosure triangle: the one level with its row. Not `firstMatch`: the project's
+    /// root row has one too, and it comes first.
+    func chevron(_ name: String) -> XCUIElement { chevron(atY: row(name).frame.midY) }
+
+    func chevron(atY y: CGFloat) -> XCUIElement {
+        app.windows["Proj"].disclosureTriangles.allElementsBoundByIndex
+            .min { abs($0.frame.midY - y) < abs($1.frame.midY - y) }
+            ?? app.windows["Proj"].disclosureTriangles.firstMatch
+    }
+
+    /// A folder's icon: 8 points past the right edge of its chevron, at the row's height — on the
+    /// icon and clear of the chevron's own hit area, so a click here that folds the folder proves
+    /// the icon does it. (A fixed distance from the sidebar's edge lands on the chevron's edge at
+    /// the top level and inside it one level down.)
+    func folderIcon(atY y: CGFloat) -> XCUICoordinate {
+        let window = app.windows["Proj"].frame
+        let triangle = chevron(atY: y).frame
+        XCTAssertGreaterThan(triangle.width, 0, "no chevron level with y = \(y)")
+        return app.windows["Proj"].coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: triangle.maxX + 8 - window.minX, dy: y - window.minY))
+    }
+
     /// The right-click menu — not the menu bar's. `app.menus.firstMatch` is the Apple menu.
     var contextMenu: XCUIElement {
         app.menus.containing(.menuItem, identifier: "Reveal in Finder").firstMatch
@@ -98,7 +120,12 @@ class FileTreeMenuUITestCase: XCTestCase {
     /// Right-clicks `name` and waits for the menu.
     @discardableResult
     func openMenu(on name: String) -> XCUIElement {
-        let target = row(name)
+        openMenu(onElement: row(name), named: name)
+    }
+
+    /// Right-clicks a row found some other way than by its name (the root, by identifier).
+    @discardableResult
+    func openMenu(onElement target: XCUIElement, named name: String = "the row") -> XCUIElement {
         XCTAssertTrue(target.waitForExistence(timeout: 10), "no row named \(name)")
         // By coordinate: XCUITest can call a row "not hittable" (e.g. zoomed) though a real click lands.
         target.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
@@ -214,9 +241,7 @@ final class FileTreeMenuUITests: FileTreeMenuUITestCase {
             .withOffset(CGVector(dx: outline.minX + dx - window.minX, dy: row.midY - window.minY))
     }
 
-    /// Where a folder's icon is: past the chevron, about 27 points in from the row's left edge
-    /// (checked against a screenshot of the sidebar).
-    private func folderIcon(_ name: String) -> XCUICoordinate { pointOnRow(name, fromLeft: 27) }
+    private func folderIcon(_ name: String) -> XCUICoordinate { folderIcon(atY: row(name).frame.midY) }
 
     /// Clicking a folder's icon folds and unfolds it, like its chevron.
     func testClickingAFolderIconUnfoldsAndFoldsIt() throws {
@@ -244,7 +269,7 @@ final class FileTreeMenuUITests: FileTreeMenuUITestCase {
     }
 
     func testTheChevronStillUnfoldsAndFoldsTheFolder() throws {
-        let triangle = app.windows["Proj"].disclosureTriangles.firstMatch
+        let triangle = chevron("sub")
         XCTAssertTrue(triangle.waitForExistence(timeout: 10), "no chevron on the folder row")
         triangle.click()
         XCTAssertTrue(row("inner.txt").waitForExistence(timeout: 5), "the chevron didn't unfold the folder")
@@ -312,7 +337,7 @@ final class FileTreeMenuUITests: FileTreeMenuUITestCase {
 
     func testCopyRelativePathOfAnItemInAFolderIsNested() throws {
         // Expand the folder via its disclosure triangle — a click on the name would not.
-        let triangle = app.windows["Proj"].disclosureTriangles.firstMatch
+        let triangle = chevron("sub")
         XCTAssertTrue(triangle.waitForExistence(timeout: 10), "no disclosure triangle for the folder")
         triangle.click()
         XCTAssertTrue(row("inner.txt").waitForExistence(timeout: 5), "the folder didn't expand")

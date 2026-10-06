@@ -45,6 +45,13 @@ final class ProjectSearchViewModel: ObservableObject {
         focusToken = UUID()
     }
 
+    /// Find in Project (⌘⇧F, or the tree's root row): the whole project, whatever folder an
+    /// earlier Find in Folder left the search scoped to.
+    func findInProject() {
+        if scopeFolder != nil { scopeFolder = nil }
+        requestFocus()
+    }
+
     /// `results`, grouped by file and kept in the engine's own file/line sort order (no
     /// re-sorting needed — just a linear grouping pass).
     var groupedResults: [FileMatchGroup] {
