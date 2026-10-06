@@ -31,7 +31,16 @@ final class TerminalUITests: FileTreeMenuUITestCase {
     private func showTerminalAndWaitForShell() {
         toggleTerminal()
         XCTAssertTrue(terminal.waitForExistence(timeout: 10), "⌃` opened no terminal panel")
+        waitForShell()
+    }
+
+    /// A child shell exists AND has drawn something (its prompt) — typing before the prompt
+    /// races shell start-up.
+    private func waitForShell() {
         eventually("the shell never started (no child shell of the app)", timeout: 20) { !childShells().isEmpty }
+        eventually("the shell drew no prompt", timeout: 20) {
+            !self.terminalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     /// Runs `command` in the focused terminal.
@@ -81,33 +90,37 @@ final class TerminalUITests: FileTreeMenuUITestCase {
         showTerminalAndWaitForShell()
         run("printf 'mp_%s\\n' kept")
         eventually("the command's output never appeared") { self.terminalText.contains("mp_kept") }
+        let shellBefore = childShells()
 
         toggleTerminal()
         XCTAssertTrue(terminal.waitForNonExistence(timeout: 5), "⌃` with the terminal focused didn't hide it")
         // Focus went back to the window: typing lands somewhere harmless, not in a dead responder.
         app.typeText("x")
-        XCTAssertFalse(childShells().isEmpty, "hiding the panel killed the shell")
 
         toggleTerminal()
         XCTAssertTrue(terminal.waitForExistence(timeout: 5), "⌃` didn't bring the terminal back")
         eventually("the scrollback was lost across hide/show") { self.terminalText.contains("mp_kept") }
+        // Same pgrep line (same pid): the shell survived, it was not killed and re-spawned.
+        XCTAssertEqual(childShells(), shellBefore, "hiding the panel killed or replaced the shell")
     }
 
     func testOpenInMeatPadTerminalChangesDirectory() throws {
         choose("Open in MeatPad Terminal", on: "it's here")
         XCTAssertTrue(terminal.waitForExistence(timeout: 10), "the file-tree action opened no terminal")
-        eventually("the shell never started", timeout: 20) { !childShells().isEmpty }
+        waitForShell()
 
-        run("printf 'mp_%s\\n' \"$PWD\"")
-        eventually("the shell isn't in the chosen folder") { self.terminalText.contains("mp_" + self.project.appendingPathComponent("it's here").path) }
+        // Basename only: the full sandbox path is ~140 characters and would soft-wrap across
+        // terminal rows, which the accessibility value separates with newlines.
+        run("printf 'mp_%s\\n' \"${PWD##*/}\"")
+        eventually("the shell isn't in the chosen folder") { self.terminalText.contains("mp_it's here") }
     }
 
     func testExitThenReturnRestartsShell() throws {
         showTerminalAndWaitForShell()
-        run("exit")
+        run("exit 0")
         eventually("the exit line never appeared") { self.terminalText.contains("[exited 0]") }
         eventually("the shell is still alive after exit") { self.childShells().isEmpty }
-        XCTAssertTrue(window.buttons["project-terminal-restart"].exists, "no restart button after exit")
+        XCTAssertTrue(window.buttons["project-terminal-restart"].waitForExistence(timeout: 5), "no restart button after exit")
 
         app.typeKey(.return, modifierFlags: [])
         eventually("⏎ didn't restart the shell", timeout: 20) { !self.childShells().isEmpty }
