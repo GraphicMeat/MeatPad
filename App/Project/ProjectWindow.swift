@@ -68,12 +68,17 @@ struct ProjectWindow: View {
                     if viewModel.hasTabs { TabBarView(viewModel: viewModel) }
                 }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if let output = executor.panelOutput, output.hostID == AnyHashable(ObjectIdentifier(viewModel)) {
-                        OutputPanelView(
-                            output: output,
-                            onClose: { executor.panelOutput = nil },
-                            onCancel: { executor.cancel() }
-                        )
+                    VStack(spacing: 0) {
+                        if let output = executor.panelOutput, output.hostID == AnyHashable(ObjectIdentifier(viewModel)) {
+                            OutputPanelView(
+                                output: output,
+                                onClose: { executor.panelOutput = nil },
+                                onCancel: { executor.cancel() }
+                            )
+                        }
+                        if viewModel.terminalVisible {
+                            TerminalPanelView(project: viewModel, controller: viewModel.terminal)
+                        }
                     }
                 }
                 .overlay {

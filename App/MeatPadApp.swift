@@ -76,6 +76,8 @@ struct MeatPadApp: App {
                 SidebarSortCommands()
                 Divider()
                 ZoomCommands()
+                Divider()
+                TerminalCommand()
             }
             // Route Cmd+F / Cmd+G through the responder chain to STTextView's
             // NSTextFinder integration. It reads the action from the sender's tag.
@@ -170,6 +172,19 @@ private struct ZoomCommands: View {
         Button("Actual Size") { zoom.reset() }
             .keyboardShortcut("0", modifiers: .command)
             .disabled(project == nil || zoom.scale == UIScale.actualSize)
+    }
+}
+
+/// View ▸ Terminal, ⌃` — VS Code's binding. Grepped every `.keyboardShortcut` in this file first:
+/// nothing uses the backtick. Toggles (show+focus / hide when focused / focus otherwise) via the
+/// focused project's `toggleTerminal()`; disabled without a project window in front.
+private struct TerminalCommand: View {
+    @FocusedValue(\.projectViewModel) private var project
+
+    var body: some View {
+        Button("Terminal") { project?.toggleTerminal() }
+            .keyboardShortcut("`", modifiers: .control)
+            .disabled(project == nil)
     }
 }
 

@@ -82,6 +82,13 @@ final class ProjectViewModel: ObservableObject {
     @Published private(set) var referencesResults: [FileMatchGroup] = []
     /// Document Symbols (Task 5) quick-open-style overlay, parallel to `quickOpenVisible`.
     @Published var documentSymbolsVisible = false
+    /// The terminal panel (Task: in-app terminal). Session-only; not restored across launches.
+    @Published var terminalVisible = false
+    /// Bumped whenever the terminal should take keyboard focus. `TerminalHostView` acts on the
+    /// change once its NSView is in the window — the panel may not be mounted yet when a
+    /// show+focus request is made.
+    @Published var terminalFocusToken: UUID?
+    private var terminalController: ProjectTerminalController?
     @Published private(set) var documentSymbolResults: [DocumentSymbols.Item] = []
     /// The file `documentSymbolResults` was queried for — the response carries no per-item
     /// URI (unlike `findReferences`'s `Location`s), so `select()` must jump using this rather
@@ -231,6 +238,51 @@ final class ProjectViewModel: ObservableObject {
         let closeGuard = ProjectWindowCloseGuard(viewModel: self, wrapping: window.delegate)
         self.closeGuard = closeGuard
         window.delegate = closeGuard
+    }
+
+    // MARK: - Terminal panel
+
+    /// The window's shell controller, created on first use so windows that never open the
+    /// panel never fork a shell.
+    var terminal: ProjectTerminalController {
+        if let terminalController { return terminalController }
+        let controller = ProjectTerminalController(root: root)
+        terminalController = controller
+        return controller
+    }
+
+    /// The controller if the panel was ever shown — for teardown paths that must not create one.
+    var terminalIfLoaded: ProjectTerminalController? { terminalController }
+
+    /// ⌃` / View ▸ Terminal: hidden → show and focus; shown and focused → hide; shown but not
+    /// focused → focus (the VS Code rule).
+    func toggleTerminal() {
+        guard terminalVisible else {
+            terminalVisible = true
+            terminalFocusToken = UUID()
+            return
+        }
+        if window?.firstResponder === terminal.view {
+            hideTerminal()
+        } else {
+            terminalFocusToken = UUID()
+        }
+    }
+
+    func hideTerminal() {
+        if window?.firstResponder === terminalIfLoaded?.view {
+            window?.makeFirstResponder(nil)
+        }
+        terminalVisible = false
+    }
+
+    /// File tree ▸ Open in MeatPad Terminal: show, focus, and `cd` into `directory`. A shell that
+    /// has exited is restarted first; `send` queues the `cd` until the new shell runs.
+    func showTerminal(changingDirectoryTo directory: URL) {
+        terminalVisible = true
+        terminalFocusToken = UUID()
+        if terminal.exitCode != nil { terminal.restart() }
+        terminal.send(TerminalLaunch.changeDirectoryCommand(to: directory))
     }
 
     func open(file: URL) {

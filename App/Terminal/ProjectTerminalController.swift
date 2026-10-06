@@ -69,9 +69,7 @@ final class ProjectTerminalController: NSObject, ObservableObject {
     /// after this call; that only feeds an exit line into a view whose window is closing, which
     /// is harmless. The loop escalates to SIGKILL after 5 s, always after a fresh failed check.
     func terminate() {
-        startTask?.cancel()
-        startTask = nil
-        guard isRunning else { return }
+        guard isRunning else { startTask?.cancel(); startTask = nil; return }
         let pid = view.process.shellPid
         view.terminate()
         guard pid > 0 else { return }

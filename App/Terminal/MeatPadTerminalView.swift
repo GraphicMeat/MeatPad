@@ -20,6 +20,16 @@ final class MeatPadTerminalView: LocalProcessTerminalView {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
+    /// SwiftUI sets the frame to 0×0 when it unmounts the view (the panel is hidden) and again
+    /// before the first layout. SwiftTerm resizes its grid on every frame change, so a 0×0 frame
+    /// shrinks it to 2×1 and truncates every line: the scrollback would not survive hide/show.
+    /// An empty frame is ignored; the view keeps its last real size until SwiftUI lays it out
+    /// again at the panel's size.
+    override func setFrameSize(_ newSize: NSSize) {
+        guard newSize.width >= 1, newSize.height >= 1 else { return }
+        super.setFrameSize(newSize)
+    }
+
     /// The whole active buffer as text, scrollback included, one line per row. Read on the main
     /// thread by accessibility clients; never called from a terminal delegate callback.
     override func accessibilityValue() -> Any? {
