@@ -17,11 +17,11 @@ struct DocumentHostView: View {
                 AmbientGlassBackground()
                 VStack(spacing: 14) {
                     Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 32, weight: .light))
+                        .zoomFont(size: 32, weight: .light)
                         .foregroundStyle(MeatPadGlass.violet.gradient)
                     VStack(spacing: 4) {
                         Text(viewModel.root.lastPathComponent)
-                            .font(.title2.weight(.semibold))
+                            .zoomFont(.title2, weight: .semibold)
                         Text("Choose a file from the sidebar or press ⌘T")
                             .foregroundStyle(.secondary)
                     }
@@ -56,6 +56,9 @@ private struct EditorPane: View {
     let url: URL
     @ObservedObject var project: ProjectViewModel
     @ObservedObject private var appModel = AppModel.shared
+    @ObservedObject private var zoom = ProjectZoom.shared
+    // Settings ▸ General ▸ Line height in code.
+    @AppStorage(CodeEditor.codeLineSpacingKey) private var codeLineSpacing = CodeEditor.codeLineSpacingDefault
     @StateObject private var snippetController = SnippetController(library: AppModel.shared.snippetLibrary)
     @State private var cursor = 0
 
@@ -64,8 +67,9 @@ private struct EditorPane: View {
             text: Binding(get: { editor.text }, set: { editor.text = $0 }),
             language: editor.language,
             theme: appModel.theme,
-            fontSize: appModel.fontSize,
+            fontSize: appModel.fontSize * CGFloat(zoom.scale),
             softWrap: appModel.softWrap,
+            lineSpacing: CGFloat(codeLineSpacing),
             reveal: project.revealTarget,
             onRevealApplied: { project.revealConsumed($0) },
             snippetController: snippetController,

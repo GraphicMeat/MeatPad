@@ -57,7 +57,7 @@ struct EditorStatusBar: View {
             Text("\(counts.characters) chars")
             Text("line \(DocumentStats.wordCount(of: line)) words \(line.count) chars")
         }
-        .font(.caption)
+        .zoomFont(.caption)
         .monospacedDigit()
         .foregroundStyle(.secondary)
         .padding(.horizontal, 10)

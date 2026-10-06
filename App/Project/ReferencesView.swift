@@ -20,11 +20,11 @@ struct ReferencesView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("References", systemImage: "arrow.triangle.branch")
-                    .font(.headline)
+                    .zoomFont(.headline)
                 Spacer()
                 if count > 0 {
                     Text("\(count)")
-                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .zoomFont(.caption, weight: .semibold, monospacedDigit: true)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
@@ -35,10 +35,10 @@ struct ReferencesView: View {
             if results.isEmpty {
                 VStack(spacing: 7) {
                     Image(systemName: "arrow.triangle.branch")
-                        .font(.title3)
+                        .zoomFont(.title3)
                         .foregroundStyle(.tertiary)
                     Text("No references found")
-                        .font(.caption)
+                        .zoomFont(.caption)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
@@ -52,7 +52,7 @@ struct ReferencesView: View {
                             }
                         } label: {
                             Text("\(group.file.lastPathComponent) (\(group.matches.count))")
-                                .font(.callout.weight(.medium))
+                                .zoomFont(.callout, weight: .medium)
                                 .lineLimit(1)
                         }
                     }
@@ -78,11 +78,11 @@ struct ReferencesView: View {
     private func row(_ match: SearchMatch) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Text("\(match.lineNumber)")
-                .font(.caption.monospacedDigit())
+                .zoomFont(.caption, monospacedDigit: true)
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 22, alignment: .trailing)
             Text(match.lineText.trimmingCharacters(in: .whitespaces))
-                .font(.system(size: 11, design: .monospaced))
+                .zoomFont(size: 11, design: .monospaced)
                 .lineLimit(1)
         }
         .contentShape(Rectangle())

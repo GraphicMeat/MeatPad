@@ -26,10 +26,10 @@ struct DocumentSymbolsView: View {
                     .foregroundStyle(MeatPadGlass.violet.gradient)
                 TextField("Search symbols", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 16, weight: .medium))
+                    .zoomFont(size: 16, weight: .medium)
                     .focused($focused)
                 Text("⇧⌘O")
-                    .font(.caption.monospaced())
+                    .zoomFont(.caption, design: .monospaced)
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
@@ -96,7 +96,7 @@ struct DocumentSymbolsView: View {
                 .lineLimit(1)
             if let detail = item.detail, !detail.isEmpty {
                 Text(detail)
-                    .font(.caption)
+                    .zoomFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }

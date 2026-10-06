@@ -74,6 +74,8 @@ struct MeatPadApp: App {
                 ProjectSearchCommand()
                 Divider()
                 SidebarSortCommands()
+                Divider()
+                ZoomCommands()
             }
             // Route Cmd+F / Cmd+G through the responder chain to STTextView's
             // NSTextFinder integration. It reads the action from the sender's tag.
@@ -149,6 +151,25 @@ struct MeatPadApp: App {
         let item = NSMenuItem()
         item.tag = action.rawValue
         NSApp.sendAction(#selector(STTextView.performTextFinderAction(_:)), to: nil, from: item)
+    }
+}
+
+/// View ▸ Zoom In / Zoom Out / Actual Size for project windows. Enabled only while a project
+/// window is focused, so ⌘= and ⌘− stay free for board presentation mode and other windows.
+private struct ZoomCommands: View {
+    @FocusedValue(\.projectViewModel) private var project
+    @ObservedObject private var zoom = ProjectZoom.shared
+
+    var body: some View {
+        Button("Zoom In") { zoom.zoomIn() }
+            .keyboardShortcut("=", modifiers: .command)
+            .disabled(project == nil || zoom.scale >= UIScale.maximum)
+        Button("Zoom Out") { zoom.zoomOut() }
+            .keyboardShortcut("-", modifiers: .command)
+            .disabled(project == nil || zoom.scale <= UIScale.minimum)
+        Button("Actual Size") { zoom.reset() }
+            .keyboardShortcut("0", modifiers: .command)
+            .disabled(project == nil || zoom.scale == UIScale.actualSize)
     }
 }
 
@@ -638,6 +659,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Start the login-shell lookup now, off the main thread, so the first project window
+        // doesn't wait on it (see `UserShellEnvironment`).
+        UserShellEnvironment.warm()
+        ProjectZoomShortcuts.install()
+
         let center = NotificationCenter.default
         activationPolicyObservers = [
             center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { _ in

@@ -4,7 +4,7 @@ import MeatPadKit
 /// The Settings tabs, by name — so another window can ask for one (the note editor's link
 /// paste hint sends the user to General, where the setting it describes lives).
 enum SettingsTab: Hashable {
-    case general, boards, themes, snippets, commands, privacy
+    case general, boards, themes, snippets, commands, fileTree, privacy
 }
 
 /// `Settings` scene: General (font, wrap, links) + Boards (card icon colours) + Themes + Snippets + Commands + Privacy.
@@ -50,6 +50,12 @@ struct SettingsView: View {
             CommandsSettingsView(store: appModel.commandStore)
                 .tabItem { Label("Commands", systemImage: "terminal") }
                 .tag(SettingsTab.commands)
+            FileTreeSettingsView()
+                .tabItem {
+                    Label("File Tree", systemImage: "sidebar.left")
+                        .accessibilityIdentifier("settings-filetree-tab")
+                }
+                .tag(SettingsTab.fileTree)
             PrivacySettingsView()
                 .tabItem {
                     Label("Privacy", systemImage: "hand.raised")
@@ -75,6 +81,8 @@ private struct GeneralSettingsView: View {
     @AppStorage("board.markdown") private var cardMarkdown = true
     // Read by both note editors (NoteWindow, the All Notes detail pane) via the same key.
     @AppStorage(CodeEditor.noteLineSpacingKey) private var noteLineSpacing = CodeEditor.noteLineSpacingDefault
+    // Read by the project-window file editor (DocumentHostView) via the same key.
+    @AppStorage(CodeEditor.codeLineSpacingKey) private var codeLineSpacing = CodeEditor.codeLineSpacingDefault
 
     var body: some View {
         ZStack {
@@ -106,6 +114,16 @@ private struct GeneralSettingsView: View {
                         Spacer()
                         LineSpacingStepper(value: $noteLineSpacing)
                             .accessibilityIdentifier("settings.notes.lineSpacing")
+                    }
+                    .padding(14)
+
+                    Divider().opacity(0.45).padding(.leading, 44)
+
+                    HStack {
+                        Label("Line height in code", systemImage: "arrow.up.and.down.text.horizontal")
+                        Spacer()
+                        LineSpacingStepper(value: $codeLineSpacing)
+                            .accessibilityIdentifier("settings.code.lineSpacing")
                     }
                     .padding(14)
 

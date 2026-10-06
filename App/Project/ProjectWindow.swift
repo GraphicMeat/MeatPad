@@ -8,6 +8,7 @@ struct ProjectWindow: View {
     @StateObject private var viewModel: ProjectViewModel
     @StateObject private var searchViewModel: ProjectSearchViewModel
     @ObservedObject private var executor = AppModel.shared.commandExecutor
+    @ObservedObject private var zoom = ProjectZoom.shared
     @Namespace private var sidebarSelection
 
     init(root: URL) {
@@ -36,10 +37,12 @@ struct ProjectWindow: View {
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
-                HStack(spacing: 2) {
-                    sidebarButton(String(localized: "Files"), icon: "folder", mode: .files)
-                    sidebarButton(String(localized: "Search"), icon: "magnifyingglass", mode: .search)
-                    sidebarButton(String(localized: "References"), icon: "arrow.triangle.branch", mode: .references)
+                // Full labels when they fit with room to spare; in a narrow sidebar only the active
+                // mode keeps its title and the others shrink to their icons — never a label
+                // jammed against the edge of the bar.
+                ViewThatFits(in: .horizontal) {
+                    sidebarModeBar(compact: false)
+                    sidebarModeBar(compact: true)
                 }
                 .padding(3)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -51,7 +54,7 @@ struct ProjectWindow: View {
                 .padding(.vertical, 8)
 
                 switch viewModel.sidebarMode {
-                case .files: FileTreeView(viewModel: viewModel)
+                case .files: FileTreeView(viewModel: viewModel, search: searchViewModel)
                 case .search: ProjectSearchView(project: viewModel, viewModel: searchViewModel)
                 case .references: ReferencesView(project: viewModel)
                 }
@@ -86,6 +89,9 @@ struct ProjectWindow: View {
                 FilterCommandSheet(context: context, onDismiss: { executor.filterContext = nil })
             }
         }
+        .sheet(item: $viewModel.fileTreePrompt) { prompt in
+            FileTreeNameSheet(prompt: prompt, project: viewModel)
+        }
         .sheet(item: $viewModel.renameRequest) { request in
             RenameSymbolSheet(request: request, project: viewModel)
         }
@@ -104,6 +110,10 @@ struct ProjectWindow: View {
             )
         }
         .frame(minWidth: 720, minHeight: 480)
+        // ⌘+ / ⌘−: every view below scales its own fonts and fixed sizes by this, and rows that
+        // take the default font follow the environment font.
+        .environment(\.projectZoom, CGFloat(zoom.scale))
+        .environment(\.font, .system(size: 13 * CGFloat(zoom.scale)))
         .navigationTitle(viewModel.root.lastPathComponent)
         // Publish this window's VMs so the focused-window Save/Close/Find commands route here.
         .focusedSceneValue(\.projectViewModel, viewModel)
@@ -120,16 +130,35 @@ struct ProjectWindow: View {
         .onDisappear { AppModel.shared.projectWindowDidDisappear(viewModel) }
     }
 
-    private func sidebarButton(_ title: String, icon: String, mode: ProjectViewModel.SidebarMode) -> some View {
-        Button {
+    private func sidebarModeBar(compact: Bool) -> some View {
+        HStack(spacing: 2) {
+            sidebarButton(String(localized: "Files"), icon: "folder", mode: .files, compact: compact)
+            sidebarButton(String(localized: "Search"), icon: "magnifyingglass", mode: .search, compact: compact)
+            sidebarButton(String(localized: "References"), icon: "arrow.triangle.branch", mode: .references, compact: compact)
+        }
+    }
+
+    private func sidebarButton(_ title: String, icon: String, mode: ProjectViewModel.SidebarMode, compact: Bool) -> some View {
+        let isActive = viewModel.sidebarMode == mode
+        return Button {
             withAnimation(.easeOut(duration: 0.16)) { viewModel.sidebarMode = mode }
         } label: {
-            Label(title, systemImage: icon)
-                .font(.callout.weight(viewModel.sidebarMode == mode ? .semibold : .medium))
+            Group {
+                if compact && !isActive {
+                    Image(systemName: icon)
+                        .accessibilityLabel(title)
+                } else {
+                    Label(title, systemImage: icon)
+                }
+            }
+                .zoomFont(.callout, weight: isActive ? .semibold : .medium)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
+                // Breathing room on both sides of every label, so the widest one (References)
+                // sits as far from the bar's edge as Files and Search do.
+                .padding(.horizontal, 10 * CGFloat(zoom.scale))
                 .frame(maxWidth: .infinity)
-                .frame(height: 28)
+                .frame(height: 28 * CGFloat(zoom.scale))
                 .contentShape(Rectangle())
                 .background {
                     if viewModel.sidebarMode == mode {
@@ -142,6 +171,7 @@ struct ProjectWindow: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(sidebarAccessibilityIdentifier(for: mode))
+        .help(title)
         .foregroundStyle(viewModel.sidebarMode == mode ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .frame(maxWidth: .infinity)
     }

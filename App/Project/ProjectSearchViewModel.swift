@@ -21,6 +21,8 @@ final class ProjectSearchViewModel: ObservableObject {
     }
     @Published var caseSensitive = false { didSet { scheduleSearch() } }
     @Published var wholeWord = false { didSet { scheduleSearch() } }
+    /// "Find in Folder" from the file tree: search only under this folder. `nil` = whole project.
+    @Published var scopeFolder: URL? { didSet { scheduleSearch() } }
     @Published private(set) var results: [SearchMatch] = []
     @Published private(set) var errorMessage: String?
     @Published private(set) var isSearching = false
@@ -70,14 +72,15 @@ final class ProjectSearchViewModel: ObservableObject {
 
         let searchQuery = SearchQuery(pattern: query, isRegex: isRegex, caseSensitive: caseSensitive, wholeWord: wholeWord)
         isSearching = true
-        searchTask = Task { [weak self, engine, root] in
+        let searchRoot = scopeFolder ?? root
+        searchTask = Task { [weak self, engine, searchRoot] in
             // A short debounce keeps typing fluid without making search feel delayed.
             try? await Task.sleep(nanoseconds: 140_000_000)
             guard !Task.isCancelled else { return }
             do {
                 // NativeSearch hops files itself (concurrent task group); this await just
                 // suspends the caller, it doesn't block the main actor.
-                let matches = try await engine.search(searchQuery, in: root)
+                let matches = try await engine.search(searchQuery, in: searchRoot)
                 guard !Task.isCancelled else { return }
                 self?.results = matches
                 self?.lastQuery = searchQuery

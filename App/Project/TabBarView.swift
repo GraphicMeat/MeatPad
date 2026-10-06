@@ -1,11 +1,14 @@
 import SwiftUI
+import AppKit
 import Combine
+import MeatPadKit
 
 /// Horizontal strip of open document tabs above the editor. Each tab shows the filename,
 /// a dirty dot, and a close button; clicking selects. Selected tab is materially
 /// distinct. Hosted via `.safeAreaInset(edge: .top)` on the detail pane.
 struct TabBarView: View {
     @ObservedObject var viewModel: ProjectViewModel
+    @Environment(\.projectZoom) private var zoom
     @Namespace private var tabSelection
 
     var body: some View {
@@ -17,14 +20,15 @@ struct TabBarView: View {
                         isSelected: viewModel.selectedTab == url,
                         selectionNamespace: tabSelection,
                         select: { viewModel.selectedTab = url },
-                        close: { viewModel.requestClose(url) }
+                        close: { viewModel.requestClose(url) },
+                        makeMenu: { viewModel.tabMenu(for: url) }
                     )
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
         }
-        .frame(height: 42)
+        .frame(height: 42 * zoom)
         .background(.ultraThinMaterial)
         .overlay(alignment: .bottom) { Divider().opacity(0.4) }
     }
@@ -37,56 +41,60 @@ private struct TabItem: View {
     let selectionNamespace: Namespace.ID
     let select: () -> Void
     let close: () -> Void
+    let makeMenu: () -> NSMenu
 
     /// May be nil if the file couldn't be read; the tab still renders (host shows the
     /// error), just without a live dirty dot.
     @ObservedObject private var editor: OptionalFileEditor
 
     @State private var hovering = false
+    @Environment(\.projectZoom) private var zoom
 
-    init(url: URL, isSelected: Bool, selectionNamespace: Namespace.ID, select: @escaping () -> Void, close: @escaping () -> Void) {
+    init(url: URL, isSelected: Bool, selectionNamespace: Namespace.ID, select: @escaping () -> Void,
+         close: @escaping () -> Void, makeMenu: @escaping () -> NSMenu) {
         self.url = url
         self.isSelected = isSelected
         self.selectionNamespace = selectionNamespace
         self.select = select
         self.close = close
+        self.makeMenu = makeMenu
         _editor = ObservedObject(wrappedValue: OptionalFileEditor(url: url))
     }
 
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: "doc.text")
-                .font(.system(size: 11, weight: .medium))
+                .zoomFont(size: 11, weight: .medium)
                 .foregroundStyle(isSelected ? MeatPadGlass.violet : .secondary)
 
             ZStack {
                 if editor.isDirty {
-                    Image(systemName: "circle.fill").font(.system(size: 6))
+                    Image(systemName: "circle.fill").zoomFont(size: 6)
                         .foregroundStyle(.secondary)
                         .opacity(hovering ? 0 : 1)
                 }
                 if hovering {
                     Button(action: close) {
-                        Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                        Image(systemName: "xmark").zoomFont(size: 8, weight: .bold)
                     }
                     .buttonStyle(.plain)
                     .help("Close Tab")
                 }
             }
-            .frame(width: 11)
+            .frame(width: 11 * zoom)
 
             Text(url.lastPathComponent)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .font(.system(size: 12, weight: isSelected ? .medium : .regular))
+                .zoomFont(size: 12, weight: isSelected ? .medium : .regular)
                 // On the label, not the tab: an identifier on the row would clobber the
                 // close button's. Filenames also show in the file tree, so UI tests need
                 // something that says *tab* specifically (`OpenWithUITests`).
                 .accessibilityIdentifier("tab-\(url.lastPathComponent)")
         }
         .padding(.horizontal, 10)
-        .frame(maxWidth: 180)
-        .frame(height: 29)
+        .frame(maxWidth: 180 * zoom)
+        .frame(height: 29 * zoom)
         .foregroundStyle(isSelected ? .primary : .secondary)
         .background {
             if isSelected {
@@ -109,6 +117,9 @@ private struct TabItem: View {
         .onTapGesture {
             withAnimation(.easeOut(duration: 0.14)) { select() }
         }
+        // Over the tab but out of the way: only a right-click (tab menu), a control-click or a
+        // middle-click (both close) hits it. The hover ✕ and plain clicks still reach the tab.
+        .overlay { RowContextMenu(makeMenu: { makeMenu() }, onMiddleClick: close, onControlClick: close) }
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
     }

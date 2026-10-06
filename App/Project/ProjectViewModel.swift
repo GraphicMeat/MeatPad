@@ -1,7 +1,6 @@
 import Foundation
 import AppKit
 import MeatPadKit
-import ProcessEnv
 import LanguageServerProtocol
 
 /// Owns one project window's state: the live file tree (rescanned on any change under
@@ -34,7 +33,18 @@ final class ProjectViewModel: ObservableObject {
     let root: URL
     @Published var tree: TreeNode
     @Published var tabs: [URL] = []
-    @Published var selectedTab: URL?
+    @Published var selectedTab: URL? {
+        // The tree follows the active tab, the way an editor's explorer reveals the open file.
+        didSet { if let selectedTab { selectedTreeItem = selectedTab } }
+    }
+    /// Folders currently unfolded in the sidebar tree. Kept here, not in the view, so a rescan
+    /// (which replaces the tree) doesn't fold everything back up.
+    @Published var expandedFolders: Set<URL> = []
+    func toggleFolder(_ url: URL) {
+        if expandedFolders.contains(url) { expandedFolders.remove(url) } else { expandedFolders.insert(url) }
+    }
+    /// The file-tree row last clicked (or the active tab's file) — drawn highlighted.
+    @Published var selectedTreeItem: URL?
     /// At-most-one-visible per tab; the host shows `banners[selectedTab]`.
     @Published var banners: [URL: Banner] = [:]
     /// Per-project language server manager, detected once at init. Lazily starts a
@@ -125,6 +135,7 @@ final class ProjectViewModel: ObservableObject {
         rescan()
         lspManager.onStatusChange = { [weak self] statuses in
             self?.lspStatusByLanguage = statuses
+            self?.raiseMissingServerBanner(for: statuses)
         }
         lspManager.onPublishDiagnostics = { [weak self] uri, diagnostics in
             self?.diagnosticsByURI[uri] = diagnostics
@@ -161,6 +172,10 @@ final class ProjectViewModel: ObservableObject {
         // Restored/pre-opened tabs above bypass `open(file:)` (they assign `tabs`
         // directly to preserve order/selection), so notify the LSP manager for them here.
         for url in tabs { notifyLSPDocumentOpened(url) }
+        prewarmHighlighting(for: tabs)
+        // A property observer doesn't fire for assignments made in `init`, so a restored selection
+        // reaches the tree here.
+        selectedTreeItem = selectedTab
     }
 
     /// Runs a full recursive scan off the main actor and swaps it in when done. Cancels
@@ -696,15 +711,22 @@ final class ProjectViewModel: ObservableObject {
         guard let vm = EditorRegistry.shared.fileViewModel(for: url),
               let languageID = vm.language?.id, Self.lspKnownLanguageIDs.contains(languageID) else { return }
         lspManager.documentOpened(url: url, languageID: languageID, text: vm.text)
+    }
 
-        guard !lspBannerShownLanguages.contains(languageID),
-              case .notInstalled(let installHint) = lspManager.statusByLanguage[languageID] else { return }
-        lspBannerShownLanguages.insert(languageID)
-        lspBanner = LSPBannerState(
-            languageID: languageID,
-            languageName: Languages.byID(languageID)?.name ?? languageID,
-            installHint: installHint
-        )
+    /// The first time this project sees a language come up with no server installed, shows the
+    /// install-hint banner. Driven by the manager's status changes, so it fires whenever the
+    /// answer becomes known — immediately, or once the environment has resolved.
+    private func raiseMissingServerBanner(for statuses: [String: LSPServerStatus]) {
+        for (languageID, status) in statuses.sorted(by: { $0.key < $1.key }) {
+            guard case .notInstalled(let installHint) = status,
+                  !lspBannerShownLanguages.contains(languageID) else { continue }
+            lspBannerShownLanguages.insert(languageID)
+            lspBanner = LSPBannerState(
+                languageID: languageID,
+                languageName: Languages.byID(languageID)?.name ?? languageID,
+                installHint: installHint
+            )
+        }
     }
 
     /// Debounced `textDocument/didChange` — called from `CodeEditor`'s existing

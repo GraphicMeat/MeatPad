@@ -16,18 +16,22 @@ struct ProjectSearchView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("Project Search", systemImage: "text.magnifyingglass")
-                    .font(.headline)
+                    .zoomFont(.headline)
                 Spacer()
                 if viewModel.isSearching {
                     ProgressView().controlSize(.small)
                 } else if !viewModel.results.isEmpty {
                     Text("\(viewModel.results.count)")
-                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .zoomFont(.caption, weight: .semibold, monospacedDigit: true)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(.thinMaterial, in: Capsule())
                 }
+            }
+
+            if let scope = viewModel.scopeFolder {
+                scopeChip(scope)
             }
 
             GlassSearchField(
@@ -45,14 +49,14 @@ struct ProjectSearchView: View {
             }
 
             if let error = viewModel.errorMessage {
-                Text(error).font(.caption).foregroundStyle(.red)
+                Text(error).zoomFont(.caption).foregroundStyle(.red)
             }
 
             Divider().opacity(0.45).padding(.vertical, 2)
 
             VStack(alignment: .leading, spacing: 7) {
                 Text("REPLACE")
-                    .font(.caption2.weight(.semibold))
+                    .zoomFont(.caption2, weight: .semibold)
                     .foregroundStyle(.tertiary)
                 TextField("Replace with", text: $viewModel.replaceText)
                     .textFieldStyle(.plain)
@@ -82,16 +86,40 @@ struct ProjectSearchView: View {
         .onChange(of: viewModel.focusToken) { _, _ in queryFocused = true }
     }
 
+    /// "Find in Folder": shows the folder the search is limited to, with a way back to the
+    /// whole project.
+    private func scopeChip(_ folder: URL) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "folder").zoomFont(.caption).foregroundStyle(.secondary)
+            Text(FileTreePaths.relativePath(of: folder, in: project.root))
+                .zoomFont(.caption, weight: .medium)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .accessibilityIdentifier("project-search-scope")
+            Spacer(minLength: 0)
+            Button { viewModel.scopeFolder = nil } label: {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(String(localized: "Search the whole project"))
+            .accessibilityLabel(String(localized: "Clear folder scope"))
+            .accessibilityIdentifier("project-search-scope-clear")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(.thinMaterial, in: Capsule())
+    }
+
     @ViewBuilder
     private var results: some View {
         if viewModel.results.isEmpty {
             if !viewModel.isSearching {
                 VStack(spacing: 7) {
                     Image(systemName: viewModel.query.count >= 2 ? "text.magnifyingglass" : "keyboard")
-                        .font(.title3)
+                        .zoomFont(.title3)
                         .foregroundStyle(.tertiary)
                     Text(viewModel.query.count >= 2 ? "No matches" : "Type at least 2 characters")
-                        .font(.caption)
+                        .zoomFont(.caption)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
@@ -106,7 +134,7 @@ struct ProjectSearchView: View {
                         }
                     } label: {
                         Text("\(group.file.lastPathComponent) (\(group.matches.count))")
-                            .font(.callout.weight(.medium))
+                            .zoomFont(.callout, weight: .medium)
                             .lineLimit(1)
                     }
                 }
@@ -128,11 +156,11 @@ struct ProjectSearchView: View {
     private func row(_ match: SearchMatch) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Text("\(match.lineNumber)")
-                .font(.caption.monospacedDigit())
+                .zoomFont(.caption, monospacedDigit: true)
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 22, alignment: .trailing)
             Text(Self.highlighted(match))
-                .font(.system(size: 11, design: .monospaced))
+                .zoomFont(size: 11, design: .monospaced)
                 .lineLimit(1)
         }
         .contentShape(Rectangle())
@@ -155,7 +183,7 @@ struct ProjectSearchView: View {
             }
         }
             .buttonStyle(GlassIconButtonStyle(selected: isOn.wrappedValue))
-            .font(.caption.weight(.semibold))
+            .zoomFont(.caption, weight: .semibold)
             .lineLimit(1)
             .help(help)
     }

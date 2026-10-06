@@ -341,6 +341,12 @@ final class AppModel: ObservableObject {
     /// this to decide whether quit needs to wait on LSP shutdown at all.
     var hasOpenProjectWindows: Bool { !projectViewModels.isEmpty }
 
+    /// Whether `window` is one of the open project windows.
+    func isProjectWindow(_ window: NSWindow?) -> Bool {
+        guard let window else { return false }
+        return projectViewModels.values.contains { $0.window === window }
+    }
+
     /// Quit doesn't close each project window individually (`applicationShouldTerminate`
     /// answers `.terminateNow`/`.terminateLater` itself), so `ProjectWindowCloseGuard
     /// .windowShouldClose` never runs and never gets a chance to shut its project's
