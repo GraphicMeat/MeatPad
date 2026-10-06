@@ -73,14 +73,13 @@ final class TerminalUITests: FileTreeMenuUITestCase {
             .max { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) }?.processIdentifier ?? 0
     }
 
-    /// `"<pid> <name>"` for each direct child of the app whose command is a shell (`zsh`, `bash`,
-    /// `fish`, `sh`). Reads the kernel process table with `sysctl` rather than running `pgrep`:
-    /// the UI-test runner is sandboxed, and there `pgrep` and `ps` cannot reach `sysmond` and
-    /// list nothing.
-    private func childShells() -> [String] {
+    /// `(pid, name)` for each direct child of `parent`. Reads the kernel process table with `sysctl`
+    /// rather than running `pgrep`: the UI-test runner is sandboxed, and there `pgrep` and `ps`
+    /// cannot reach `sysmond` and list nothing.
+    private func children(of parent: pid_t) -> [(pid: pid_t, name: String)] {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
         var size = 0
-        // A failed read must not look like "no shells": the reap test would pass on it.
+        // A failed read must not look like "no children": the reap test would pass on it.
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else {
             XCTFail("sysctl(KERN_PROC_ALL) size query failed: errno \(errno)")
             return []
@@ -92,15 +91,29 @@ final class TerminalUITests: FileTreeMenuUITestCase {
             XCTFail("sysctl(KERN_PROC_ALL) read failed: errno \(errno)")
             return []
         }
-        let parent = appPID
-        let shells: Set<String> = ["zsh", "bash", "fish", "sh", "-zsh", "-bash", "-fish"]
         return procs.prefix(size / MemoryLayout<kinfo_proc>.stride).compactMap { proc in
             guard proc.kp_eproc.e_ppid == parent else { return nil }
             let name = withUnsafeBytes(of: proc.kp_proc.p_comm) { raw in
                 String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
             }
-            return shells.contains(name) ? "\(proc.kp_proc.p_pid) \(name)" : nil
+            return (pid: proc.kp_proc.p_pid, name: name)
         }
+    }
+
+    private static let shellNames: Set<String> = ["zsh", "bash", "fish", "sh", "-zsh", "-bash", "-fish"]
+
+    /// `"<pid> <name>"` for each direct child of the app whose command is a shell (`zsh`, `bash`,
+    /// `fish`, `sh`).
+    private func childShells() -> [String] {
+        return children(of: appPID).filter { Self.shellNames.contains($0.name) }.map { "\($0.pid) \($0.name)" }
+    }
+
+    /// The pid of a `sleep` that is a direct child of one of the app's shells (a background job).
+    private func backgroundSleepPID() -> pid_t? {
+        for shell in children(of: appPID) where Self.shellNames.contains(shell.name) {
+            if let job = children(of: shell.pid).first(where: { $0.name == "sleep" }) { return job.pid }
+        }
+        return nil
     }
 
     // MARK: - Tests
@@ -191,8 +204,18 @@ final class TerminalUITests: FileTreeMenuUITestCase {
         showTerminalAndWaitForShell()
         XCTAssertFalse(childShells().isEmpty, "positive control: no shell to reap")
 
+        // A background job: it only dies with the shell if the shell is hung up (SIGHUP), not
+        // SIGKILLed — a bare kill would orphan it to launchd and leave it running.
+        run("sleep 1000 &")
+        var sleepPID: pid_t = 0
+        eventually("positive control: the background sleep never showed up as a child of the shell") {
+            if let pid = self.backgroundSleepPID() { sleepPID = pid }
+            return sleepPID != 0
+        }
+
         window.buttons[XCUIIdentifierCloseWindow].click()
         XCTAssertTrue(window.waitForNonExistence(timeout: 10), "the project window didn't close")
         eventually("the shell outlived its window: \(childShells())") { self.childShells().isEmpty }
+        eventually("the background job outlived the shell") { kill(sleepPID, 0) == -1 && errno == ESRCH }
     }
 }

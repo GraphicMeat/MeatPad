@@ -793,6 +793,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        AppModel.shared.terminateAllProjectTerminals()
         guard AppModel.shared.hasOpenProjectWindows else { return .terminateNow }
         Task {
             await AppModel.shared.shutdownAllProjectLSPManagersAndWait()

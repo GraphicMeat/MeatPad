@@ -915,11 +915,14 @@ final class ProjectWindowCloseGuard: NSObject, NSWindowDelegate {
         } else {
             willClose = true
         }
-        // Only tear down the project's language servers once the window is actually
-        // closing — `original`'s answer (if any) is the final word, so this can't fire
-        // on a close that gets vetoed after our own guard already said yes.
+        // Only tear down the project's language servers and shell once the window is actually
+        // closing — `original`'s answer (if any) is the final word, so this can't fire on a
+        // close that gets vetoed after our own guard already said yes.
         if willClose {
-            MainActor.assumeIsolated { viewModel?.lspManager.shutdown() }
+            MainActor.assumeIsolated {
+                viewModel?.lspManager.shutdown()
+                viewModel?.terminalIfLoaded?.terminate()
+            }
         }
         return willClose
     }

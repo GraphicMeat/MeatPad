@@ -369,6 +369,15 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Quit never runs each window's close guard (see `shutdownAllProjectLSPManagersAndWait`),
+    /// so the shells get their SIGTERM here. Synchronous: SwiftTerm closes the PTY master and
+    /// signals; nothing to await.
+    func terminateAllProjectTerminals() {
+        for viewModel in projectViewModels.values {
+            viewModel.terminalIfLoaded?.terminate()
+        }
+    }
+
     /// Called from `applicationDidFinishLaunching`: reopens whatever was open at last
     /// quit, dropping ids for notes and project roots that no longer exist on disk.
     /// Falls back to what a Dock click would open ("dockClickAction": the All Notes browser
