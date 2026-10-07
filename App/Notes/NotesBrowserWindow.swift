@@ -436,13 +436,21 @@ struct NotesBrowserWindow: View {
             // UI test launched with -meatpad.suppressLinkOpen YES can click them without the
             // machine changing hands to a browser or Mail.
             HStack(spacing: 14) {
-                footerLink(systemImage: "lightbulb", label: String(localized: "Suggest a Feature"),
+                footerLink(Image(systemName: "lightbulb"), label: String(localized: "Suggest a Feature"),
                            identifier: "sidebar.suggest", url: suggestFeatureURL)
-                footerLink(systemImage: "ladybug", label: String(localized: "Report a Bug"),
+                footerLink(Image(systemName: "ladybug"), label: String(localized: "Report a Bug"),
                            identifier: "sidebar.bug", url: URL(string: "https://github.com/GraphicMeat/MeatPad/issues/new")!)
-                footerLink(systemImage: "envelope.fill", label: String(localized: "MailVault"),
+                // No text fallback when the glyph is missing: an empty button has zero size,
+                // which is what the UI test checks for.
+                if let discord = Self.discordGlyph {
+                    footerLink(Image(nsImage: discord).resizable().renderingMode(.template)
+                                .scaledToFit().frame(width: 13, height: 13),
+                               label: String(localized: "Join the Discord"),
+                               identifier: "sidebar.discord", url: URL(string: "https://discord.gg/gECE37RpD")!)
+                }
+                footerLink(Image(systemName: "envelope.fill"), label: String(localized: "MailVault"),
                            identifier: "sidebar.mailvault", url: URL(string: "https://mailvaultapp.com")!)
-                footerLink(systemImage: "photo.on.rectangle.angled", label: String(localized: "PhotoBooks"),
+                footerLink(Image(systemName: "photo.on.rectangle.angled"), label: String(localized: "PhotoBooks"),
                            identifier: "sidebar.photobooks", url: URL(string: "https://graphicmeat.com/photobooks")!)
             }
         }
@@ -459,11 +467,19 @@ struct NotesBrowserWindow: View {
         return components.url!
     }
 
-    private func footerLink(systemImage: String, label: String, identifier: String, url: URL) -> some View {
+    /// Discord's mark (simple-icons, CC0) as a template image, so `.foregroundStyle(.secondary)`
+    /// tints it like the SF Symbols beside it. A copy: the named image is shared app-wide.
+    private static let discordGlyph: NSImage? = {
+        guard let image = NSImage(named: "DiscordLogo")?.copy() as? NSImage else { return nil }
+        image.isTemplate = true
+        return image
+    }()
+
+    private func footerLink(_ icon: some View, label: String, identifier: String, url: URL) -> some View {
         Button {
             LinkOpener.open(url)
         } label: {
-            Image(systemName: systemImage)
+            icon
         }
         .buttonStyle(.plain)
         .font(.caption)

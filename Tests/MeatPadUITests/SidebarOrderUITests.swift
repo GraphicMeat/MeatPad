@@ -124,12 +124,25 @@ final class SidebarOrderUITests: XCTestCase {
     /// to — and every one of its buttons has to exist, because a dead link in the corner of
     /// the window is the kind of thing nobody notices until a user reports it.
     func testTheStudioFooterOffersEveryLink() {
-        for identifier in ["sidebar.studio", "sidebar.suggest", "sidebar.bug",
+        for identifier in ["sidebar.studio", "sidebar.suggest", "sidebar.bug", "sidebar.discord",
                            "sidebar.mailvault", "sidebar.photobooks"] {
             let button = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
             XCTAssertTrue(button.waitForExistence(timeout: 10), "no \(identifier) button in the sidebar footer")
+            // A button whose image asset is missing still exists, at zero size.
+            XCTAssertGreaterThan(button.frame.width, 0, "\(identifier) has no width — is its image missing?")
+            XCTAssertGreaterThan(button.frame.height, 0, "\(identifier) has no height — is its image missing?")
             XCTAssertTrue(button.isHittable, "\(identifier) is not clickable")
         }
+    }
+
+    /// Discord's glyph is a bundled vector, not an SF Symbol — the one footer link a missing
+    /// resource could break.
+    func testClickingTheDiscordLinkOpensNothingWhenSuppressed() {
+        let discord = app.descendants(matching: .any).matching(identifier: "sidebar.discord").firstMatch
+        XCTAssertTrue(discord.waitForExistence(timeout: 10), "no Discord link in the sidebar footer")
+        discord.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        XCTAssertTrue(row("All Boards").waitForExistence(timeout: 5), "the click disturbed the sidebar")
+        XCTAssertEqual(app.state, .runningForeground, "clicking Discord took the app out of the foreground")
     }
 
     /// Clicking one must not hand the machine over to a browser: every link goes through
