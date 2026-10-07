@@ -218,7 +218,7 @@ final class FileTreeMenuModelTests: XCTestCase {
         let names = shape(FileTreeMenu.entries(for: rootContext(), config: FileTreeMenuConfig()))
         XCTAssertEqual(names, [
             "newFile", "newFolder", "-",
-            "revealInFinder", "openInTerminal", "-",
+            "revealInFinder", "openInTerminal", "openInMeatPadTerminal", "-",
             "findInFolder", "-",
             "paste", "-",
             "copyPath",
