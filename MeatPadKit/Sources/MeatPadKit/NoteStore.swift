@@ -157,6 +157,29 @@ public final class NoteStore: ObservableObject {
         trashedNotes.removeAll { $0.id == id }
     }
 
+    /// A note left with nothing in it is junk: removes it outright (trash + permanent delete,
+    /// there is no content to lose) and returns true. Empty is literal `isEmpty` on what is on
+    /// disk — whitespace counts as content, and so does any attachment. False, and nothing
+    /// touched, for a note with content, a trashed note, or an unknown id. Callers flush a
+    /// pending autosave first: this judges the file, not an editor's memory.
+    @discardableResult
+    public func discardIfEmpty(id: UUID) -> Bool {
+        guard let note = notes.first(where: { $0.id == id }),
+              note.attachments?.isEmpty ?? true,
+              let contents = try? contents(of: id), contents.isEmpty,
+              (try? trash(id: id)) != nil else { return false }
+        // Out of `notes` already; a delete that fails leaves it in the trash, never lost.
+        try? delete(id: id)
+        return true
+    }
+
+    /// The launch sweep: `discardIfEmpty` for every note but `kept` (those about to reopen in
+    /// a window, whose close decides). Returns the ids discarded.
+    @discardableResult
+    public func discardEmptyNotes(except kept: Set<UUID>) -> [UUID] {
+        notes.map(\.id).filter { !kept.contains($0) && discardIfEmpty(id: $0) }
+    }
+
     // MARK: - Attachments
 
     /// Attaching is an edit: `modified` moves and the list re-sorts, the same as typing.

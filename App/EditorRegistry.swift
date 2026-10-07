@@ -29,6 +29,12 @@ final class EditorRegistry {
         return viewModel
     }
 
+    /// The live VM for a note if some surface holds one — never creates one. The browser asks
+    /// before discarding an empty note, so a keystroke still waiting for its autosave counts.
+    func existingNoteViewModel(for id: UUID) -> NoteEditorViewModel? {
+        table.object(forKey: id as NSUUID)
+    }
+
     /// Canonical per-file VM (same weak-value contract as notes). `nil` only when the
     /// file can't be read on first open (missing/permission) — the caller shows a
     /// placeholder rather than the registry faking an empty document.

@@ -188,7 +188,10 @@ struct NotesBrowserWindow: View {
         .background { AmbientGlassBackground() }
         .frame(minWidth: 860, minHeight: 480)
         .onAppear { AppModel.shared.browserWindowDidAppear() }
-        .onDisappear { AppModel.shared.browserWindowDidDisappear() }
+        .onDisappear {
+            discardIfLeftEmpty(selection)
+            AppModel.shared.browserWindowDidDisappear()
+        }
         .onChange(of: folderSelection) { _, _ in
             selection = []
             // A reveal sets board and card together; clearing here would undo it.
@@ -198,7 +201,9 @@ struct NotesBrowserWindow: View {
         .onChange(of: appModel.pendingBoardReveal) { _, _ in consumeBoardReveal() }
         // Search-hit reveal only makes sense for a single note — a multi-selection has no
         // one editor to scroll.
-        .onChange(of: selection) { _, newValue in
+        .onChange(of: selection) { oldValue, newValue in
+            // Covers a folder change too: that clears the selection.
+            discardIfLeftEmpty(oldValue.subtracting(newValue))
             if newValue.count == 1, let id = newValue.first { revealMatch(for: id) }
         }
         .focusedSceneValue(\.notesBrowser, NotesBrowserActions(
@@ -779,6 +784,21 @@ struct NotesBrowserWindow: View {
     private func newNote() {
         guard let note = try? noteStore.createNote(in: folderSelection.noteFolder) else { return }
         selection = [note.id]
+    }
+
+    /// A note left with nothing in it is junk — the rule a note window applies on close, here for
+    /// notes the selection just moved away from. Spared: a note open in its own window (that
+    /// window's close decides), and one whose editor holds text not saved yet — it is flushed
+    /// first, and its in-memory text has the last word, so a keystroke racing the click is
+    /// never lost.
+    private func discardIfLeftEmpty(_ ids: Set<UUID>) {
+        for id in ids where !appModel.isNoteWindowOpen(id) {
+            if let viewModel = EditorRegistry.shared.existingNoteViewModel(for: id) {
+                viewModel.flush()
+                guard viewModel.text.isEmpty else { continue }
+            }
+            noteStore.discardIfEmpty(id: id)
+        }
     }
 
     /// Ids a row's context-menu actions apply to: the whole selection when the row is part

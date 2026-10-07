@@ -306,6 +306,11 @@ final class AppModel: ObservableObject {
         scheduleSessionSave()
     }
 
+    /// Whether `id` is open in a standalone note window — its own close decides its fate there.
+    func isNoteWindowOpen(_ id: UUID) -> Bool {
+        openNoteIDs.contains(id)
+    }
+
     func browserWindowDidAppear() {
         browserOpen = true
         scheduleSessionSave()
@@ -390,6 +395,10 @@ final class AppModel: ObservableObject {
     func restoreSession() {
         guard let openWindowAction else { return }
         let state = SessionState.load(from: sessionURL)
+        // An empty note nobody is about to see again is junk: one made in the browser or the
+        // menu-bar popover and never typed into, left behind by an older version or a crash.
+        // Those reopening in a window are spared — that window's close decides.
+        noteStore.discardEmptyNotes(except: Set(state?.openNoteIDs ?? []))
         let idsToRestore = (state?.openNoteIDs ?? []).filter { id in noteStore.notes.contains { $0.id == id } }
         let projectsToRestore = (state?.openProjects ?? []).filter { session in
             var isDirectory: ObjCBool = false
