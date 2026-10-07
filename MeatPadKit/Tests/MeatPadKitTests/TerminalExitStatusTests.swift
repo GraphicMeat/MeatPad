@@ -1,7 +1,7 @@
 import XCTest
 @testable import MeatPadKit
 
-/// SwiftTerm 1.20.0 hands the raw `waitpid` status to its delegate; the panel shows a real exit code.
+/// SwiftTerm 1.11.0 hands the raw `waitpid` status to its delegate; the panel shows a real exit code.
 final class TerminalExitStatusTests: XCTestCase {
 
     func testCleanExitIsZero() {

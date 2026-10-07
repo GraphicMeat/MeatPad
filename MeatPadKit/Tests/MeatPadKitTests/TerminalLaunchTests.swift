@@ -16,20 +16,57 @@ final class TerminalLaunchTests: XCTestCase {
 
     // MARK: - executable
 
+    /// Every candidate path counts as executable: the fake paths below exist on no machine.
+    private let anyPath: (String) -> Bool = { _ in true }
+
     func testUserShellWinsOverProcessShell() {
-        let spec = TerminalLaunch.spec(root: root, userEnvironment: ["SHELL": "/opt/homebrew/bin/fish"], processEnvironment: ["SHELL": "/bin/bash"])
+        let spec = TerminalLaunch.spec(root: root, userEnvironment: ["SHELL": "/opt/homebrew/bin/fish"], processEnvironment: ["SHELL": "/bin/bash"], isExecutable: anyPath)
         XCTAssertEqual(spec.executable, "/opt/homebrew/bin/fish")
     }
 
     func testProcessShellIsTheFallback() {
-        let spec = TerminalLaunch.spec(root: root, userEnvironment: [:], processEnvironment: ["SHELL": "/bin/bash"])
+        let spec = TerminalLaunch.spec(root: root, userEnvironment: [:], processEnvironment: ["SHELL": "/bin/bash"], isExecutable: anyPath)
         XCTAssertEqual(spec.executable, "/bin/bash")
     }
 
     func testRelativeOrMissingShellFallsBackToZsh() {
-        XCTAssertEqual(TerminalLaunch.spec(root: root, userEnvironment: ["SHELL": "fish"], processEnvironment: [:]).executable, "/bin/zsh")
-        XCTAssertEqual(TerminalLaunch.spec(root: root, userEnvironment: ["SHELL": ""], processEnvironment: [:]).executable, "/bin/zsh")
-        XCTAssertEqual(TerminalLaunch.spec(root: root, userEnvironment: [:], processEnvironment: [:]).executable, "/bin/zsh")
+        XCTAssertEqual(TerminalLaunch.spec(root: root, userEnvironment: ["SHELL": "fish"], processEnvironment: [:], isExecutable: anyPath).executable, "/bin/zsh")
+        XCTAssertEqual(TerminalLaunch.spec(root: root, userEnvironment: ["SHELL": ""], processEnvironment: [:], isExecutable: anyPath).executable, "/bin/zsh")
+        XCTAssertEqual(TerminalLaunch.spec(root: root, userEnvironment: [:], processEnvironment: [:], isExecutable: anyPath).executable, "/bin/zsh")
+    }
+
+    func testMissingUserShellFallsBackToProcessShell() {
+        let spec = TerminalLaunch.spec(
+            root: root, userEnvironment: ["SHELL": "/nope/fish"], processEnvironment: ["SHELL": "/bin/bash"],
+            isExecutable: { $0 == "/bin/bash" }
+        )
+        XCTAssertEqual(spec.executable, "/bin/bash")
+    }
+
+    func testMissingUserAndProcessShellsFallBackToZsh() {
+        let spec = TerminalLaunch.spec(
+            root: root, userEnvironment: ["SHELL": "/nope/fish"], processEnvironment: ["SHELL": "/gone/bash"],
+            isExecutable: { _ in false }
+        )
+        XCTAssertEqual(spec.executable, "/bin/zsh")
+    }
+
+    func testRelativeUserShellFallsBackToValidProcessShell() {
+        let spec = TerminalLaunch.spec(
+            root: root, userEnvironment: ["SHELL": "fish"], processEnvironment: ["SHELL": "/bin/bash"],
+            isExecutable: anyPath
+        )
+        XCTAssertEqual(spec.executable, "/bin/bash")
+    }
+
+    /// Programs in the terminal see the shell that actually runs, not the missing one.
+    func testEnvironmentShellIsTheExecutable() {
+        let spec = TerminalLaunch.spec(
+            root: root, userEnvironment: ["SHELL": "/nope/fish"], processEnvironment: ["SHELL": "/bin/bash"],
+            isExecutable: { $0 == "/bin/bash" }
+        )
+        XCTAssertEqual(env(spec)["SHELL"], "/bin/bash")
+        XCTAssertEqual(env(spec)["SHELL"], spec.executable)
     }
 
     func testLoginShellFlagAndWorkingDirectory() {
@@ -70,13 +107,13 @@ final class TerminalLaunchTests: XCTestCase {
 
     // MARK: - cd command
 
-    func testChangeDirectoryCommandQuotesAndEndsWithNewline() {
+    func testChangeDirectoryCommandClearsTheLineQuotesAndEndsWithNewline() {
         let url = URL(fileURLWithPath: "/work/my proj/sub dir", isDirectory: true)
-        XCTAssertEqual(TerminalLaunch.changeDirectoryCommand(to: url), "cd '/work/my proj/sub dir'\n")
+        XCTAssertEqual(TerminalLaunch.changeDirectoryCommand(to: url), "\u{15}cd '/work/my proj/sub dir'\n")
     }
 
     func testChangeDirectoryCommandEscapesSingleQuotesAndKeepsUnicode() {
         let url = URL(fileURLWithPath: "/work/it's/žolė", isDirectory: true)
-        XCTAssertEqual(TerminalLaunch.changeDirectoryCommand(to: url), "cd '/work/it'\\''s/žolė'\n")
+        XCTAssertEqual(TerminalLaunch.changeDirectoryCommand(to: url), "\u{15}cd '/work/it'\\''s/žolė'\n")
     }
 }
