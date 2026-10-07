@@ -10,9 +10,11 @@ final class MeatPadTerminalView: LocalProcessTerminalView {
     var exitCode: Int32?
     var onRestartRequested: (() -> Void)?
     /// A focus request that has not landed yet. `TerminalHostView` arms it when the view model
-    /// asks for focus; it stays armed until `makeFirstResponder` succeeds, so a request made
-    /// while the view is still being mounted (no window yet) is honoured the moment it lands in
-    /// one. `ProjectViewModel.hideTerminal()` disarms it.
+    /// asks for focus; it stays armed until `makeFirstResponder` succeeds. The claim itself is
+    /// always deferred one run-loop turn (never inside SwiftUI's update or AppKit's mount), and
+    /// the armed flag is what guarantees it eventually lands: a request made while the view is
+    /// still being mounted (no window yet) is claimed by the turn queued from
+    /// `viewDidMoveToWindow`. `ProjectViewModel.hideTerminal()` disarms it.
     var wantsFocus = false
 
     override init(frame: CGRect) {
@@ -27,11 +29,14 @@ final class MeatPadTerminalView: LocalProcessTerminalView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        claimFocusIfWanted()
+        // Never inside AppKit's mount (or the SwiftUI pass that triggered it): one turn later.
+        DispatchQueue.main.async { [weak self] in self?.claimFocusIfWanted() }
     }
 
     /// Takes focus if a request is pending and the view is in a window; the request is
-    /// cleared only once the window actually made this view first responder.
+    /// cleared only once the window actually made this view first responder. Callers always
+    /// invoke it one run-loop turn after the trigger, never from inside a SwiftUI update or an
+    /// AppKit mount; `wantsFocus` staying armed is what guarantees a missed claim is retried.
     func claimFocusIfWanted() {
         guard wantsFocus, let window else { return }
         if window.makeFirstResponder(self) { wantsFocus = false }

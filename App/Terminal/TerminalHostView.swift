@@ -24,11 +24,11 @@ struct TerminalHostView: NSViewRepresentable {
         guard context.coordinator.lastFocusToken != focusToken else { return }
         context.coordinator.lastFocusToken = focusToken
         guard focusToken != nil else { return }
-        // Armed until it lands: claimed now if the view is already in the window, else when it
-        // arrives there (`viewDidMoveToWindow`), and once more next turn, after a mount or a
-        // closing menu settles.
+        // Armed until it lands, and claimed only one run-loop turn later, never inside this
+        // update pass: next turn if the view is already in the window (after a mount or a
+        // closing menu settles), else the turn queued by `viewDidMoveToWindow` once it arrives.
+        // The armed flag is what guarantees the claim eventually lands.
         view.wantsFocus = true
-        view.claimFocusIfWanted()
         DispatchQueue.main.async {
             view.claimFocusIfWanted()
         }
