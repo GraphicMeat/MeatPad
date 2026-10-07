@@ -788,11 +788,13 @@ struct NotesBrowserWindow: View {
 
     /// A note left with nothing in it is junk — the rule a note window applies on close, here for
     /// notes the selection just moved away from. Spared: a note open in its own window (that
-    /// window's close decides), and one whose editor holds text not saved yet — it is flushed
-    /// first, and its in-memory text has the last word, so a keystroke racing the click is
-    /// never lost.
+    /// window's close decides), one a board card links to, and one whose editor holds text not
+    /// saved yet — it is flushed first, and its in-memory text has the last word, so a
+    /// keystroke racing the click is never lost.
     private func discardIfLeftEmpty(_ ids: Set<UUID>) {
-        for id in ids where !appModel.isNoteWindowOpen(id) {
+        guard !ids.isEmpty else { return }
+        let linked = appModel.noteIDsLinkedFromBoards
+        for id in ids where !appModel.isNoteWindowOpen(id) && !linked.contains(id) {
             if let viewModel = EditorRegistry.shared.existingNoteViewModel(for: id) {
                 viewModel.flush()
                 guard viewModel.text.isEmpty else { continue }

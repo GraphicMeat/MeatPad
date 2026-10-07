@@ -311,6 +311,12 @@ final class AppModel: ObservableObject {
         openNoteIDs.contains(id)
     }
 
+    /// Notes a board card links to, the trashed cards' included. An empty one is still kept:
+    /// linking it was the user's doing, and the card would be left pointing at nothing.
+    var noteIDsLinkedFromBoards: Set<UUID> {
+        Set(boardStore.boards.flatMap(\.cards).compactMap(\.noteID) + boardStore.trash.compactMap { $0.card?.noteID })
+    }
+
     func browserWindowDidAppear() {
         browserOpen = true
         scheduleSessionSave()
@@ -393,12 +399,13 @@ final class AppModel: ObservableObject {
     /// didn't ask for just because they closed everything last time. Duplicate saved roots
     /// collapse to one restored window — `WindowGroup(for:)` dedups by value.
     func restoreSession() {
-        guard let openWindowAction else { return }
         let state = SessionState.load(from: sessionURL)
         // An empty note nobody is about to see again is junk: one made in the browser or the
         // menu-bar popover and never typed into, left behind by an older version or a crash.
-        // Those reopening in a window are spared — that window's close decides.
-        noteStore.discardEmptyNotes(except: Set(state?.openNoteIDs ?? []))
+        // Those reopening in a window are spared — that window's close decides — and so are
+        // notes a board card links to. Before the guard below: the sweep needs no window.
+        noteStore.discardEmptyNotes(except: Set(state?.openNoteIDs ?? []).union(noteIDsLinkedFromBoards))
+        guard let openWindowAction else { return }
         let idsToRestore = (state?.openNoteIDs ?? []).filter { id in noteStore.notes.contains { $0.id == id } }
         let projectsToRestore = (state?.openProjects ?? []).filter { session in
             var isDirectory: ObjCBool = false
