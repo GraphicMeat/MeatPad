@@ -24,9 +24,13 @@ struct TerminalHostView: NSViewRepresentable {
         guard context.coordinator.lastFocusToken != focusToken else { return }
         context.coordinator.lastFocusToken = focusToken
         guard focusToken != nil else { return }
-        // Next turn: the view is in the window by then (it may be mid-mount during this update).
+        // Armed until it lands: claimed now if the view is already in the window, else when it
+        // arrives there (`viewDidMoveToWindow`), and once more next turn, after a mount or a
+        // closing menu settles.
+        view.wantsFocus = true
+        view.claimFocusIfWanted()
         DispatchQueue.main.async {
-            view.window?.makeFirstResponder(view)
+            view.claimFocusIfWanted()
         }
     }
 

@@ -283,6 +283,8 @@ final class ProjectViewModel: ObservableObject {
     func hideTerminal() {
         let previous = responderBeforeTerminal
         responderBeforeTerminal = nil
+        // A focus request that hasn't landed yet must not fire when the view is next mounted.
+        terminalIfLoaded?.view.wantsFocus = false
         if isInsideTerminal(window?.firstResponder) {
             if let view = previous as? NSView, view.window === window {
                 window?.makeFirstResponder(view)
@@ -304,14 +306,14 @@ final class ProjectViewModel: ObservableObject {
         return nil
     }
 
-    /// File tree ▸ Open in MeatPad Terminal: show, focus, and `cd` into `directory`. A shell that
-    /// has exited is restarted first; `send` queues the `cd` until the new shell runs.
+    /// File tree ▸ Open in MeatPad Terminal: show, focus, and land the shell in `directory` — a
+    /// new (or restarted) shell starts there, a running one gets a `cd` (see
+    /// `ProjectTerminalController.open(directory:)`).
     func showTerminal(changingDirectoryTo directory: URL) {
         rememberResponderBeforeTerminal()
         terminalVisible = true
         terminalFocusToken = UUID()
-        if terminal.exitCode != nil { terminal.restart() }
-        terminal.send(TerminalLaunch.changeDirectoryCommand(to: directory))
+        terminal.open(directory: directory)
     }
 
     /// The terminal view or anything inside it — SwiftTerm's ⌘F find bar moves focus to a field

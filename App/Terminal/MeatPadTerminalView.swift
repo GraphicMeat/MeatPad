@@ -9,6 +9,11 @@ final class MeatPadTerminalView: LocalProcessTerminalView {
     /// Set by `ProjectTerminalController` when the shell is gone; `nil` while it runs.
     var exitCode: Int32?
     var onRestartRequested: (() -> Void)?
+    /// A focus request that has not landed yet. `TerminalHostView` arms it when the view model
+    /// asks for focus; it stays armed until `makeFirstResponder` succeeds, so a request made
+    /// while the view is still being mounted (no window yet) is honoured the moment it lands in
+    /// one. `ProjectViewModel.hideTerminal()` disarms it.
+    var wantsFocus = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -19,6 +24,18 @@ final class MeatPadTerminalView: LocalProcessTerminalView {
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        claimFocusIfWanted()
+    }
+
+    /// Takes focus if a request is pending and the view is in a window; the request is
+    /// cleared only once the window actually made this view first responder.
+    func claimFocusIfWanted() {
+        guard wantsFocus, let window else { return }
+        if window.makeFirstResponder(self) { wantsFocus = false }
+    }
 
     /// SwiftUI sets the frame to 0×0 when it unmounts the view (the panel is hidden) and again
     /// before the first layout. SwiftTerm resizes its grid on every frame change, so a 0×0 frame

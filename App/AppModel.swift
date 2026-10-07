@@ -370,8 +370,10 @@ final class AppModel: ObservableObject {
     }
 
     /// Quit never runs each window's close guard (see `shutdownAllProjectLSPManagersAndWait`),
-    /// so the shells get their SIGTERM here. Synchronous: SwiftTerm closes the PTY master and
-    /// signals; nothing to await.
+    /// so the shells are killed here (`ProjectTerminalController.terminate()`): SwiftTerm sends
+    /// SIGTERM, the controller adds SIGHUP, and the PTY master stays open until the shell exits.
+    /// Returns at once; the reap runs asynchronously on a background queue, and the app's own
+    /// exit closes the PTY master (hanging up the shell) if quit wins that race.
     func terminateAllProjectTerminals() {
         for viewModel in projectViewModels.values {
             viewModel.terminalIfLoaded?.terminate()

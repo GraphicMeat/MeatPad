@@ -19,8 +19,9 @@ final class ProjectTerminalController: NSObject, ObservableObject {
     @Published private(set) var exitCode: Int32?
 
     private var startTask: Task<Void, Never>?
-    /// Input handed to `send(_:)` before the shell was running; flushed right after launch.
-    private var pendingInput: [String] = []
+    /// Where the next shell starts, set by `open(directory:)` when no shell is running; `start`
+    /// consumes it, so a later restart (⏎, Restart) starts in the project root again.
+    private var launchDirectory: URL?
     private var lastFontSize: CGFloat?
     /// Colours last handed to the view; `applyAppearance` only assigns the ones that changed.
     private var lastBackground: NSColor?
@@ -52,9 +53,10 @@ final class ProjectTerminalController: NSObject, ObservableObject {
         }
     }
 
-    /// Launches a fresh shell in the project root after the previous one exited. Only reachable
-    /// once `exitCode` is set (⏎ in the dead terminal, the header's Restart button), so there is
-    /// never a live shell to kill here.
+    /// Launches a fresh shell after the previous one exited — in the project root, or in the
+    /// folder `open(directory:)` asked for. Only reachable once `exitCode` is set (⏎ in the dead
+    /// terminal, the header's Restart button, `open(directory:)`), so there is never a live
+    /// shell to kill here.
     func restart() {
         guard !isRunning else { return }
         startIfNeeded()
@@ -90,9 +92,33 @@ final class ProjectTerminalController: NSObject, ObservableObject {
         }
     }
 
-    /// Types `text` into the shell; queued until the shell is running.
+    /// File tree ▸ Open in MeatPad Terminal. With no shell running, the next one starts in
+    /// `directory` (a first launch, a launch still waiting for its environment, or a restart
+    /// after an exit) — nothing is typed ahead of a prompt that doesn't exist yet. A running
+    /// shell gets a `cd`, unless something else owns the terminal (see below).
+    func open(directory: URL) {
+        guard isRunning else {
+            launchDirectory = directory
+            if exitCode != nil { restart() } else { startIfNeeded() }
+            return
+        }
+        // Only type into the shell's own prompt. The PTY's foreground process group is the
+        // shell's while it waits for a command (the login shell is its session leader, so its
+        // pgid is its pid); anything else in the foreground — vim, less, a build — would take
+        // the `cd` as input. Then beep and do nothing: no notice is fed into the screen either,
+        // which a full-screen program owns. -1 (the PTY can't be asked) sends anyway.
+        let foreground = tcgetpgrp(view.process.childfd)
+        guard foreground == -1 || foreground == view.process.shellPid else {
+            NSSound.beep()
+            return
+        }
+        send(TerminalLaunch.changeDirectoryCommand(to: directory))
+    }
+
+    /// Types `text` into the shell if it is running; dropped otherwise.
     func send(_ text: String) {
-        if isRunning { view.send(txt: text) } else { pendingInput.append(text) }
+        guard isRunning else { return }
+        view.send(txt: text)
     }
 
     /// Colours from the active theme, the editor's monospaced font at `fontSize` (already
@@ -130,7 +156,8 @@ final class ProjectTerminalController: NSObject, ObservableObject {
     }
 
     private func start(userEnvironment: [String: String]) {
-        let spec = TerminalLaunch.spec(root: root, userEnvironment: userEnvironment)
+        let spec = TerminalLaunch.spec(root: launchDirectory ?? root, userEnvironment: userEnvironment)
+        launchDirectory = nil
         exitCode = nil
         view.exitCode = nil
         // SwiftTerm 1.11.0 never reports an exec failure (the forked child has no `_exit` after a
@@ -147,12 +174,7 @@ final class ProjectTerminalController: NSObject, ObservableObject {
         )
         // Second line of defence: a forkpty failure makes `startProcess` return silently, with no
         // delegate call.
-        guard isRunning else {
-            failStart(spec.executable)
-            return
-        }
-        for text in pendingInput { view.send(txt: text) }
-        pendingInput.removeAll()
+        if !isRunning { failStart(spec.executable) }
     }
 
     private func failStart(_ executable: String) {
