@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import MeatPadKit
 import STTextView
+import os
 
 @main
 struct MeatPadApp: App {
@@ -818,15 +819,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { AppModel.shared.open(urls) }
     }
 
-    /// Dock icon click with no visible windows: General settings picks what opens —
-    /// the All Notes browser (default) or a fresh note. Returning false suppresses
-    /// SwiftUI's default reopen (a blank parameterized WindowGroup window).
+    /// Dock icon click. With visible windows the click has already activated the app and
+    /// brought them forward, so there is nothing left to do — and returning true would hand it to
+    /// SwiftUI's default reopen, which can open a fresh window of the first scene: the
+    /// `WindowGroup("Note")` with no value (reported on macOS 27 as a new note window per click).
+    /// With none visible, General settings picks what opens — the All Notes browser (default) or
+    /// a fresh note — and false again keeps SwiftUI's default out of it.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        guard !flag else { return true }
+        if flag {
+            windowsLog.notice("reopen: hasVisibleWindows=true, nothing opened")
+            return false
+        }
         // A minimised window isn't "visible", but it is what the click is for: let AppKit
         // restore it rather than opening a second window next to the one in the Dock.
-        if NSApp.windows.contains(where: { $0.isMiniaturized }) { return true }
-        if UserDefaults.standard.string(forKey: "dockClickAction") == "newNote" {
+        if NSApp.windows.contains(where: { $0.isMiniaturized }) {
+            windowsLog.notice("reopen: hasVisibleWindows=false, restoring a minimised window")
+            return true
+        }
+        let action = UserDefaults.standard.string(forKey: "dockClickAction") == "newNote" ? "newNote" : "allNotes"
+        windowsLog.notice("reopen: hasVisibleWindows=false, opening \(action, privacy: .public)")
+        if action == "newNote" {
             dockNewNote()
         } else {
             dockAllNotes()
@@ -865,6 +877,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// Which windows open and why — the Dock-click reopen and the unasked Note window — so the next
+/// "a window I didn't ask for" report is provable from the log rather than from memory:
+///   log show --last 1h --predicate 'subsystem == "com.thecoldzero.MeatPad" && category == "windows"'
+/// Never logs note contents or titles.
+let windowsLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.thecoldzero.MeatPad", category: "windows")
+
 /// Stands in for a note in the window SwiftUI opens unasked — see the `WindowGroup("Note")`
 /// above. See-through and click-through while it is up, so it can't flash or swallow a click
 /// meant for the window under it, and dismissed through SwiftUI (closing the NSWindow behind
@@ -882,9 +900,15 @@ private struct UnrequestedWindowCloser: View {
             .frame(width: 1, height: 1)
             .background(Hider())
             .onAppear {
+                windowsLog.notice("unrequested Note window appeared")
                 let token = token
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    if token.live { dismiss() }
+                    if token.live {
+                        windowsLog.notice("unrequested Note window dismissed")
+                        dismiss()
+                    } else {
+                        windowsLog.notice("unrequested Note window got a note first; kept")
+                    }
                 }
             }
             .onDisappear { token.live = false }
