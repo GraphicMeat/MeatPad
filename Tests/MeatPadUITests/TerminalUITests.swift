@@ -3,7 +3,7 @@ import XCTest
 
 /// The project window's terminal panel, end to end against a real shell: ⌃` toggles it, typed
 /// commands run and their output is readable through accessibility, the file-tree action
-/// lands the shell in the right folder, and closing the window kills the shell.
+/// lands the shell in the right folder, and closing the window or quitting kills the shell.
 ///
 /// Reuses the file-tree harness: a throwaway storage root and a throwaway `Proj` folder opened
 /// as a project window.
@@ -68,9 +68,36 @@ final class TerminalUITests: FileTreeMenuUITestCase {
         app.typeKey(.return, modifierFlags: [])
     }
 
+    /// Prints the shell's current folder name as `mp_<name>`. Basename only: the full sandbox
+    /// path is ~140 characters and would soft-wrap across terminal rows, which the
+    /// accessibility value separates with newlines.
+    private func printWorkingFolder() {
+        run("printf 'mp_%s\\n' \"${PWD##*/}\"")
+    }
+
+    /// `eventually`, with the terminal's text in the failure message.
+    private func eventuallyInTerminal(_ message: String, timeout: TimeInterval = 10, _ condition: (String) -> Bool,
+                                      file: StaticString = #filePath, line: UInt = #line) {
+        var text = ""
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            text = terminalText
+            if condition(text) { return }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        XCTFail("\(message) — terminal text: \(text.debugDescription)", file: file, line: line)
+    }
+
+    /// The app under test. A vanished app fails here rather than reading as "no shells" (pid 0
+    /// has no children), which would let the reap assertions pass on a crash.
     private var appPID: pid_t {
-        NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID)
-            .max { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) }?.processIdentifier ?? 0
+        let pid = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID)
+            .max { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) }?.processIdentifier
+        guard let pid, pid > 0 else {
+            XCTFail("the app under test isn't running")
+            return 0
+        }
+        return pid
     }
 
     /// `(pid, name)` for each direct child of `parent`. Reads the kernel process table with `sysctl`
@@ -108,12 +135,26 @@ final class TerminalUITests: FileTreeMenuUITestCase {
         return children(of: appPID).filter { Self.shellNames.contains($0.name) }.map { "\($0.pid) \($0.name)" }
     }
 
-    /// The pid of a `sleep` that is a direct child of one of the app's shells (a background job).
-    private func backgroundSleepPID() -> pid_t? {
+    /// A `sleep` that is a direct child of one of the app's shells (a background job), and that shell.
+    private func backgroundSleep() -> (shell: pid_t, sleep: pid_t)? {
         for shell in children(of: appPID) where Self.shellNames.contains(shell.name) {
-            if let job = children(of: shell.pid).first(where: { $0.name == "sleep" }) { return job.pid }
+            if let job = children(of: shell.pid).first(where: { $0.name == "sleep" }) { return (shell.pid, job.pid) }
         }
         return nil
+    }
+
+    /// The terminal text below the last `[exited 0] — press ⏎ to restart` line: blank until the
+    /// restarted shell draws its prompt.
+    private var textAfterLastExitLine: String {
+        let text = terminalText
+        guard let marker = text.range(of: "[exited 0]", options: .backwards) else { return "" }
+        let rest = text[marker.upperBound...]
+        guard let newline = rest.firstIndex(of: "\n") else { return "" }
+        return String(rest[rest.index(after: newline)...])
+    }
+
+    private func isGone(_ pid: pid_t) -> Bool {
+        kill(pid, 0) == -1 && errno == ESRCH
     }
 
     // MARK: - Tests
@@ -176,15 +217,21 @@ final class TerminalUITests: FileTreeMenuUITestCase {
         }
     }
 
+    /// Typing right after the action must reach the shell: no shell yet → one starts in the
+    /// chosen folder and takes focus; a shell at its prompt → it gets a `cd` and focus.
     func testOpenInMeatPadTerminalChangesDirectory() throws {
-        choose("Open in MeatPad Terminal", on: "it's here")
+        XCTAssertFalse(terminal.exists, "the terminal panel is shown before anyone asked")
+        choose("Open in MeatPad Terminal", on: "sub")
         XCTAssertTrue(terminal.waitForExistence(timeout: 10), "the file-tree action opened no terminal")
         waitForShell()
+        printWorkingFolder()
+        eventuallyInTerminal("the new shell didn't start in the chosen folder") { $0.contains("mp_sub") }
 
-        // Basename only: the full sandbox path is ~140 characters and would soft-wrap across
-        // terminal rows, which the accessibility value separates with newlines.
-        run("printf 'mp_%s\\n' \"${PWD##*/}\"")
-        eventually("the shell isn't in the chosen folder") { self.terminalText.contains("mp_it's here") }
+        choose("Open in MeatPad Terminal", on: "it's here")
+        // The `cd` echo has the name escaped (`it'\''s here`); only the new prompt has it plain.
+        eventuallyInTerminal("the running shell never showed a prompt in the chosen folder") { $0.contains("it's here") }
+        printWorkingFolder()
+        eventuallyInTerminal("the running shell isn't in the chosen folder") { $0.contains("mp_it's here") }
     }
 
     func testExitThenReturnRestartsShell() throws {
@@ -196,8 +243,12 @@ final class TerminalUITests: FileTreeMenuUITestCase {
 
         app.typeKey(.return, modifierFlags: [])
         eventually("⏎ didn't restart the shell", timeout: 20) { !self.childShells().isEmpty }
-        run("printf 'mp_%s\\n' again")
-        eventually("the restarted shell doesn't run commands") { self.terminalText.contains("mp_again") }
+        // Typing before the new prompt races shell start-up.
+        eventually("the restarted shell drew no prompt", timeout: 20) {
+            !self.textAfterLastExitLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        printWorkingFolder()
+        eventuallyInTerminal("the restarted shell doesn't run commands in the project root") { $0.contains("mp_Proj") }
     }
 
     func testClosingProjectWindowReapsShell() throws {
@@ -209,13 +260,41 @@ final class TerminalUITests: FileTreeMenuUITestCase {
         run("sleep 1000 &")
         var sleepPID: pid_t = 0
         eventually("positive control: the background sleep never showed up as a child of the shell") {
-            if let pid = self.backgroundSleepPID() { sleepPID = pid }
+            if let job = self.backgroundSleep() { sleepPID = job.sleep }
             return sleepPID != 0
         }
 
         window.buttons[XCUIIdentifierCloseWindow].click()
         XCTAssertTrue(window.waitForNonExistence(timeout: 10), "the project window didn't close")
         eventually("the shell outlived its window: \(childShells())") { self.childShells().isEmpty }
-        eventually("the background job outlived the shell") { kill(sleepPID, 0) == -1 && errno == ESRCH }
+        eventually("the background job outlived the shell") { self.isGone(sleepPID) }
+    }
+
+    /// ⌘Q goes through `applicationShouldTerminate`, unlike `app.terminate()`. On app exit the
+    /// kernel closes the PTY master, which hangs up the shell anyway — so this pins the
+    /// user-visible property (no shell or job outlives quit), not the
+    /// `terminateAllProjectTerminals()` call itself.
+    func testQuitReapsShellAndJobs() throws {
+        showTerminalAndWaitForShell()
+        run("sleep 1000 &")
+        var job: (shell: pid_t, sleep: pid_t)?
+        eventually("positive control: the background sleep never showed up as a child of the shell") {
+            job = self.backgroundSleep()
+            return job != nil
+        }
+        let shellPID = try XCTUnwrap(job?.shell)
+        let sleepPID = try XCTUnwrap(job?.sleep)
+
+        app.typeKey("q", modifierFlags: .command)
+        if !app.wait(for: .notRunning, timeout: 20) {
+            let unsaved = app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "unsaved changes")).firstMatch
+            XCTFail(unsaved.exists
+                ? "⌘Q stopped at the unsaved-changes alert, but this test edits no document"
+                : "the app was still running 20 s after ⌘Q")
+            return
+        }
+        // The app is gone: from here on nothing may ask for `appPID`.
+        eventually("the shell outlived quit") { self.isGone(shellPID) }
+        eventually("the background job outlived quit") { self.isGone(sleepPID) }
     }
 }
