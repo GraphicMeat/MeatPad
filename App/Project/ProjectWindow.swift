@@ -129,6 +129,9 @@ struct ProjectWindow: View {
                 }
             )
         }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) { terminalToggle }
+        }
         .frame(minWidth: 720, minHeight: 480)
         // ⌘+ / ⌘−: every view below scales its own fonts and fixed sizes by this, and rows that
         // take the default font follow the environment font.
@@ -148,6 +151,23 @@ struct ProjectWindow: View {
             #endif
         }
         .onDisappear { AppModel.shared.projectWindowDidDisappear(viewModel) }
+    }
+
+    /// Shows or hides the terminal panel. Not `toggleTerminal()`: a toolbar click leaves focus
+    /// where it was, so with the editor focused ⌃`'s VS Code rule would focus the terminal
+    /// instead of hiding it.
+    private var terminalToggle: some View {
+        let visible = viewModel.terminalVisible
+        let title = visible ? String(localized: "Hide Terminal") : String(localized: "Show Terminal")
+        return Button {
+            if viewModel.terminalVisible { viewModel.hideTerminal() } else { viewModel.showTerminal() }
+        } label: {
+            Image(systemName: visible ? "terminal.fill" : "terminal")
+        }
+        .buttonStyle(.borderless)
+        .help(title)
+        .accessibilityLabel(Text(title))
+        .accessibilityIdentifier("project-terminal-toggle")
     }
 
     private func sidebarModeBar(compact: Bool) -> some View {

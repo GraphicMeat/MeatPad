@@ -262,9 +262,7 @@ final class ProjectViewModel: ObservableObject {
     /// focused → focus (the VS Code rule).
     func toggleTerminal() {
         guard terminalVisible else {
-            rememberResponderBeforeTerminal()
-            terminalVisible = true
-            terminalFocusToken = UUID()
+            showTerminal()
             return
         }
         if isInsideTerminal(window?.firstResponder) {
@@ -273,6 +271,16 @@ final class ProjectViewModel: ObservableObject {
             rememberResponderBeforeTerminal()
             terminalFocusToken = UUID()
         }
+    }
+
+    /// Shows the panel and focuses the terminal: ⌃` on a hidden panel, and the toolbar button.
+    /// The button never toggles through `toggleTerminal()`: a toolbar click doesn't move first
+    /// responder, so with the editor focused the VS Code rule would focus the terminal instead
+    /// of hiding it.
+    func showTerminal() {
+        rememberResponderBeforeTerminal()
+        terminalVisible = true
+        terminalFocusToken = UUID()
     }
 
     /// Hides the panel. If the terminal holds focus, focus returns to where it was before the
@@ -310,9 +318,7 @@ final class ProjectViewModel: ObservableObject {
     /// new (or restarted) shell starts there, a running one gets a `cd` (see
     /// `ProjectTerminalController.open(directory:)`).
     func showTerminal(changingDirectoryTo directory: URL) {
-        rememberResponderBeforeTerminal()
-        terminalVisible = true
-        terminalFocusToken = UUID()
+        showTerminal()
         terminal.open(directory: directory)
     }
 

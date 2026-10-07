@@ -1,23 +1,20 @@
 import AppKit
 import XCTest
 
-/// The project window's terminal panel, end to end against a real shell: ⌃` toggles it, typed
-/// commands run and their output is readable through accessibility, the file-tree action
-/// lands the shell in the right folder, and closing the window or quitting kills the shell.
-///
-/// Reuses the file-tree harness: a throwaway storage root and a throwaway `Proj` folder opened
-/// as a project window.
-final class TerminalUITests: FileTreeMenuUITestCase {
+/// The terminal panel's harness: the file-tree one (a throwaway storage root and a throwaway
+/// `Proj` folder opened as a project window) plus ways to drive and read a real shell. No tests
+/// of its own — XCTest would run every inherited test again in each subclass.
+class TerminalUITestCase: FileTreeMenuUITestCase {
 
-    private var window: XCUIElement { app.windows["Proj"] }
-    private var terminal: XCUIElement { window.textViews["project-terminal"] }
-    private var terminalText: String { (terminal.value as? String) ?? "" }
+    var window: XCUIElement { app.windows["Proj"] }
+    var terminal: XCUIElement { window.textViews["project-terminal"] }
+    var terminalText: String { (terminal.value as? String) ?? "" }
     /// The project editor: the window's text view that isn't the terminal. Its accessibility value
     /// is the document text. Re-resolved on every use, so after a tab change it is the new tab's editor.
-    private var editor: XCUIElement {
+    var editor: XCUIElement {
         window.textViews.matching(NSPredicate(format: "NOT (identifier == %@)", "project-terminal")).firstMatch
     }
-    private var editorText: String { (editor.value as? String) ?? "" }
+    var editorText: String { (editor.value as? String) ?? "" }
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -28,13 +25,15 @@ final class TerminalUITests: FileTreeMenuUITestCase {
     override func tearDownWithError() throws {
         try super.tearDownWithError()
         UserDefaults(suiteName: Self.bundleID)?.removeObject(forKey: "terminal.panelHeight")
+        // A Settings edit or reset is saved to the app's real defaults; don't leave one there.
+        UserDefaults(suiteName: Self.bundleID)?.removeObject(forKey: "terminal.gitMenu")
     }
 
-    private func toggleTerminal() {
+    func toggleTerminal() {
         app.typeKey("`", modifierFlags: .control)
     }
 
-    private func showTerminalAndWaitForShell() {
+    func showTerminalAndWaitForShell() {
         toggleTerminal()
         XCTAssertTrue(terminal.waitForExistence(timeout: 10), "⌃` opened no terminal panel")
         waitForShell()
@@ -43,7 +42,7 @@ final class TerminalUITests: FileTreeMenuUITestCase {
     /// Opens `name` from the file tree and waits for its tab and editor. Retried: the first click
     /// after launch is sometimes swallowed in the full suite run (the OpenIn test's first right-click
     /// was too), which says nothing about the terminal.
-    private func openInEditor(_ name: String) {
+    func openInEditor(_ name: String) {
         let tab = app.staticTexts["tab-\(name)"].firstMatch
         for _ in 0..<3 where !tab.exists {
             row(name).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
@@ -55,7 +54,7 @@ final class TerminalUITests: FileTreeMenuUITestCase {
 
     /// A child shell exists AND has drawn something (its prompt) — typing before the prompt
     /// races shell start-up.
-    private func waitForShell() {
+    func waitForShell() {
         eventually("the shell never started (no child shell of the app)", timeout: 20) { !childShells().isEmpty }
         eventually("the shell drew no prompt", timeout: 20) {
             !self.terminalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -63,7 +62,7 @@ final class TerminalUITests: FileTreeMenuUITestCase {
     }
 
     /// Runs `command` in the focused terminal.
-    private func run(_ command: String) {
+    func run(_ command: String) {
         app.typeText(command)
         app.typeKey(.return, modifierFlags: [])
     }
@@ -71,12 +70,12 @@ final class TerminalUITests: FileTreeMenuUITestCase {
     /// Prints the shell's current folder name as `mp_<name>`. Basename only: the full sandbox
     /// path is ~140 characters and would soft-wrap across terminal rows, which the
     /// accessibility value separates with newlines.
-    private func printWorkingFolder() {
+    func printWorkingFolder() {
         run("printf 'mp_%s\\n' \"${PWD##*/}\"")
     }
 
     /// `eventually`, with the terminal's text in the failure message.
-    private func eventuallyInTerminal(_ message: String, timeout: TimeInterval = 10, _ condition: (String) -> Bool,
+    func eventuallyInTerminal(_ message: String, timeout: TimeInterval = 10, _ condition: (String) -> Bool,
                                       file: StaticString = #filePath, line: UInt = #line) {
         var text = ""
         let deadline = Date().addingTimeInterval(timeout)
@@ -90,7 +89,7 @@ final class TerminalUITests: FileTreeMenuUITestCase {
 
     /// The app under test. A vanished app fails here rather than reading as "no shells" (pid 0
     /// has no children), which would let the reap assertions pass on a crash.
-    private var appPID: pid_t {
+    var appPID: pid_t {
         let pid = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID)
             .max { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) }?.processIdentifier
         guard let pid, pid > 0 else {
@@ -103,7 +102,7 @@ final class TerminalUITests: FileTreeMenuUITestCase {
     /// `(pid, name)` for each direct child of `parent`. Reads the kernel process table with `sysctl`
     /// rather than running `pgrep`: the UI-test runner is sandboxed, and there `pgrep` and `ps`
     /// cannot reach `sysmond` and list nothing.
-    private func children(of parent: pid_t) -> [(pid: pid_t, name: String)] {
+    func children(of parent: pid_t) -> [(pid: pid_t, name: String)] {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
         var size = 0
         // A failed read must not look like "no children": the reap test would pass on it.
@@ -127,16 +126,16 @@ final class TerminalUITests: FileTreeMenuUITestCase {
         }
     }
 
-    private static let shellNames: Set<String> = ["zsh", "bash", "fish", "sh", "-zsh", "-bash", "-fish"]
+    static let shellNames: Set<String> = ["zsh", "bash", "fish", "sh", "-zsh", "-bash", "-fish"]
 
     /// `"<pid> <name>"` for each direct child of the app whose command is a shell (`zsh`, `bash`,
     /// `fish`, `sh`).
-    private func childShells() -> [String] {
+    func childShells() -> [String] {
         return children(of: appPID).filter { Self.shellNames.contains($0.name) }.map { "\($0.pid) \($0.name)" }
     }
 
     /// A `sleep` that is a direct child of one of the app's shells (a background job), and that shell.
-    private func backgroundSleep() -> (shell: pid_t, sleep: pid_t)? {
+    func backgroundSleep() -> (shell: pid_t, sleep: pid_t)? {
         for shell in children(of: appPID) where Self.shellNames.contains(shell.name) {
             if let job = children(of: shell.pid).first(where: { $0.name == "sleep" }) { return (shell.pid, job.pid) }
         }
@@ -145,7 +144,7 @@ final class TerminalUITests: FileTreeMenuUITestCase {
 
     /// The terminal text below the last `[exited 0] — press ⏎ to restart` line: blank until the
     /// restarted shell draws its prompt.
-    private var textAfterLastExitLine: String {
+    var textAfterLastExitLine: String {
         let text = terminalText
         guard let marker = text.range(of: "[exited 0]", options: .backwards) else { return "" }
         let rest = text[marker.upperBound...]
@@ -153,11 +152,17 @@ final class TerminalUITests: FileTreeMenuUITestCase {
         return String(rest[rest.index(after: newline)...])
     }
 
-    private func isGone(_ pid: pid_t) -> Bool {
+    func isGone(_ pid: pid_t) -> Bool {
         kill(pid, 0) == -1 && errno == ESRCH
     }
 
-    // MARK: - Tests
+}
+
+/// The project window's terminal panel, end to end against a real shell: ⌃` and the toolbar
+/// button toggle it, typed commands run and their output is readable through accessibility, the
+/// file-tree action lands the shell in the right folder, and closing the window or quitting
+/// kills the shell.
+final class TerminalUITests: TerminalUITestCase {
 
     func testControlBacktickShowsTerminalThatRunsCommands() throws {
         XCTAssertFalse(terminal.exists, "the terminal panel is shown before anyone asked")
@@ -215,6 +220,32 @@ final class TerminalUITests: FileTreeMenuUITestCase {
         eventually("typing after the tab change and hide didn't reach beta's editor") {
             self.editorText.contains("contents of beta.txt") && self.editorText.contains("Zq9")
         }
+    }
+
+    /// The toolbar button shows the terminal with focus in it, and hides it again even when the
+    /// editor holds focus. A toolbar click doesn't move focus, so ⌃`'s rule (shown but not
+    /// focused → focus it) would leave the panel open on the second click.
+    func testToolbarButtonShowsThenHidesTerminalWithEditorFocused() throws {
+        openInEditor("alpha.txt")
+        editor.click()
+        let toggle = window.descendants(matching: .any).matching(identifier: "project-terminal-toggle").firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10), "no terminal button in the project window's toolbar")
+
+        // Re-clicked only after a click visibly did nothing: a retry must never toggle twice.
+        for _ in 0..<3 where !terminal.exists {
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+            _ = terminal.waitForExistence(timeout: 5)
+        }
+        XCTAssertTrue(terminal.exists, "the toolbar button opened no terminal panel")
+        waitForShell()
+        // Typed without clicking the terminal: the button handed it focus.
+        run("printf 'mp_%s\\n' toolbar")
+        eventuallyInTerminal("typing after the toolbar click didn't reach the shell") { $0.contains("mp_toolbar") }
+
+        // Focus back in the editor, the case the VS Code rule gets wrong for a toolbar click.
+        editor.click()
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        XCTAssertTrue(terminal.waitForNonExistence(timeout: 5), "the toolbar button didn't hide the terminal with the editor focused")
     }
 
     /// Typing right after the action must reach the shell: no shell yet → one starts in the
