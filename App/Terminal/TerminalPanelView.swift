@@ -12,6 +12,8 @@ struct TerminalPanelView: View {
     let containerHeight: CGFloat
     @ObservedObject private var appModel = AppModel.shared
     @ObservedObject private var zoom = ProjectZoom.shared
+    @ObservedObject private var gitMenu = GitMenuSettings.shared
+    @Environment(\.openSettings) private var openSettings
     @AppStorage(TerminalPanelHeight.defaultsKey) private var panelHeight = TerminalPanelHeight.default
     /// The height when the current drag began; a GestureState, so it also resets when the drag is cancelled.
     @GestureState private var dragStartHeight: Double?
@@ -50,6 +52,7 @@ struct TerminalPanelView: View {
             Image(systemName: "terminal.fill")
                 .zoomFont(.body)
                 .foregroundStyle(MeatPadGlass.violet.gradient)
+            gitMenuButton
             Text(controller.title ?? String(localized: "Terminal"))
                 .zoomFont(.caption, weight: .bold)
                 .lineLimit(1)
@@ -73,6 +76,41 @@ struct TerminalPanelView: View {
         .buttonStyle(.borderless)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    /// The Git menu (Settings ▸ Terminal): run items run at the prompt, type items are typed for
+    /// the user to finish; the icon tells them apart. Shown in every project, repository or not —
+    /// git says so itself. `.fixedSize()`: the shell's long `user@host:~/path` title truncates,
+    /// never the menu.
+    private var gitMenuButton: some View {
+        Menu {
+            ForEach(gitMenu.config.items) { item in
+                if item.isDivider {
+                    Divider()
+                } else {
+                    Button { project.runGitMenuItem(item) } label: {
+                        // Verbatim: a command is never translated.
+                        Label(item.command, systemImage: item.runs ? "play.fill" : "character.cursor.ibeam")
+                    }
+                }
+            }
+            Divider()
+            Button(String(localized: "Edit Git Menu…")) {
+                appModel.settingsTab = .terminal
+                openSettings()
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        } label: {
+            Label(String(localized: "Git"), systemImage: "arrow.triangle.branch")
+                .zoomFont(.caption, weight: .bold)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.visible)
+        .fixedSize()
+        // A dead shell has no prompt to type at; ⏎ or Restart brings one back.
+        .disabled(controller.exitCode != nil)
+        .help(String(localized: "Git commands"))
+        .accessibilityIdentifier("terminal-git-menu")
     }
 
     /// A 7 pt strip over the panel's top edge. Dragging up grows the panel (negative translation).

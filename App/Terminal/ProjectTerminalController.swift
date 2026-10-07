@@ -95,30 +95,39 @@ final class ProjectTerminalController: NSObject, ObservableObject {
     /// File tree ▸ Open in MeatPad Terminal. With no shell running, the next one starts in
     /// `directory` (a first launch, a launch still waiting for its environment, or a restart
     /// after an exit) — nothing is typed ahead of a prompt that doesn't exist yet. A running
-    /// shell gets a `cd`, unless something else owns the terminal (see below).
+    /// shell gets a `cd`, unless something else owns the terminal (see `typeAtPrompt`).
     func open(directory: URL) {
         guard isRunning else {
             launchDirectory = directory
             if exitCode != nil { restart() } else { startIfNeeded() }
             return
         }
-        // Only type into the shell's own prompt. The PTY's foreground process group is the
-        // shell's while it waits for a command (the login shell is its session leader, so its
-        // pgid is its pid); anything else in the foreground — vim, less, a build — would take
-        // the `cd` as input. Then beep and do nothing: no notice is fed into the screen either,
-        // which a full-screen program owns. -1 (the PTY can't be asked) sends anyway.
-        let foreground = tcgetpgrp(view.process.childfd)
-        guard foreground == -1 || foreground == view.process.shellPid else {
-            NSSound.beep()
-            return
-        }
-        send(TerminalLaunch.changeDirectoryCommand(to: directory))
+        _ = typeAtPrompt(TerminalLaunch.changeDirectoryCommand(to: directory))
     }
 
-    /// Types `text` into the shell if it is running; dropped otherwise.
-    func send(_ text: String) {
-        guard isRunning else { return }
-        view.send(txt: text)
+    /// Types `keystrokes` into the shell, but only at its own prompt: false (and a beep) when the
+    /// shell isn't running or another program owns the terminal (see `shellOwnsPrompt`). No
+    /// notice is fed into the screen either, which a full-screen program owns.
+    func typeAtPrompt(_ keystrokes: String) -> Bool {
+        guard isRunning, shellOwnsPrompt else {
+            NSSound.beep()
+            return false
+        }
+        view.send(txt: keystrokes)
+        return true
+    }
+
+    /// Whether the program in the terminal reads its arrow keys in application-cursor mode
+    /// (`ESC O D` for Left rather than `ESC [ D`); zsh frameworks switch it on at the prompt.
+    var applicationCursor: Bool { view.getTerminal().applicationCursor }
+
+    /// The PTY's foreground process group is the shell's while it waits for a command (the login
+    /// shell is its session leader, so its pgid is its pid); anything else in the foreground —
+    /// vim, less, a build — would take typed text as its own input. -1 (the PTY can't be asked)
+    /// counts as the shell's.
+    private var shellOwnsPrompt: Bool {
+        let foreground = tcgetpgrp(view.process.childfd)
+        return foreground == -1 || foreground == view.process.shellPid
     }
 
     /// Colours from the active theme, the editor's monospaced font at `fontSize` (already

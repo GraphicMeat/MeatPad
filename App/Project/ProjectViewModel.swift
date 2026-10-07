@@ -322,6 +322,19 @@ final class ProjectViewModel: ObservableObject {
         terminal.open(directory: directory)
     }
 
+    /// The terminal header's Git menu: types `item` at the shell's prompt (and runs it if it is a
+    /// run item), then focuses the terminal so the user can go on typing — a commit message
+    /// between the quotes. Nothing happens (but a beep) while another program owns the terminal.
+    func runGitMenuItem(_ item: GitMenuItem) {
+        let terminal = terminal
+        let keystrokes = GitMenuInput.keystrokes(
+            for: item.command, runs: item.runs, applicationCursor: terminal.applicationCursor
+        )
+        guard terminal.typeAtPrompt(keystrokes) else { return }
+        rememberResponderBeforeTerminal()
+        terminalFocusToken = UUID()
+    }
+
     /// The terminal view or anything inside it — SwiftTerm's ⌘F find bar moves focus to a field
     /// editor that is a subview of the terminal view, so `firstResponder === view` would miss it.
     private func isInsideTerminal(_ responder: NSResponder?) -> Bool {
