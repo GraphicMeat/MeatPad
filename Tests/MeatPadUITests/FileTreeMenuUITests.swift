@@ -272,6 +272,15 @@ final class FileTreeMenuUITests: FileTreeMenuUITestCase {
         XCTAssertFalse(row("inner.txt").exists, "clicking the folder's name unfolded it")
     }
 
+    /// A double-click on the name folds and unfolds it, like the chevron and the icon.
+    func testDoubleClickingAFolderNameUnfoldsAndFoldsIt() throws {
+        XCTAssertFalse(row("inner.txt").exists, "the folder starts unfolded")
+        row("sub").doubleClick()
+        XCTAssertTrue(row("inner.txt").waitForExistence(timeout: 5), "double-clicking the folder's name didn't unfold it")
+        row("sub").doubleClick()
+        XCTAssertTrue(row("inner.txt").waitForNonExistence(timeout: 5), "double-clicking the name again didn't fold it")
+    }
+
     /// Neither does the empty space to the right of the name.
     func testClickingTheEmptySpaceBesideAFolderNameSelectsItWithoutFolding() throws {
         pointOnRow("sub", fromLeft: 240).click()   // well to the right of the name, still on the row

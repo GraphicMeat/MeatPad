@@ -3,7 +3,7 @@ import AppKit
 import MeatPadKit
 
 /// Sidebar file tree: recursive disclosure over `TreeNode`, folder/doc SF Symbols,
-/// single click on a file opens it as a tab. The project folder itself is the top row (as in
+/// single click on a file opens it as a tab, double click on a folder's name folds it. The project folder itself is the top row (as in
 /// VS Code's Explorer), unfolded at first, and folds the whole tree like any folder.
 /// Right-click opens the VS Code-style menu (new, reveal, find, cut/copy/paste, copy path,
 /// rename, delete), shaped by Settings ▸ File Tree.
@@ -69,12 +69,18 @@ struct FileTreeView: View {
                 .accessibilityValue(isMenuTarget ? Text("Context menu open") : (isSelected ? Text("Selected") : Text(verbatim: "")))
                 // On the name, not the row: the window carries the folder's name too.
                 .accessibilityIdentifier(isRoot ? "file-tree-root" : "")
+                // Double-click on a folder's name folds it, like its chevron and icon. Simultaneous,
+                // so the single click still selects at once.
+                .simultaneousGesture(TapGesture(count: 2).onEnded {
+                    guard node.isDirectory else { return }
+                    withAnimation(.easeOut(duration: 0.15)) { viewModel.toggleFolder(node.url) }
+                })
         }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture {
                 // The name and everything to its right: select only. A file also opens; a folder
-                // does not fold — that is the chevron's and the icon's job.
+                // does not fold on one click — that is the chevron's and the icon's job, or a double-click on the name.
                 viewModel.selectedTreeItem = node.url
                 if !node.isDirectory { viewModel.open(file: node.url) }
             }
