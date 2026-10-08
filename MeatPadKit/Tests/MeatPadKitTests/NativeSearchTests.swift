@@ -105,6 +105,41 @@ final class NativeSearchTests: XCTestCase {
         XCTAssertEqual(matches.map(\.file.lastPathComponent), ["keep.txt"])
     }
 
+    func testLineNumbersCountEveryNewlineIncludingCRLFAndTrailingEmptyLine() async throws {
+        try makeFile("crlf.txt", "one\r\nneedle here\r\n\nneedle\n")
+
+        let matches = try await NativeSearch().search(SearchQuery(pattern: "needle"), in: tempDir)
+
+        XCTAssertEqual(matches.map(\.lineNumber), [2, 4])
+        XCTAssertEqual(matches.first?.lineText, "needle here\r")
+    }
+
+    func testCaseInsensitiveAsciiPrefilterStillFindsMixedCase() async throws {
+        try makeFile("a.txt", "xxxx NeEdLe xxxx\n")
+        try makeFile("b.txt", "nothing relevant\n")
+
+        let matches = try await NativeSearch().search(SearchQuery(pattern: "nEEDle"), in: tempDir)
+
+        XCTAssertEqual(matches.map(\.file.lastPathComponent), ["a.txt"])
+    }
+
+    func testCaseSensitiveLiteralOnlyMatchesExactCase() async throws {
+        try makeFile("a.txt", "NEEDLE\n")
+        try makeFile("b.txt", "needle\n")
+
+        let matches = try await NativeSearch().search(SearchQuery(pattern: "needle", caseSensitive: true), in: tempDir)
+
+        XCTAssertEqual(matches.map(\.file.lastPathComponent), ["b.txt"])
+    }
+
+    func testNonAsciiPatternStillFound() async throws {
+        try makeFile("a.txt", "café au lait\n")
+
+        let matches = try await NativeSearch().search(SearchQuery(pattern: "CAFÉ"), in: tempDir)
+
+        XCTAssertEqual(matches.count, 1)
+    }
+
     func testMatchCapStopsSearchAndStaysSorted() async throws {
         for i in 0..<40 { try makeFile("f\(i).txt", "needle\nneedle\n") }
 

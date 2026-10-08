@@ -57,25 +57,41 @@ public enum ProjectScanner {
         scan(root: root, showHidden: showHidden, expanded: [])
     }
 
-    /// Every regular file under `root` (depth first), without building a tree: memory stays flat
-    /// however big the project is. Same hidden-file and symlink rules as `scan`, minus the
-    /// `walkIgnoredNames`. `body` returns `false` to stop the walk early.
+    /// Every regular file under `root`, without building a tree: memory stays flat however big the
+    /// project is. Same hidden-file and symlink rules as `scan`, minus the `walkIgnoredNames`.
+    /// `body` returns `false` to stop the walk early.
     public static func forEachFile(root: URL, showHidden: Bool = false, _ body: (URL) -> Bool) {
-        var pending = [root]
-        while let directory = pending.popLast() {
-            let entries = (try? FileManager.default.contentsOfDirectory(
-                at: directory,
-                includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey]
-            )) ?? []
-            for url in entries {
-                let name = url.lastPathComponent
-                if walkIgnoredNames.contains(name) { continue }
-                if !showHidden && name.hasPrefix(".") { continue }
-                if isDirectory(url) {
-                    pending.append(url)
-                } else if !body(url) {
-                    return
+        var walker = FileWalker(root: root, showHidden: showHidden)
+        while let file = walker.next() {
+            if !body(file) { return }
+        }
+    }
+
+    /// Pull-style version of `forEachFile`, for callers that hand files out in batches (search):
+    /// only one directory listing is alive at a time. Order is unspecified.
+    public struct FileWalker {
+        private var pending: [URL]
+        private var entries: [URL] = []
+        private let showHidden: Bool
+
+        public init(root: URL, showHidden: Bool = false) {
+            pending = [root]
+            self.showHidden = showHidden
+        }
+
+        public mutating func next() -> URL? {
+            while true {
+                while let url = entries.popLast() {
+                    let name = url.lastPathComponent
+                    if ProjectScanner.walkIgnoredNames.contains(name) { continue }
+                    if !showHidden && name.hasPrefix(".") { continue }
+                    if ProjectScanner.isDirectory(url) { pending.append(url) } else { return url }
                 }
+                guard let directory = pending.popLast() else { return nil }
+                entries = (try? FileManager.default.contentsOfDirectory(
+                    at: directory,
+                    includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey]
+                )) ?? []
             }
         }
     }
