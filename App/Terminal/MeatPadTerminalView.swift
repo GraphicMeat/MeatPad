@@ -1,4 +1,5 @@
 import AppKit
+import MeatPadKit
 import SwiftTerm
 
 /// SwiftTerm's local-process terminal, with two MeatPad additions: it is one accessibility
@@ -27,10 +28,55 @@ final class MeatPadTerminalView: LocalProcessTerminalView {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
+    private var scrollMonitor: Any?
+    private var scroll = TerminalScrollAccumulator()
+
+    deinit { if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) } }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor); self.scrollMonitor = nil }
+        if window != nil {
+            scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                self?.handleScroll(event) ?? event
+            }
+        }
         // Never inside AppKit's mount (or the SwiftUI pass that triggered it): one turn later.
         DispatchQueue.main.async { [weak self] in self?.claimFocusIfWanted() }
+    }
+
+    /// SwiftTerm's own `scrollWheel` is not overridable and truncates every fractional trackpad
+    /// delta to a whole line per event, so a swipe flies past. This monitor takes the events that
+    /// land on the terminal and scrolls by accumulated whole lines: the scrollback on the normal
+    /// screen; on the alternate screen (less, vim, TUIs) wheel reports when the app asked for
+    /// the mouse, cursor keys otherwise.
+    private func handleScroll(_ event: NSEvent) -> NSEvent? {
+        guard let window, event.window === window,
+              window.contentView?.hitTest(event.locationInWindow)?.isDescendant(of: self) == true
+        else { return event }
+        if event.phase.contains(.began) || event.phase.contains(.mayBegin) { scroll.reset() }
+        let terminal = getTerminal()
+        let precise = event.hasPreciseScrollingDeltas
+        let lines = precise
+            ? scroll.lines(delta: Double(event.scrollingDeltaY), unit: Double(bounds.height) / Double(max(terminal.rows, 1)))
+            : scroll.lines(delta: Double(event.deltaY) * 3, unit: 1)
+        guard lines != 0 else { return nil }
+        let up = lines > 0
+        let count = abs(lines)
+        if !terminal.isCurrentBufferAlternate {
+            if up { scrollUp(lines: count) } else { scrollDown(lines: count) }
+        } else if allowMouseReporting && terminal.mouseMode != .off {
+            let point = convert(event.locationInWindow, from: nil)
+            let col = min(max(Int(point.x / (bounds.width / Double(max(terminal.cols, 1)))), 0), terminal.cols - 1)
+            let row = min(max(Int((bounds.height - point.y) / (bounds.height / Double(max(terminal.rows, 1)))), 0), terminal.rows - 1)
+            for _ in 0..<min(count, 20) {
+                terminal.sendEvent(buttonFlags: up ? 64 : 65, x: col, y: row, pixelX: Int(point.x), pixelY: Int(bounds.height - point.y))
+            }
+        } else {
+            let key = terminal.applicationCursor ? (up ? "\u{1b}OA" : "\u{1b}OB") : (up ? "\u{1b}[A" : "\u{1b}[B")
+            send(txt: String(repeating: key, count: min(count, 20)))
+        }
+        return nil
     }
 
     /// Takes focus if a request is pending and the view is in a window; the request is
