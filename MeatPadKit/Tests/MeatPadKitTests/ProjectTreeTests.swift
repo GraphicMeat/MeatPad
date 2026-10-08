@@ -162,6 +162,66 @@ final class ProjectTreeTests: XCTestCase {
         XCTAssertEqual(full.children?.first(where: { $0.name == "sub" })?.children?.map(\.name), ["inner.txt"])
     }
 
+    // MARK: - lazy expansion
+
+    func testScanOnlyDescendsIntoExpandedFolders() throws {
+        let open = try makeDir("open")
+        let closed = try makeDir("closed")
+        let deep = try makeDir("deep", in: open)
+        try makeFile("a.txt", in: open)
+        try makeFile("b.txt", in: closed)
+        try makeFile("c.txt", in: deep)
+
+        let node = ProjectScanner.scan(root: tempDir, expanded: [open])
+
+        let openNode = node.children?.first(where: { $0.name == "open" })
+        XCTAssertEqual(openNode?.children?.map(\.name), ["deep", "a.txt"])
+        XCTAssertEqual(openNode?.children?.first(where: { $0.name == "deep" })?.children, [])
+        XCTAssertEqual(node.children?.first(where: { $0.name == "closed" })?.children, [])
+    }
+
+    func testScanKeepsExpandedDescendantsOfExpandedFolders() throws {
+        let open = try makeDir("open")
+        let deep = try makeDir("deep", in: open)
+        try makeFile("c.txt", in: deep)
+
+        let node = ProjectScanner.scan(root: tempDir, expanded: [open, deep])
+
+        let deepNode = node.children?.first?.children?.first
+        XCTAssertEqual(deepNode?.children?.map(\.name), ["c.txt"])
+    }
+
+    // MARK: - forEachFile
+
+    func testForEachFileWalksEveryFileSkippingIgnoredAndHidden() throws {
+        let sub = try makeDir("sub")
+        let pods = try makeDir("Pods")
+        let git = try makeDir(".git")
+        try makeFile("a.txt")
+        try makeFile("b.txt", in: sub)
+        try makeFile("vendored.txt", in: pods)
+        try makeFile("HEAD", in: git)
+        try makeFile(".hidden")
+
+        var names: [String] = []
+        ProjectScanner.forEachFile(root: tempDir) { names.append($0.lastPathComponent); return true }
+
+        XCTAssertEqual(Set(names), ["a.txt", "b.txt"])
+    }
+
+    func testForEachFileStopsWhenBodyReturnsFalse() throws {
+        for i in 0..<5 { try makeFile("f\(i).txt") }
+
+        var count = 0
+        ProjectScanner.forEachFile(root: tempDir) { _ in count += 1; return count < 2 }
+
+        XCTAssertEqual(count, 2)
+    }
+
+    func testWalkIgnoredNamesExtendIgnoredNames() {
+        XCTAssertTrue(ProjectScanner.ignoredNames.isSubset(of: ProjectScanner.walkIgnoredNames))
+    }
+
     // MARK: - TreeNode identity
 
     func testTreeNodeIDIsURL() throws {

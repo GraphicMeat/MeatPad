@@ -96,6 +96,24 @@ final class NativeSearchTests: XCTestCase {
         XCTAssertEqual(matches.count, 0)
     }
 
+    func testSearchSkipsGeneratedFolders() async throws {
+        try makeFile("lib.txt", "needle\n", in: tempDir.appendingPathComponent("Pods", isDirectory: true))
+        try makeFile("keep.txt", "needle\n")
+
+        let matches = try await NativeSearch().search(SearchQuery(pattern: "needle"), in: tempDir)
+
+        XCTAssertEqual(matches.map(\.file.lastPathComponent), ["keep.txt"])
+    }
+
+    func testMatchCapStopsSearchAndStaysSorted() async throws {
+        for i in 0..<40 { try makeFile("f\(i).txt", "needle\nneedle\n") }
+
+        let matches = try await NativeSearch(maxMatches: 10).search(SearchQuery(pattern: "needle"), in: tempDir)
+
+        XCTAssertEqual(matches.count, 10)
+        XCTAssertEqual(matches.map(\.file.path), matches.map(\.file.path).sorted())
+    }
+
     // MARK: - multi-file sort
 
     func testMultiFileResultsSorted() async throws {

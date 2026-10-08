@@ -1,7 +1,7 @@
 import Foundation
 
-/// Native Swift `SearchEngine`. Walks the project tree via `ProjectScanner` (reuses its
-/// ignored-name + hidden-file rules rather than re-walking the filesystem), reads each
+/// Native Swift `SearchEngine`. Walks the project via `ProjectScanner.forEachFile` (shares its
+/// ignored-name + hidden-file rules, builds no tree), reads each
 /// candidate file concurrently, and matches literally or via `NSRegularExpression`.
 public struct NativeSearch: SearchEngine {
     private let maxFileSize: Int
@@ -16,19 +16,27 @@ public struct NativeSearch: SearchEngine {
         guard !query.pattern.isEmpty else { return [] }
 
         let regex = try Self.makeRegex(query)
-        let files = ProjectScanner.flatFileList(ProjectScanner.scan(root: root, showHidden: false))
+        var files: [URL] = []
+        ProjectScanner.forEachFile(root: root) { files.append($0); return true }
 
+        // Sliding window of in-flight files, so a big project never has every file's bytes
+        // (and match list) alive at once; stops as soon as the match cap is reached.
         var allMatches: [SearchMatch] = []
         try await withThrowingTaskGroup(of: [SearchMatch].self) { group in
-            for file in files {
-                if Task.isCancelled { break } // checked between files per spec
-                let maxFileSize = maxFileSize
-                group.addTask {
-                    Self.searchFile(file, query: query, regex: regex, maxFileSize: maxFileSize)
-                }
+            let maxFileSize = maxFileSize
+            var next = files.makeIterator()
+            func addNext() -> Bool {
+                guard !Task.isCancelled, let file = next.next() else { return false }
+                group.addTask { Self.searchFile(file, query: query, regex: regex, maxFileSize: maxFileSize) }
+                return true
+            }
+            for _ in 0..<max(4, ProcessInfo.processInfo.activeProcessorCount * 2) {
+                if !addNext() { break }
             }
             for try await matches in group {
                 allMatches.append(contentsOf: matches)
+                if allMatches.count >= maxMatches { group.cancelAll(); break }
+                _ = addNext()
             }
         }
 
@@ -37,9 +45,8 @@ public struct NativeSearch: SearchEngine {
             return lhs.lineNumber < rhs.lineNumber
         }
 
-        // ponytail: cap silently after collecting everything rather than short-circuiting
-        // the walk early; simplest correct behavior, revisit if huge repos make the
-        // full walk itself (not just result size) a perf problem.
+        // Stops reading files once the cap is reached, so which matches survive a capped
+        // search depends on read order; they are still returned sorted.
         if allMatches.count > maxMatches {
             allMatches.removeLast(allMatches.count - maxMatches)
         }
