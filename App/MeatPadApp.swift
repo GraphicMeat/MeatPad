@@ -819,15 +819,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { AppModel.shared.open(urls) }
     }
 
-    /// Dock icon click. With visible windows the click has already activated the app and
-    /// brought them forward, so there is nothing left to do — and returning true would hand it to
-    /// SwiftUI's default reopen, which can open a fresh window of the first scene: the
-    /// `WindowGroup("Note")` with no value (reported on macOS 27 as a new note window per click).
+    /// Dock icon click. Returning true would hand it to SwiftUI's default reopen, which can open
+    /// a fresh window of the first scene: the `WindowGroup("Note")` with no value (reported on
+    /// macOS 27 as a new note window per click), so every path here returns false.
+    /// With visible windows the click has already activated the app; under the default "Open All
+    /// Notes" setting the All Notes browser is brought up over them (it is a single-instance
+    /// `Window`, so this raises it rather than opening a second), while "New Note" leaves them
+    /// alone — a note per click would be noise.
     /// With none visible, General settings picks what opens — the All Notes browser (default) or
-    /// a fresh note — and false again keeps SwiftUI's default out of it.
+    /// a fresh note.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if flag {
-            windowsLog.notice("reopen: hasVisibleWindows=true, nothing opened")
+            if UserDefaults.standard.string(forKey: "dockClickAction") == "newNote" {
+                windowsLog.notice("reopen: hasVisibleWindows=true, nothing opened")
+            } else {
+                windowsLog.notice("reopen: hasVisibleWindows=true, raising allNotes")
+                dockAllNotes()
+            }
             return false
         }
         // A minimised window isn't "visible", but it is what the click is for: let AppKit
