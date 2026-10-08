@@ -40,34 +40,46 @@ struct ProjectWindow: View {
         )
     }
 
+    @ViewBuilder
+    private var sidebarPanel: some View {
+        switch viewModel.sidebarMode {
+        case .files: FileTreeView(viewModel: viewModel, search: searchViewModel)
+        case .search: ProjectSearchView(project: viewModel, viewModel: searchViewModel)
+        case .references: ReferencesView(project: viewModel)
+        }
+    }
+
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            // Full labels when they fit with room to spare; in a narrow sidebar only the active
+            // mode keeps its title and the others shrink to their icons — never a label
+            // jammed against the edge of the bar.
+            ViewThatFits(in: .horizontal) {
+                sidebarModeBar(compact: false)
+                sidebarModeBar(compact: true)
+            }
+            // Only the highlight pill glides; the panel below swaps at once (see below).
+            .animation(.easeOut(duration: 0.16), value: viewModel.sidebarMode)
+            .padding(3)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(.white.opacity(0.10), lineWidth: 0.5)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+
+            sidebarPanel
+                .transaction { $0.animation = nil }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(.ultraThinMaterial)
+        .navigationSplitViewColumnWidth(min: 250, ideal: 280, max: 340)
+    }
+
     var body: some View {
         NavigationSplitView {
-            VStack(spacing: 0) {
-                // Full labels when they fit with room to spare; in a narrow sidebar only the active
-                // mode keeps its title and the others shrink to their icons — never a label
-                // jammed against the edge of the bar.
-                ViewThatFits(in: .horizontal) {
-                    sidebarModeBar(compact: false)
-                    sidebarModeBar(compact: true)
-                }
-                .padding(3)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(.white.opacity(0.10), lineWidth: 0.5)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-
-                switch viewModel.sidebarMode {
-                case .files: FileTreeView(viewModel: viewModel, search: searchViewModel)
-                case .search: ProjectSearchView(project: viewModel, viewModel: searchViewModel)
-                case .references: ReferencesView(project: viewModel)
-                }
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-            .background(.ultraThinMaterial)
-            .navigationSplitViewColumnWidth(min: 250, ideal: 280, max: 340)
+            sidebar
         } detail: {
             // The GeometryReader sits outside the insets so it measures the whole detail area; the
             // terminal panel clamps its height against it.
@@ -147,11 +159,50 @@ struct ProjectWindow: View {
             #if DEBUG
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 viewModel.startTabFlipHarnessIfEnabled()
+                startSidebarFlipHarnessIfEnabled()
             }
             #endif
         }
         .onDisappear { AppModel.shared.projectWindowDidDisappear(viewModel) }
     }
+
+    #if DEBUG
+    /// Debug-only latency probe. MEATPAD_SIDEBAR_FLIP_TEST=<query> runs that project search,
+    /// then flips the sidebar Files <-> Search and logs the longest main-thread stall of each
+    /// flip ([SIDEBARFLIP]), then quits.
+    private func startSidebarFlipHarnessIfEnabled() {
+        guard let query = ProcessInfo.processInfo.environment["MEATPAD_SIDEBAR_FLIP_TEST"] else { return }
+        let project = viewModel, search = searchViewModel
+        Task { @MainActor in
+            project.sidebarMode = .search
+            search.query = query
+            let deadline = Date().addingTimeInterval(120)
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            while (search.isSearching || search.results.isEmpty) && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            NSLog("[SIDEBARFLIP] results=%d", search.results.count)
+            var last = CFAbsoluteTimeGetCurrent()
+            var worst = 0.0
+            let beat = Timer.scheduledTimer(withTimeInterval: 0.005, repeats: true) { _ in
+                let now = CFAbsoluteTimeGetCurrent()
+                worst = max(worst, now - last)
+                last = now
+            }
+            for i in 0..<6 {
+                worst = 0
+                last = CFAbsoluteTimeGetCurrent()
+                project.sidebarMode = i % 2 == 0 ? .files : .search
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                NSLog("[SIDEBARFLIP] to %@ stall=%.0fms", i % 2 == 0 ? "files" : "search", worst * 1000)
+            }
+            beat.invalidate()
+            NSLog("[SIDEBARFLIP] DONE")
+            NSApp.terminate(nil)
+        }
+    }
+    #endif
 
     /// Shows or hides the terminal panel. Not `toggleTerminal()`: a toolbar click leaves focus
     /// where it was, so with the editor focused ⌃`'s VS Code rule would focus the terminal
@@ -181,7 +232,7 @@ struct ProjectWindow: View {
     private func sidebarButton(_ title: String, icon: String, mode: ProjectViewModel.SidebarMode, compact: Bool) -> some View {
         let isActive = viewModel.sidebarMode == mode
         return Button {
-            withAnimation(.easeOut(duration: 0.16)) { viewModel.sidebarMode = mode }
+            viewModel.sidebarMode = mode
         } label: {
             Group {
                 if compact && !isActive {

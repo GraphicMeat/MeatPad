@@ -25,7 +25,9 @@ struct MatchResultsList: View {
                         }
                     }
                     if !collapsedFiles.contains(group.file) {
-                        ForEach(Array(group.matches.enumerated()), id: \.offset) { _, match in
+                        // Indices, not `Array(enumerated())`: no per-body copy of every group's matches.
+                        ForEach(group.matches.indices, id: \.self) { index in
+                            let match = group.matches[index]
                             MatchRow(match: match) { open(match) }
                         }
                     }

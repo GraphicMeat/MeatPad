@@ -23,7 +23,9 @@ final class ProjectSearchViewModel: ObservableObject {
     @Published var wholeWord = false { didSet { scheduleSearch() } }
     /// "Find in Folder" from the file tree: search only under this folder. `nil` = whole project.
     @Published var scopeFolder: URL? { didSet { scheduleSearch() } }
-    @Published private(set) var results: [SearchMatch] = []
+    @Published private(set) var results: [SearchMatch] = [] { didSet { groupedResults = Self.group(results) } }
+    /// `results` grouped for the list, rebuilt when they change — not on every view update.
+    private(set) var groupedResults: [FileMatchGroup] = []
     @Published private(set) var errorMessage: String?
     @Published private(set) var isSearching = false
     /// Bumped by the Cmd+Shift+F command to refocus the query field when the sidebar is
@@ -54,7 +56,7 @@ final class ProjectSearchViewModel: ObservableObject {
 
     /// `results`, grouped by file and kept in the engine's own file/line sort order (no
     /// re-sorting needed — just a linear grouping pass).
-    var groupedResults: [FileMatchGroup] {
+    private static func group(_ results: [SearchMatch]) -> [FileMatchGroup] {
         var groups: [FileMatchGroup] = []
         for match in results {
             if groups.isEmpty == false, groups[groups.count - 1].file == match.file {
