@@ -18,10 +18,10 @@ extension TreeNode {
     /// (e.g. an ancestor is still folded).
     public func settingChildren(_ newChildren: [TreeNode]?, at target: URL) -> TreeNode {
         var copy = self
-        if url == target {
+        if url.path == target.path {
             copy.children = newChildren
         } else if var kids = children,
-                  let index = kids.firstIndex(where: { $0.url == target || target.path.hasPrefix($0.url.path + "/") }) {
+                  let index = kids.firstIndex(where: { $0.url.path == target.path || target.path.hasPrefix($0.url.path + "/") }) {
             kids[index] = kids[index].settingChildren(newChildren, at: target)
             copy.children = kids
         }

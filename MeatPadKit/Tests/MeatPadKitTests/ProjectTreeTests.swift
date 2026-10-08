@@ -165,6 +165,11 @@ final class ProjectTreeTests: XCTestCase {
 
     // MARK: - lazy expansion
 
+    /// The URL a listing hands out for `name` — expansion is keyed by these, not by hand-built URLs.
+    private func listedURL(_ name: String, in directory: URL) -> URL {
+        ProjectScanner.scanShallow(root: directory).children!.first { $0.name == name }!.url
+    }
+
     func testScanOnlyDescendsIntoExpandedFolders() throws {
         let open = try makeDir("open")
         let closed = try makeDir("closed")
@@ -173,7 +178,7 @@ final class ProjectTreeTests: XCTestCase {
         try makeFile("b.txt", in: closed)
         try makeFile("c.txt", in: deep)
 
-        let node = ProjectScanner.scan(root: tempDir, expanded: [open])
+        let node = ProjectScanner.scan(root: tempDir, expanded: [listedURL("open", in: tempDir)])
 
         let openNode = node.children?.first(where: { $0.name == "open" })
         XCTAssertEqual(openNode?.children?.map(\.name), ["deep", "a.txt"])
@@ -185,8 +190,9 @@ final class ProjectTreeTests: XCTestCase {
         let open = try makeDir("open")
         let deep = try makeDir("deep", in: open)
         try makeFile("c.txt", in: deep)
+        let openURL = listedURL("open", in: tempDir)
 
-        let node = ProjectScanner.scan(root: tempDir, expanded: [open, deep])
+        let node = ProjectScanner.scan(root: tempDir, expanded: [openURL, listedURL("deep", in: openURL)])
 
         let deepNode = node.children?.first?.children?.first
         XCTAssertEqual(deepNode?.children?.map(\.name), ["c.txt"])
@@ -197,17 +203,17 @@ final class ProjectTreeTests: XCTestCase {
         let deep = try makeDir("deep", in: sub)
         try makeFile("c.txt", in: deep)
         try makeFile("other.txt")
+        let subURL = listedURL("sub", in: tempDir)
+        let deepURL = listedURL("deep", in: subURL)
 
         let shallow = ProjectScanner.scanShallow(root: tempDir)
-        let loadedSub = ProjectScanner.scan(root: sub, expanded: [])
-        let spliced = shallow.settingChildren(loadedSub.children, at: sub)
+        let spliced = shallow.settingChildren(ProjectScanner.scanShallow(root: subURL).children, at: subURL)
         XCTAssertEqual(spliced.children?.first?.children?.map(\.name), ["deep"])
 
-        let loadedDeep = ProjectScanner.scan(root: deep, expanded: [])
-        let deeper = spliced.settingChildren(loadedDeep.children, at: deep)
+        let deeper = spliced.settingChildren(ProjectScanner.scanShallow(root: deepURL).children, at: deepURL)
         XCTAssertEqual(deeper.children?.first?.children?.first?.children?.map(\.name), ["c.txt"])
 
-        let folded = deeper.settingChildren([], at: sub)
+        let folded = deeper.settingChildren([], at: subURL)
         XCTAssertEqual(folded.children?.first?.children, [])
         XCTAssertEqual(folded.children?.map(\.name), ["sub", "other.txt"])
     }
@@ -215,7 +221,7 @@ final class ProjectTreeTests: XCTestCase {
     func testSettingChildrenOnMissingTargetChangesNothing() throws {
         _ = try makeDir("sub")
         let shallow = ProjectScanner.scanShallow(root: tempDir)
-        let ghost = tempDir.appendingPathComponent("sub/ghost")
+        let ghost = listedURL("sub", in: tempDir).appendingPathComponent("ghost")
 
         XCTAssertEqual(shallow.settingChildren([], at: ghost), shallow)
     }
