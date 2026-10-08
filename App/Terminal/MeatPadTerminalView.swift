@@ -104,6 +104,22 @@ final class MeatPadTerminalView: LocalProcessTerminalView {
         String(decoding: getTerminal().getBufferAsData(kind: .active), as: UTF8.self)
     }
 
+    /// ⇧⏎ sends ESC + CR (a soft newline, as in VS Code) instead of the bare CR SwiftTerm maps it
+    /// to. SwiftTerm's `keyDown` is not open for override, but AppKit offers every key-down to
+    /// `performKeyEquivalent` first; only the focused terminal takes it.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags
+        guard window?.firstResponder === self,
+              TerminalSoftNewline.matches(
+                  keyCode: event.keyCode,
+                  shift: flags.contains(.shift),
+                  otherModifiers: !flags.isDisjoint(with: [.control, .option, .command])
+              )
+        else { return super.performKeyEquivalent(with: event) }
+        send(TerminalSoftNewline.sequence)
+        return true
+    }
+
     /// Every keystroke the terminal wants to send to the process passes through here
     /// (`TerminalViewDelegate.send`). With the shell gone there is nobody to send to: ⏎ (0x0D)
     /// restarts, everything else is dropped.

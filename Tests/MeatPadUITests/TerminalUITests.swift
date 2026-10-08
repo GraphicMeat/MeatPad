@@ -178,6 +178,22 @@ final class TerminalUITests: TerminalUITestCase {
         eventually("the command's output never appeared") { self.terminalText.contains("mp_ok") }
     }
 
+    /// ⇧⏎ must reach the program as ESC + CR (VS Code's soft newline), not the bare CR of ⏎.
+    /// `cat -v` echoes the escape as `^[`, which plain ⏎ never produces.
+    func testShiftReturnSendsEscapeCarriageReturn() throws {
+        showTerminalAndWaitForShell()
+        run("cat -v")
+        eventually("cat never started") { self.terminalText.contains("cat -v") }
+
+        app.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+        XCTAssertFalse(terminalText.contains("^["), "plain ⏎ produced an escape")
+
+        app.typeKey(.return, modifierFlags: .shift)
+        eventually("⇧⏎ did not send ESC + CR") { self.terminalText.contains("^[") }
+        app.typeKey("c", modifierFlags: .control)
+    }
+
     func testToggleHidesAndRestoresPanelWithScrollback() throws {
         // An open editor with the caret in it, so hiding the terminal can be shown to hand focus
         // back there. (Before the terminal is shown, the window's only text view is the editor.)
