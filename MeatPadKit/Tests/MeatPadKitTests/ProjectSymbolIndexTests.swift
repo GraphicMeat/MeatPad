@@ -140,15 +140,49 @@ final class ProjectSymbolIndexTests: XCTestCase {
 
     func testOversizeFileIsSkipped() async {
         let url = tempDir.appendingPathComponent("huge.txt")
-        // Just over the 4MB cap; padding chars aren't identifier chars so a
+        // Just over the 1MB cap; padding chars aren't identifier chars so a
         // false-positive match here means the size cap wasn't applied.
-        let padding = String(repeating: "x ", count: 2_100_001) // > 4MB of UTF-8 bytes
+        let padding = String(repeating: "x ", count: 510_000) // > 1MB of UTF-8 bytes
         try? Data((padding + " hugeWord").utf8).write(to: url)
 
         let index = ProjectSymbolIndex()
         await index.build(files: [url])
 
         XCTAssertFalse(index.complete(prefix: "huge", excludingFile: nil, limit: 20).contains("hugeWord"))
+    }
+
+    // MARK: - Bounded + incremental
+
+    func testBuildKeepsOnlyMaxFilesFiles() async {
+        let files = (0..<5).map { write("f\($0).swift", "uniqueWord\($0)") }
+        let index = ProjectSymbolIndex(maxFiles: 3)
+        await index.build(files: files)
+
+        XCTAssertEqual(files.filter { index.isIndexed($0) }.count, 3)
+    }
+
+    func testAddIndexesNewFilesAndKeepsExistingOnes() async {
+        let a = write("a.swift", "firstWord")
+        let b = write("b.swift", "secondWord")
+        let index = ProjectSymbolIndex()
+        await index.build(files: [a])
+        await index.add(files: [a, b])
+
+        XCTAssertTrue(index.complete(prefix: "first", excludingFile: nil, limit: 20).contains("firstWord"))
+        XCTAssertTrue(index.complete(prefix: "second", excludingFile: nil, limit: 20).contains("secondWord"))
+    }
+
+    func testAddStopsAtMaxFilesUnlessIgnoringLimit() async {
+        let a = write("a.swift", "firstWord")
+        let b = write("b.swift", "secondWord")
+        let c = write("c.swift", "thirdWord")
+        let index = ProjectSymbolIndex(maxFiles: 1)
+        await index.add(files: [a])
+        await index.add(files: [b])
+        XCTAssertFalse(index.isIndexed(b))
+
+        await index.add(files: [c], ignoringLimit: true)
+        XCTAssertTrue(index.isIndexed(c))
     }
 
     // MARK: - Case handling

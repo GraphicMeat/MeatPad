@@ -7,7 +7,9 @@ import Foundation
 /// synchronous against the latest built snapshot so the completion path never
 /// touches disk.
 public final class ProjectSymbolIndex: @unchecked Sendable {
-    private let maxFileSize = 4_000_000
+    /// Bounds what the index keeps in RAM: per-file word tables dominate, so cap both file size and file count.
+    private let maxFileSize = 1_000_000
+    private let maxFiles: Int
 
     // ponytail: single global lock guarding the whole snapshot rather than
     // per-file locks — updateFile/removeFile/complete are all main-thread
@@ -18,7 +20,16 @@ public final class ProjectSymbolIndex: @unchecked Sendable {
     private var wordCounts: [URL: [String: Int]] = [:] // per-file word -> count
     private var buildGeneration = 0
 
-    public init() {}
+    public init(maxFiles: Int = 2_000) {
+        self.maxFiles = maxFiles
+    }
+
+    /// True when `url` already has a table in the index.
+    public func isIndexed(_ url: URL) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return wordCounts[url] != nil
+    }
 
     /// Full build: reads and tokenizes `files` concurrently, then replaces the
     /// entire snapshot. Cancellable — checked between files; a cancelled build
@@ -32,21 +43,45 @@ public final class ProjectSymbolIndex: @unchecked Sendable {
             return buildGeneration
         }()
 
+        let collected = await Self.tokenizeAll(Array(files.prefix(maxFiles)), maxFileSize: maxFileSize)
+
+        install(collected, generation: generation)
+    }
+
+    /// Incremental: reads and tokenizes only the files not indexed yet and merges them in, leaving
+    /// the rest of the snapshot alone. New files beyond `maxFiles` are dropped unless
+    /// `ignoringLimit` (open tabs always get indexed).
+    public func add(files: [URL], ignoringLimit: Bool = false) async {
+        let fresh = files.filter { !isIndexed($0) }
+        guard !fresh.isEmpty else { return }
+        let collected = await Self.tokenizeAll(fresh, maxFileSize: maxFileSize)
+        merge(collected, ignoringLimit: ignoringLimit)
+    }
+
+    private func merge(_ collected: [URL: [String: Int]], ignoringLimit: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        for (file, counts) in collected where !counts.isEmpty {
+            if ignoringLimit || wordCounts.count < maxFiles || wordCounts[file] != nil {
+                wordCounts[file] = counts
+            }
+        }
+    }
+
+    private static func tokenizeAll(_ files: [URL], maxFileSize: Int) async -> [URL: [String: Int]] {
         var collected: [URL: [String: Int]] = [:]
         await withTaskGroup(of: (URL, [String: Int]?).self) { group in
             for file in files {
                 if Task.isCancelled { break } // checked between files per NativeSearch precedent
-                let maxFileSize = maxFileSize
                 group.addTask {
-                    (file, Self.tokenize(file, maxFileSize: maxFileSize))
+                    (file, tokenize(file, maxFileSize: maxFileSize))
                 }
             }
             for await (file, counts) in group {
                 if let counts { collected[file] = counts }
             }
         }
-
-        install(collected, generation: generation)
+        return collected
     }
 
     /// Synchronous install of a completed build's snapshot, guarded by `lock`.
