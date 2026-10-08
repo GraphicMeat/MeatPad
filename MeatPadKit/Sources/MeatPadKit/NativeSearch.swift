@@ -70,7 +70,13 @@ public struct NativeSearch: SearchEngine {
             guard !Self.isBinary(data) else { return [] }
             // Most files hold no hit at all: rule them out on the raw bytes, before decoding the text.
             if regex == nil, !Self.mayContain(data, query.pattern, caseSensitive: query.caseSensitive) { return [] }
-            guard let content = String(data: data, encoding: .utf8) else { return [] }
+            guard var content = String(data: data, encoding: .utf8) else { return [] }
+
+            // ASCII literal (the common case): find hits in the bytes and cut out only the lines that
+            // hold one. Regex and non-ASCII patterns walk every line instead.
+            if regex == nil, query.pattern.utf8.allSatisfy({ $0 < 0x80 }) {
+                return content.withUTF8 { Self.hitDrivenMatches(in: $0, query: query, file: url) }
+            }
 
             var matches: [SearchMatch] = []
             let utf8 = content.utf8
@@ -92,6 +98,55 @@ public struct NativeSearch: SearchEngine {
             }
             return matches
         }
+    }
+
+    /// Scans the bytes for an ASCII `query.pattern`; for each hit, counts the newlines since the last
+    /// one (line number), cuts out that single line and runs the normal per-line matcher on it. No
+    /// String is made for lines without a hit. Lines split on "\n" only, like the line walk.
+    private static func hitDrivenMatches(in bytes: UnsafeBufferPointer<UInt8>, query: SearchQuery, file: URL) -> [SearchMatch] {
+        let needle = Array(query.pattern.utf8)
+        let folded = needle.map { $0 >= 65 && $0 <= 90 ? $0 | 0x20 : $0 }
+        let isLetter = folded.map { $0 >= 97 && $0 <= 122 }
+        guard !needle.isEmpty, let base = bytes.baseAddress, needle.count <= bytes.count else { return [] }
+        let last = bytes.count - needle.count
+
+        func hit(at i: Int) -> Bool {
+            var j = 0
+            if query.caseSensitive {
+                while j < needle.count, bytes[i + j] == needle[j] { j += 1 }
+            } else {
+                while j < folded.count, (isLetter[j] ? bytes[i + j] | 0x20 : bytes[i + j]) == folded[j] { j += 1 }
+            }
+            return j == needle.count
+        }
+
+        var matches: [SearchMatch] = []
+        var lineNumber = 1
+        var lineStart = 0
+        var counted = 0
+        var i = 0
+        while i <= last {
+            // Jump to the next byte that could start a hit (either case of the first letter).
+            let first = needle[0]
+            let lower = folded[0]
+            if query.caseSensitive {
+                guard let found = memchr(base + i, Int32(first), bytes.count - i) else { break }
+                i = UnsafeRawPointer(found) - UnsafeRawPointer(base)
+            } else {
+                while i <= last, (isLetter[0] ? bytes[i] | 0x20 : bytes[i]) != lower { i += 1 }
+                if i > last { break }
+            }
+            guard i <= last, hit(at: i) else { i += 1; continue }
+            while counted < i {
+                if bytes[counted] == 10 { lineNumber += 1; lineStart = counted + 1 }
+                counted += 1
+            }
+            let end = memchr(base + i, 10, bytes.count - i).map { UnsafeRawPointer($0) - UnsafeRawPointer(base) } ?? bytes.count
+            let line = String(decoding: UnsafeBufferPointer(rebasing: bytes[lineStart..<end]), as: UTF8.self)
+            matches.append(contentsOf: literalMatches(query, in: line, lineNumber: lineNumber, file: file))
+            i = end
+        }
+        return matches
     }
 
     /// Byte-level "could this file contain the pattern?" — never a false negative for an ASCII

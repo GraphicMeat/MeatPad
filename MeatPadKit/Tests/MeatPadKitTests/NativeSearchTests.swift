@@ -140,6 +140,36 @@ final class NativeSearchTests: XCTestCase {
         XCTAssertEqual(matches.count, 1)
     }
 
+    func testHitDrivenFindsEveryHitAcrossLinesStartAndEndOfFile() async throws {
+        try makeFile("a.txt", "needle first\nplain\ntwo needle and NEEDLE\n\nlast needle")
+
+        let matches = try await NativeSearch().search(SearchQuery(pattern: "needle"), in: tempDir)
+
+        XCTAssertEqual(matches.map(\.lineNumber), [1, 3, 3, 5])
+        XCTAssertEqual(matches.map(\.rangeInLine), [0..<6, 4..<10, 15..<21, 5..<11])
+        XCTAssertEqual(matches[1].lineText, "two needle and NEEDLE")
+    }
+
+    func testHitDrivenCaseSensitiveAndWholeWord() async throws {
+        try makeFile("a.txt", "needles\nneedle\nNeedle\n")
+
+        let sensitive = try await NativeSearch().search(SearchQuery(pattern: "needle", caseSensitive: true), in: tempDir)
+        XCTAssertEqual(sensitive.map(\.lineNumber), [1, 2])
+
+        let whole = try await NativeSearch().search(SearchQuery(pattern: "needle", wholeWord: true), in: tempDir)
+        XCTAssertEqual(whole.map(\.lineNumber), [2, 3])
+    }
+
+    func testPatternLongerThanFileAndPatternWithNewlineFindNothing() async throws {
+        try makeFile("a.txt", "ab\ncd\n")
+
+        let tooLong = try await NativeSearch().search(SearchQuery(pattern: "abcdefghij"), in: tempDir)
+        let acrossLines = try await NativeSearch().search(SearchQuery(pattern: "ab\ncd"), in: tempDir)
+
+        XCTAssertTrue(tooLong.isEmpty)
+        XCTAssertTrue(acrossLines.isEmpty)
+    }
+
     func testMatchCapStopsSearchAndStaysSorted() async throws {
         for i in 0..<40 { try makeFile("f\(i).txt", "needle\nneedle\n") }
 
