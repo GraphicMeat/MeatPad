@@ -12,6 +12,23 @@ public struct TreeNode: Identifiable, Equatable, Sendable {
     public var children: [TreeNode]?
 }
 
+extension TreeNode {
+    /// A copy of this tree with `target`'s children replaced — how a folder that was just unfolded
+    /// (or folded) is spliced in without rescanning the rest. No-op when `target` isn't in the tree
+    /// (e.g. an ancestor is still folded).
+    public func settingChildren(_ newChildren: [TreeNode]?, at target: URL) -> TreeNode {
+        var copy = self
+        if url == target {
+            copy.children = newChildren
+        } else if var kids = children, target.path.hasPrefix(url.path + "/"),
+                  let index = kids.firstIndex(where: { $0.url == target || target.path.hasPrefix($0.url.path + "/") }) {
+            kids[index] = kids[index].settingChildren(newChildren, at: target)
+            copy.children = kids
+        }
+        return copy
+    }
+}
+
 public enum ProjectScanner {
     /// Exact set referenced by later tasks (sidebar, quick-open) — don't change without
     /// checking callers.

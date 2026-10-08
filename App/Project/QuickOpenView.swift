@@ -10,7 +10,9 @@ struct QuickOpenView: View {
 
     @State private var query = ""
     @State private var matches: [FuzzyMatcher.Match] = []
-    @State private var rankedCandidates: [(url: URL, relativePath: String)] = []
+    /// Project-relative paths of every file, read off-main when the overlay opens and dropped when it
+    /// closes (the project keeps no file list of its own). URLs are rebuilt on open, to keep this small.
+    @State private var rankedCandidates: [String] = []
     @State private var selection = 0
     @FocusState private var focused: Bool
 
@@ -51,9 +53,9 @@ struct QuickOpenView: View {
                             ForEach(Array(matches.enumerated()), id: \.offset) { row, match in
                                 if rankedCandidates.indices.contains(match.candidateIndex) {
                                     let candidate = rankedCandidates[match.candidateIndex]
-                                    resultRow(candidate: candidate, match: match, isSelected: row == selection)
+                                    resultRow(relativePath: candidate, match: match, isSelected: row == selection)
                                         .id(row)
-                                        .onTapGesture { open(candidate.url) }
+                                        .onTapGesture { open(candidate) }
                                 }
                             }
                         }
@@ -68,9 +70,10 @@ struct QuickOpenView: View {
         .frame(maxHeight: 420)
         .fixedSize(horizontal: false, vertical: true)
         .glassPanel(cornerRadius: 20)
-        .onAppear {
+        .onAppear { focused = true }
+        .task {
+            await loadCandidates()
             rerank()
-            focused = true
         }
         .task(id: query) {
             try? await Task.sleep(nanoseconds: 50_000_000)
@@ -80,19 +83,30 @@ struct QuickOpenView: View {
         }
     }
 
-    /// Snapshots the current file list into `rankedCandidates` and ranks `matches` against
-    /// that SAME array. FSEvents can republish `viewModel.tree` (and thus a fresh `candidates`
-    /// list) between renders while the overlay is open; ranking and subscripting against one
-    /// stored snapshot keeps `match.candidateIndex` valid for both the list body and Return-to-open.
+    /// Walks the project once (off the main thread, stopping if the overlay closes) and stores the
+    /// result. Ranking and opening both read this one array, so `match.candidateIndex` stays valid
+    /// for the list body and Return-to-open.
+    private func loadCandidates() async {
+        let root = viewModel.root
+        let work = Task.detached(priority: .userInitiated) { () -> [String] in
+            let rootPath = root.path
+            var paths: [String] = []
+            ProjectScanner.forEachFile(root: root) { url in
+                paths.append(Self.relativePath(url.path, rootPath: rootPath))
+                return !Task.isCancelled
+            }
+            return paths.sorted()
+        }
+        rankedCandidates = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
+    }
+
     private func rerank() {
-        let candidates: [(url: URL, relativePath: String)] = ProjectScanner.flatFileList(viewModel.tree).map { ($0, Self.relativePath($0, root: viewModel.root)) }
-        rankedCandidates = candidates
-        matches = FuzzyMatcher.rank(query: query, candidates: candidates.map(\.relativePath), limit: 50)
+        matches = FuzzyMatcher.rank(query: query, candidates: rankedCandidates, limit: 50)
     }
 
     @ViewBuilder
-    private func resultRow(candidate: (url: URL, relativePath: String), match: FuzzyMatcher.Match, isSelected: Bool) -> some View {
-        Text(Self.attributed(candidate.relativePath, matchedIndices: match.matchedIndices))
+    private func resultRow(relativePath: String, match: FuzzyMatcher.Match, isSelected: Bool) -> some View {
+        Text(Self.attributed(relativePath, matchedIndices: match.matchedIndices))
             .lineLimit(1)
             .truncationMode(.middle)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -121,11 +135,11 @@ struct QuickOpenView: View {
         guard matches.indices.contains(selection) else { return }
         let candidateIndex = matches[selection].candidateIndex
         guard rankedCandidates.indices.contains(candidateIndex) else { return }
-        open(rankedCandidates[candidateIndex].url)
+        open(rankedCandidates[candidateIndex])
     }
 
-    private func open(_ url: URL) {
-        viewModel.open(file: url)
+    private func open(_ relativePath: String) {
+        viewModel.open(file: viewModel.root.appendingPathComponent(relativePath))
         dismiss()
     }
 
@@ -133,9 +147,7 @@ struct QuickOpenView: View {
         viewModel.quickOpenVisible = false
     }
 
-    private static func relativePath(_ url: URL, root: URL) -> String {
-        let rootPath = root.standardizedFileURL.path
-        let filePath = url.standardizedFileURL.path
+    nonisolated private static func relativePath(_ filePath: String, rootPath: String) -> String {
         guard filePath.hasPrefix(rootPath) else { return filePath }
         var relative = String(filePath.dropFirst(rootPath.count))
         if relative.hasPrefix("/") { relative.removeFirst() }

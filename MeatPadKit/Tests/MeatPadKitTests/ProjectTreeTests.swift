@@ -191,6 +191,34 @@ final class ProjectTreeTests: XCTestCase {
         XCTAssertEqual(deepNode?.children?.map(\.name), ["c.txt"])
     }
 
+    func testSettingChildrenSplicesAFoldedFolderInPlace() throws {
+        let sub = try makeDir("sub")
+        let deep = try makeDir("deep", in: sub)
+        try makeFile("c.txt", in: deep)
+        try makeFile("other.txt")
+
+        let shallow = ProjectScanner.scanShallow(root: tempDir)
+        let loadedSub = ProjectScanner.scan(root: sub, expanded: [])
+        let spliced = shallow.settingChildren(loadedSub.children, at: sub)
+        XCTAssertEqual(spliced.children?.first?.children?.map(\.name), ["deep"])
+
+        let loadedDeep = ProjectScanner.scan(root: deep, expanded: [])
+        let deeper = spliced.settingChildren(loadedDeep.children, at: deep)
+        XCTAssertEqual(deeper.children?.first?.children?.first?.children?.map(\.name), ["c.txt"])
+
+        let folded = deeper.settingChildren([], at: sub)
+        XCTAssertEqual(folded.children?.first?.children, [])
+        XCTAssertEqual(folded.children?.map(\.name), ["sub", "other.txt"])
+    }
+
+    func testSettingChildrenOnMissingTargetChangesNothing() throws {
+        _ = try makeDir("sub")
+        let shallow = ProjectScanner.scanShallow(root: tempDir)
+        let ghost = tempDir.appendingPathComponent("sub/ghost")
+
+        XCTAssertEqual(shallow.settingChildren([], at: ghost), shallow)
+    }
+
     // MARK: - forEachFile
 
     func testForEachFileWalksEveryFileSkippingIgnoredAndHidden() throws {

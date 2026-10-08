@@ -39,8 +39,11 @@ final class ProjectViewModel: ObservableObject {
         didSet { if let selectedTab { selectedTreeItem = selectedTab } }
     }
     /// Folders currently unfolded in the sidebar tree. Kept here, not in the view, so a rescan
-    /// (which replaces the tree) doesn't fold everything back up.
-    @Published var expandedFolders: Set<URL> = []
+    /// (which replaces the tree) doesn't fold everything back up. The tree only holds the
+    /// contents of these: unfolding reads that one folder in, folding drops it from memory.
+    @Published var expandedFolders: Set<URL> = [] {
+        didSet { expansionChanged(from: oldValue) }
+    }
     func toggleFolder(_ url: URL) {
         if expandedFolders.contains(url) { expandedFolders.remove(url) } else { expandedFolders.insert(url) }
     }
@@ -121,13 +124,10 @@ final class ProjectViewModel: ObservableObject {
     private var scanTask: Task<Void, Never>?
 
     /// Project-wide identifier index for completion (Task 4 wires it into
-    /// `CompletionController`). Rebuilt off the full tree after every `rescan()` —
-    /// never off the shallow initial tree, which has placeholder children.
+    /// `CompletionController`). Bounded: it covers the files in unfolded folders plus open
+    /// tabs, grown as folders unfold and kept fresh from watcher paths — never a walk of the
+    /// whole project.
     let symbolIndex = ProjectSymbolIndex()
-    /// The in-flight index build kicked off after a rescan. Cancelled/replaced the same
-    /// way as `scanTask`; `ProjectSymbolIndex.build` is itself supersede-safe (generation
-    /// check), so this is belt-and-suspenders against piling up redundant builds.
-    private var indexTask: Task<Void, Never>?
 
     init(root: URL) {
         self.root = root
@@ -143,8 +143,9 @@ final class ProjectViewModel: ObservableObject {
         // The project folder is the tree's top row; it starts unfolded. Kept in the set, so a
         // rescan (which replaces the tree) leaves it the way the user left it.
         expandedFolders = [root]
-        self.watcher = DirectoryWatcher(root: root) { [weak self] in
+        self.watcher = DirectoryWatcher(root: root, ignoring: ProjectScanner.ignoredNames) { [weak self] paths in
             self?.rescan()
+            self?.refreshIndex(paths)
         }
         rescan()
         lspManager.onStatusChange = { [weak self] statuses in
@@ -186,50 +187,66 @@ final class ProjectViewModel: ObservableObject {
         // Restored/pre-opened tabs above bypass `open(file:)` (they assign `tabs`
         // directly to preserve order/selection), so notify the LSP manager for them here.
         for url in tabs { notifyLSPDocumentOpened(url) }
+        indexFiles(tabs, ignoringLimit: true)
         prewarmHighlighting(for: tabs)
         // A property observer doesn't fire for assignments made in `init`, so a restored selection
         // reaches the tree here.
         selectedTreeItem = selectedTab
     }
 
-    /// Runs a full recursive scan off the main actor and swaps it in when done. Cancels
-    /// any scan already in flight first, so the watcher firing repeatedly during a big
-    /// FS change (e.g. a git checkout) doesn't queue up redundant work. Once the new tree
-    /// lands, kicks off a symbol-index rebuild from it (never from the shallow initial
-    /// tree, which has placeholder children).
+    /// Re-lists the unfolded folders off the main actor and swaps the result in. Cancels any
+    /// scan already in flight first, so the watcher firing repeatedly during a big FS change
+    /// (e.g. a git checkout) doesn't queue up redundant work. Folded folders are never read.
     func rescan() {
         scanTask?.cancel()
         let root = root
+        let expanded = expandedFolders
         scanTask = Task.detached(priority: .userInitiated) { [weak self] in
-            let scanned = ProjectScanner.scan(root: root)
+            let scanned = ProjectScanner.scan(root: root, expanded: expanded)
             guard !Task.isCancelled else { return }
             await MainActor.run { [weak self] in
                 guard let self, !Task.isCancelled else { return }
+                // A folder was unfolded or folded while this scan ran: its result would undo that.
+                guard self.expandedFolders == expanded else { return self.rescan() }
                 self.tree = scanned
-                self.rebuildSymbolIndex()
+                self.indexFiles(ProjectScanner.flatFileList(scanned))
             }
         }
     }
 
-    /// Rebuilds the project symbol index from the current (full) tree. Called after every
-    /// `rescan()` completes — including the one the FSEvents watcher triggers on any disk
-    /// change under `root`.
-    //
-    // ponytail: DirectoryWatcher's callback here is a bare debounced "something changed"
-    // signal (no per-path payload), so a disk change anywhere forces a full re-tokenize of
-    // every file rather than an incremental `updateFile`/`removeFile` on just the paths
-    // that moved. `ProjectSymbolIndex.build` is generation-guarded (a superseding call
-    // always wins), so a burst of watcher events during e.g. a git checkout just cancels
-    // stale builds in favor of the latest tree, not a build-up of duplicate work. Upgrade
-    // path if this shows up as jank on huge trees: thread FSEvents' per-path info
-    // (`kFSEventStreamCreateFlagFileEvents` is already set) out of `DirectoryWatcher`'s
-    // callback and route the changed URLs straight to `updateFile`/`removeFile` instead.
-    private func rebuildSymbolIndex() {
-        indexTask?.cancel()
-        let files = ProjectScanner.flatFileList(tree)
+    /// Splices a just-unfolded folder's contents into the tree (indexing its files), or drops a
+    /// just-folded one's, so the tree holds only what the sidebar can show.
+    private func expansionChanged(from old: Set<URL>) {
+        var updated = tree
+        for url in expandedFolders.subtracting(old) {
+            let loaded = ProjectScanner.scan(root: url, expanded: expandedFolders)
+            updated = updated.settingChildren(loaded.children, at: url)
+            indexFiles(ProjectScanner.flatFileList(loaded))
+        }
+        for url in old.subtracting(expandedFolders) {
+            updated = updated.settingChildren([], at: url)
+        }
+        if updated != tree { tree = updated }
+    }
+
+    /// Adds files to the completion index (those it already holds are skipped).
+    private func indexFiles(_ files: [URL], ignoringLimit: Bool = false) {
+        guard !files.isEmpty else { return }
         let symbolIndex = symbolIndex
-        indexTask = Task.detached(priority: .utility) {
-            await symbolIndex.build(files: files)
+        Task.detached(priority: .utility) {
+            await symbolIndex.add(files: files, ignoringLimit: ignoringLimit)
+        }
+    }
+
+    /// Watcher follow-up: re-tokenizes indexed files that changed on disk, drops the deleted ones.
+    private func refreshIndex(_ paths: [String]) {
+        let symbolIndex = symbolIndex
+        Task.detached(priority: .utility) {
+            for path in paths {
+                let url = URL(fileURLWithPath: path)
+                guard symbolIndex.isIndexed(url) else { continue }
+                if FileManager.default.fileExists(atPath: path) { symbolIndex.updateFile(url) } else { symbolIndex.removeFile(url) }
+            }
         }
     }
 
@@ -352,6 +369,7 @@ final class ProjectViewModel: ObservableObject {
         if isNew { tabs.append(file) }
         selectedTab = file
         if isNew {
+            indexFiles([file], ignoringLimit: true)
             notifyLSPDocumentOpened(file)
             prewarmHighlighting(for: [file])
         }
