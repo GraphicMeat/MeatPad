@@ -69,15 +69,15 @@ struct FileTreeView: View {
                 .accessibilityValue(isMenuTarget ? Text("Context menu open") : (isSelected ? Text("Selected") : Text(verbatim: "")))
                 // On the name, not the row: the window carries the folder's name too.
                 .accessibilityIdentifier(isRoot ? "file-tree-root" : "")
-                // Double-click on a folder's name folds it, like its chevron and icon. Simultaneous,
-                // so the single click still selects at once.
-                .simultaneousGesture(TapGesture(count: 2).onEnded {
-                    guard node.isDirectory else { return }
-                    withAnimation(.easeOut(duration: 0.15)) { viewModel.toggleFolder(node.url) }
-                })
         }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
+            // Double-click on a folder's row (name included) folds it, like its chevron and icon.
+            // Simultaneous, so the single click still selects at once.
+            .simultaneousGesture(TapGesture(count: 2).onEnded {
+                guard node.isDirectory else { return }
+                withAnimation(.easeOut(duration: 0.15)) { viewModel.toggleFolder(node.url) }
+            })
             .onTapGesture {
                 // The name and everything to its right: select only. A file also opens; a folder
                 // does not fold on one click — that is the chevron's and the icon's job, or a double-click on the name.
