@@ -20,7 +20,7 @@ extension TreeNode {
         var copy = self
         if url == target {
             copy.children = newChildren
-        } else if var kids = children, target.path.hasPrefix(url.path + "/"),
+        } else if var kids = children,
                   let index = kids.firstIndex(where: { $0.url == target || target.path.hasPrefix($0.url.path + "/") }) {
             kids[index] = kids[index].settingChildren(newChildren, at: target)
             copy.children = kids

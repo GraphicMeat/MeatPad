@@ -7,7 +7,8 @@ final class ProjectTreeTests: XCTestCase {
     private var tempDir: URL!
 
     override func setUpWithError() throws {
-        tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        // Resolved, because directory listings return /private/var/... for /var/... temp paths.
+        tempDir = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
     }
 
