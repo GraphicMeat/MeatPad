@@ -263,6 +263,10 @@ struct CodeEditor: NSViewRepresentable {
         /// Character ranges already painted for the current generation. Scrolling paints
         /// what this doesn't cover yet; a new parse clears it.
         private var paintedSet = IndexSet()
+        /// Ranges a top-up has already asked the engine for. Scroll ticks arrive far faster
+        /// than a request round-trips, and without this each tick re-asked for the same gap —
+        /// a pile of identical main-thread paints per flick.
+        private var requestedSet = IndexSet()
         private var lastTheme: Theme?
         /// What the links currently on screen were painted for — see `updateNSView`.
         var lastLinkActivation: LinkActivation?
@@ -313,6 +317,12 @@ struct CodeEditor: NSViewRepresentable {
         }
 
         func observeScroll(of scrollView: NSScrollView) {
+            #if DEBUG
+            ScrollProbe.shared.startIfEnabled(scrollView: scrollView) { [weak self] in
+                guard let self else { return false }
+                return self.parsedGeneration == self.highlightGeneration && !self.paintedSet.isEmpty
+            }
+            #endif
             scrollView.contentView.postsBoundsChangedNotifications = true
             scrollObserver = NotificationCenter.default.addObserver(
                 forName: NSView.boundsDidChangeNotification,
@@ -321,6 +331,10 @@ struct CodeEditor: NSViewRepresentable {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    #if DEBUG
+                    let probeStart = CFAbsoluteTimeGetCurrent()
+                    defer { ScrollProbe.shared.observerSeconds += CFAbsoluteTimeGetCurrent() - probeStart }
+                    #endif
                     // Colours are painted per viewport (see applyHighlight), so scrolling into
                     // unpainted text is what fetches its spans. Must run before the completion
                     // guards below, which return early on the common path.
@@ -427,6 +441,7 @@ struct CodeEditor: NSViewRepresentable {
             // Spans from the outgoing grammar mean nothing to the incoming one.
             lastSpans = []
             paintedSet = IndexSet()
+            requestedSet = IndexSet()
             parsedGeneration = -1
             highlightEngine = languageID.flatMap { HighlightEngine(languageID: $0) }
         }
@@ -583,6 +598,7 @@ struct CodeEditor: NSViewRepresentable {
             }
 
             highlightGeneration += 1
+            requestedSet = IndexSet()
             let generation = highlightGeneration
             highlightTask?.cancel()
             highlightTask = Task { [weak self] in
@@ -604,12 +620,25 @@ struct CodeEditor: NSViewRepresentable {
                   parsedGeneration == highlightGeneration else { return }
             let range = paintRange(in: textView)
             guard let integers = Range(range),
-                  let missing = IndexSet(integersIn: integers).subtracting(paintedSet).rangeView.first
+                  let missing = IndexSet(integersIn: integers).subtracting(paintedSet).subtracting(requestedSet).rangeView.first
             else { return }
 
             // One contiguous chunk per pass; the recursive top-up below picks up any
             // remainder, and scrolling only ever exposes one edge at a time in practice.
-            let chunk = NSRange(location: missing.lowerBound, length: missing.count)
+            //
+            // The chunk reaches well past the gap. A paint is one attribute edit, and on a
+            // multi-MB document TextKit's layout invalidation made each edit cost ~85ms however
+            // few characters it covered (measured: 296 edits of ~87 characters for one flick,
+            // the main thread stalled ~25s). A scroll tick exposes ~87 characters, so painting
+            // only the gap meant paying that fixed cost every tick; painting ahead pays it once
+            // per `topUpLookahead` of scrolling.
+            let length = (textView.text as NSString? ?? "").length
+            let reach = IndexSet(integersIn: max(0, missing.lowerBound - Self.topUpLookahead)
+                                    ..< min(length, missing.upperBound + Self.topUpLookahead))
+                .subtracting(paintedSet).subtracting(requestedSet)
+            let run = reach.rangeView.first { $0.contains(missing.lowerBound) } ?? missing
+            let chunk = NSRange(location: run.lowerBound, length: run.count)
+            requestedSet.insert(integersIn: run)
             let generation = highlightGeneration
             Task { [weak self] in
                 let spans = await engine.spans(in: chunk)
@@ -623,8 +652,17 @@ struct CodeEditor: NSViewRepresentable {
         private func applyParsedSpans(_ spans: [HighlightSpan], over range: NSRange,
                                       generation: Int, replacingPaint: Bool) {
             guard generation == highlightGeneration, let textView else { return }
+            #if DEBUG
+            let probeStart = CFAbsoluteTimeGetCurrent()
+            defer {
+                ScrollProbe.shared.paintCalls += 1
+                ScrollProbe.shared.paintChars += range.length
+                ScrollProbe.shared.paintSeconds += CFAbsoluteTimeGetCurrent() - probeStart
+            }
+            #endif
             if replacingPaint {
                 paintedSet = IndexSet()
+                requestedSet = IndexSet()
                 lastSpans = []
             }
             lastSpans.append(contentsOf: spans)
@@ -693,6 +731,9 @@ struct CodeEditor: NSViewRepresentable {
 
         /// Characters painted beyond each edge of the viewport.
         private static let paintMargin = 20_000
+
+        /// How far past an exposed gap a scroll top-up paints, in characters.
+        private static let topUpLookahead = 60_000
 
         /// Runs `body` as one text-storage edit. `paint` colours one span at a time, and each
         /// `addAttributes` otherwise ends its own edit — a full layout synchronisation per span,

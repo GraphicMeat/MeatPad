@@ -24,6 +24,8 @@ final class LSPController {
     /// before the next rebuild (`STGutterView` only removes markers by line number) — same
     /// bookkeeping shape as `FoldController.chevronLines`.
     private var markerLines: Set<Int> = []
+    /// Whether any squiggle attribute may be on the text; lets `render()` skip clearing a document that has none.
+    private var hasRenderedUnderlines = false
 
     /// Debounce for `mouseMoved`-driven hover requests; cancelled on move/scroll/type/exit —
     /// see `mouseMoved(_:handle:fileURL:)` and `dismissHover()`.
@@ -69,6 +71,10 @@ final class LSPController {
     /// version are silently dropped rather than crashing or corrupting the range.
     func render() {
         guard let textView else { return }
+        // Nothing to draw and nothing of ours on screen: skip the document-wide work below.
+        // Most buffers have no diagnostics, and a scroll top-up calls this per painted chunk —
+        // on a multi-MB file that scan alone pinned the main thread.
+        if diagnostics.isEmpty, !hasRenderedUnderlines, markerLines.isEmpty { return }
         let text = textView.text ?? ""
         let length = (text as NSString).length
         let full = NSRange(location: 0, length: length)
@@ -80,14 +86,18 @@ final class LSPController {
         // diagnostic's stale squiggle.
         textView.removeAttribute(.underlineStyle, range: full)
         textView.removeAttribute(.underlineColor, range: full)
+        hasRenderedUnderlines = false
 
-        let newlineOffsets = text.utf16.enumerated().compactMap { $0.element == 0x0A ? $0.offset : nil }
+        let newlineOffsets = diagnostics.isEmpty
+            ? []
+            : text.utf16.enumerated().compactMap { $0.element == 0x0A ? $0.offset : nil }
         var severityByLine: [Int: DiagnosticSeverity] = [:]
         for diagnostic in diagnostics {
             guard let range = LSPPositionBridge.nsRange(of: diagnostic.range, in: text),
                   range.location + range.length <= length else { continue }
             let severity = diagnostic.severity ?? .error
             if range.length > 0 {
+                hasRenderedUnderlines = true
                 let style: NSUnderlineStyle = [.thick, .patternDot]
                 textView.addAttributes([
                     .underlineStyle: style.rawValue,
