@@ -339,6 +339,8 @@ struct CodeEditor: NSViewRepresentable {
                     // unpainted text is what fetches its spans. Must run before the completion
                     // guards below, which return early on the common path.
                     self.highlightVisibleIfNeeded()
+                    // Fold chevrons are drawn only near the viewport, so they follow it.
+                    self.foldController.viewportDidMove()
                     // Links are drawn per viewport too, and unlike spans they exist on a
                     // buffer with no grammar — so this is topped up on its own.
                     if let textView = self.textView {
@@ -682,6 +684,9 @@ struct CodeEditor: NSViewRepresentable {
             // Same reason as the `defer` in applyHighlight: the reset above wipes the
             // diagnostic underlines along with everything else.
             lspController.render()
+            // The first pass of a just-opened document is when TextKit first has a real
+            // viewport (a restored scroll position included), so chevrons catch up here too.
+            foldController.viewportDidMove()
             // Only recurse when this pass actually claimed ground, or a range that clips to
             // nothing would ask for itself forever.
             if painted { highlightVisibleIfNeeded() }

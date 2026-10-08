@@ -42,6 +42,13 @@ final class FoldController {
     /// Head offset for each chevron's line, current as of the last refresh. A chevron's click
     /// looks its head up here rather than capturing an offset that edits above it would stale.
     private var headByLine: [Int: Int] = [:]
+    /// Every head's UTF-16 offset and 1-based line, ascending, current as of the last refresh.
+    /// Chevrons are drawn only for the heads near the viewport (see `ChevronWindow`).
+    private var headOffsets: [Int] = []
+    private var headLines: [Int] = []
+    /// The slice of `headOffsets` that currently has a chevron, so a scroll tick that doesn't
+    /// move it costs two binary searches and nothing else.
+    private var chevronWindow: Range<Int> = 0..<0
     /// UTF-16 span touched by the buffer edit(s) since the last `refresh()` (see
     /// `Coordinator.textView(_:didChangeTextIn:replacementString:)`). Multiple edits racing
     /// ahead of the 150ms debounce widen this to their bounding span.
@@ -171,27 +178,55 @@ final class FoldController {
 
     /// Rebuild fold-head chevrons as STGutterView markers. Markers ride STTextView's own gutter
     /// layout + scroll tracking (`layoutGutter` re-positions them on every viewport pass), so we
-    /// only rebuild on region/fold-state change, not on scroll.
+    /// only rebuild on region/fold-state change and when the viewport moves.
     private func rebuildChevrons(text: String) {
-        guard let gutter = textView?.gutterView else { return }
-
         // 1-based document line number of each head (newlines strictly before it, + 1), found in
-        // one pass over the text — heads arrive in document order.
-        var desired: [Int: Bool] = [:]
+        // one pass over the text — heads arrive in document order. Bulk copy first: walking a
+        // bridged NSString one UTF-16 unit at a time costs seconds on a multi-MB buffer.
+        var offsets: [Int] = []
+        var lines: [Int] = []
         var heads: [Int: Int] = [:]
-        var utf16 = text.utf16.makeIterator()
+        let units = Array(text.utf16)
         var offset = 0
         var line = 1
         for region in regions {
             let head = region.headLineRange.lowerBound
-            while offset < head, let unit = utf16.next() {
-                if unit == 10 { line += 1 }
+            while offset < head, offset < units.count {
+                if units[offset] == 10 { line += 1 }
                 offset += 1
             }
-            desired[line] = foldedHeads.contains(head)
+            offsets.append(head)
+            lines.append(line)
             heads[line] = head
         }
+        headOffsets = offsets
+        headLines = lines
         headByLine = heads
+        syncChevrons(force: true)
+    }
+
+    /// The editor's scroll observer calls this: chevrons follow the viewport.
+    func viewportDidMove() { syncChevrons(force: false) }
+
+    /// Brings the gutter's chevrons in line with the heads near the viewport. Adding a marker
+    /// re-lays-out every marker already in the gutter, so a chevron per head made a huge file
+    /// quadratic; a window keeps the count at a screenful or two.
+    private func syncChevrons(force: Bool) {
+        guard let textView, let gutter = textView.gutterView else { return }
+        let length = (textView.text as NSString? ?? "").length
+        let viewport: Range<Int>
+        if let range = textView.textLayoutManager.textViewportLayoutController.viewportRange {
+            let ns = SnippetController.nsRange(range, in: textView.textContentManager)
+            viewport = ns.location..<ns.upperBound
+        } else {
+            viewport = 0..<min(length, Self.chevronMargin)
+        }
+        let window = ChevronWindow.indices(headOffsets: headOffsets, viewport: viewport, margin: Self.chevronMargin)
+        guard force || window != chevronWindow else { return }
+        chevronWindow = window
+
+        var desired: [Int: Bool] = [:]
+        for index in window { desired[headLines[index]] = foldedHeads.contains(headOffsets[index]) }
 
         for (line, folded) in chevronState where desired[line] != folded {
             gutter.removeMarker(lineNumber: line)
@@ -206,6 +241,10 @@ final class FoldController {
             chevronState[line] = folded
         }
     }
+
+    /// Characters either side of the viewport that still get a chevron — about a screenful of
+    /// lines, so a scroll tick rarely needs to touch the gutter.
+    private static let chevronMargin = 3_000
 }
 
 /// A gutter fold chevron. `⌄` when the region is expanded, `›` when folded. STGutterView owns
