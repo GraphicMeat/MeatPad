@@ -9,8 +9,6 @@ struct ProjectSearchView: View {
     @ObservedObject var viewModel: ProjectSearchViewModel
 
     @FocusState private var queryFocused: Bool
-    /// Per-file collapse state; absent (default) means expanded, per spec.
-    @State private var collapsedFiles: Set<URL> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -126,44 +124,8 @@ struct ProjectSearchView: View {
                 .padding(.top, 18)
             }
         } else {
-            List {
-                ForEach(viewModel.groupedResults) { group in
-                    DisclosureGroup(isExpanded: expanded(group.file)) {
-                        ForEach(Array(group.matches.enumerated()), id: \.offset) { _, match in
-                            row(match).onTapGesture { open(match) }
-                        }
-                    } label: {
-                        Text("\(group.file.lastPathComponent) (\(group.matches.count))")
-                            .zoomFont(.callout, weight: .medium)
-                            .lineLimit(1)
-                    }
-                }
-            }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
+            MatchResultsList(groups: viewModel.groupedResults, root: project.root, open: open)
         }
-    }
-
-    private func expanded(_ file: URL) -> Binding<Bool> {
-        Binding(
-            get: { !collapsedFiles.contains(file) },
-            set: { isExpanded in
-                if isExpanded { collapsedFiles.remove(file) } else { collapsedFiles.insert(file) }
-            }
-        )
-    }
-
-    private func row(_ match: SearchMatch) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Text("\(match.lineNumber)")
-                .zoomFont(.caption, monospacedDigit: true)
-                .foregroundStyle(.secondary)
-                .frame(minWidth: 22, alignment: .trailing)
-            Text(Self.highlighted(match))
-                .zoomFont(size: 11, design: .monospaced)
-                .lineLimit(1)
-        }
-        .contentShape(Rectangle())
     }
 
     private func open(_ match: SearchMatch) {
@@ -186,22 +148,5 @@ struct ProjectSearchView: View {
             .zoomFont(.caption, weight: .semibold)
             .lineLimit(1)
             .help(help)
-    }
-
-    /// `match.rangeInLine` is a UTF-16 `NSRange` into `lineText` (the engine's own
-    /// coordinate space) — attribute via `NSMutableAttributedString` in that same space
-    /// and bridge to `AttributedString`, rather than converting to `String.Index` and
-    /// risking a UTF-16/grapheme-cluster mismatch.
-    private static func highlighted(_ match: SearchMatch) -> AttributedString {
-        let mutable = NSMutableAttributedString(string: match.lineText)
-        let full = NSRange(location: 0, length: mutable.length)
-        let range = NSRange(location: match.rangeInLine.lowerBound, length: match.rangeInLine.count)
-        if range.location >= 0, range.location + range.length <= full.length {
-            mutable.addAttributes([
-                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .bold),
-                .foregroundColor: NSColor.systemOrange,
-            ], range: range)
-        }
-        return AttributedString(mutable)
     }
 }
