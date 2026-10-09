@@ -16,20 +16,20 @@ struct MatchResultsList: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(groups) { group in
-                    FileHeader(group: group, root: root, isCollapsed: collapsedFiles.contains(group.file)) {
-                        if collapsedFiles.contains(group.file) {
-                            collapsedFiles.remove(group.file)
-                        } else {
-                            collapsedFiles.insert(group.file)
+                ForEach(MatchListRow.flatten(groups, collapsed: collapsedFiles)) { row in
+                    switch row.kind {
+                    case .header(let g):
+                        let group = groups[g]
+                        FileHeader(group: group, root: root, isCollapsed: collapsedFiles.contains(group.file)) {
+                            if collapsedFiles.contains(group.file) {
+                                collapsedFiles.remove(group.file)
+                            } else {
+                                collapsedFiles.insert(group.file)
+                            }
                         }
-                    }
-                    if !collapsedFiles.contains(group.file) {
-                        // Indices, not `Array(enumerated())`: no per-body copy of every group's matches.
-                        ForEach(group.matches.indices, id: \.self) { index in
-                            let match = group.matches[index]
-                            MatchRow(match: match) { open(match) }
-                        }
+                    case .match(let g, let m):
+                        let match = groups[g].matches[m]
+                        MatchRow(match: match) { open(match) }
                     }
                 }
             }
