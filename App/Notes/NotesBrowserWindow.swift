@@ -669,6 +669,11 @@ struct NotesBrowserWindow: View {
             }
         }
         .onDeleteCommand(perform: deleteKeyPressed)
+        // Rows were reported (macOS 27) one line tall: date clipped, next title drawn over it.
+        // Not the date's Text: the table kept a one-line row height. A row-level frame can't
+        // grow a cell the table won't re-measure; the table's own minimum can. 38 pt sits just
+        // under the 39 pt pitch rows measure to on 26.6, so a measured row is unchanged.
+        .environment(\.defaultMinListRowHeight, 38)
         .scrollContentBackground(.hidden)
         .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         .overlay {

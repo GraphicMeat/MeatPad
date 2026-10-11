@@ -4,10 +4,9 @@ import Combine
 /// "now", "5 minutes ago", "yesterday" — named units via RelativeDateTimeFormatter,
 /// refreshed once per minute instead of SwiftUI's every-second `.relative` style.
 ///
-/// A plain `Text` on a shared minute tick, not a `TimelineView(.everyMinute)`: a new note's
-/// row was reported coming up one line tall, its date only appearing later — the timeline's
-/// content is the one part of the row that can draw empty. Not reproduced on macOS 26.6 (the
-/// mini); seen on 27. A `Text` built in `body` has its string from the first frame.
+/// A plain `Text` on a shared minute tick, not a `TimelineView(.everyMinute)`, so the string is
+/// there from the first frame. Rows coming up one line tall on macOS 27 outlived that change:
+/// the row height was the fault, guarded by `defaultMinListRowHeight` on the lists.
 struct RelativeTimeText: View {
     let date: Date
     @State private var now = Date()

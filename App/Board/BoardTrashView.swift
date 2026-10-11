@@ -27,6 +27,9 @@ struct BoardTrashView: View {
                 List(store.trash) { entry in
                     row(entry)
                 }
+                // Same guard as the All Notes list: a two-line row the table measured one line
+                // tall clips its subtitle. Below this row's natural height, so normally a no-op.
+                .environment(\.defaultMinListRowHeight, 38)
                 .scrollContentBackground(.hidden)
             }
         }
