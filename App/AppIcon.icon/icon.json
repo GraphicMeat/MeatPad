@@ -30,6 +30,13 @@
           ]
         }
       ],
+      "position" : {
+        "scale" : 0.82,
+        "translation-in-points" : [
+          0,
+          0
+        ]
+      },
       "shadow" : {
         "kind" : "neutral",
         "opacity" : 0.25
