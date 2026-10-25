@@ -135,6 +135,18 @@ final class SidebarOrderUITests: XCTestCase {
         }
     }
 
+    /// The footer is a sibling of the list, not an overlay on it: a list that runs under a
+    /// transparent footer lets its rows scroll up behind the logo, which is what the studio
+    /// mark used to do.
+    func testTheListEndsWhereTheStudioFooterBegins() {
+        let studio = app.descendants(matching: .any).matching(identifier: "sidebar.studio").firstMatch
+        XCTAssertTrue(studio.waitForExistence(timeout: 10), "no studio footer")
+        let list = app.outlines.allElementsBoundByIndex.first { $0.frame.minX < 300 && $0.frame.height > 200 }
+        XCTAssertNotNil(list, "no sidebar list")
+        XCTAssertLessThanOrEqual(list?.frame.maxY ?? .infinity, studio.frame.minY + 1,
+                                 "the list runs under the studio footer")
+    }
+
     /// Discord's glyph is a bundled vector, not an SF Symbol — the one footer link a missing
     /// resource could break.
     func testClickingTheDiscordLinkOpensNothingWhenSuppressed() {

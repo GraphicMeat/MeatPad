@@ -307,6 +307,17 @@ struct NotesBrowserWindow: View {
 
     @ViewBuilder
     private var folderSidebar: some View {
+        // The footer is the list's sibling, not a `.safeAreaInset` over it: the inset only
+        // pads the list's content, so on macOS 27 rows still scrolled up behind the
+        // transparent footer and the logo was drawn over them.
+        VStack(spacing: 0) {
+            folderList
+            studioFooter
+        }
+        .navigationSplitViewColumnWidth(min: 150, ideal: 180)
+    }
+
+    private var folderList: some View {
         List(selection: $folderSelection) {
             Section {
                 folderRow(.all, name: String(localized: "All Notes"), icon: "tray.full", count: noteStore.notes.count)
@@ -355,8 +366,6 @@ struct NotesBrowserWindow: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .navigationSplitViewColumnWidth(min: 150, ideal: 180)
-        .safeAreaInset(edge: .bottom) { studioFooter }
     }
 
     /// A section title with its sort menu pinned to the trailing edge — same row for both
@@ -403,7 +412,7 @@ struct NotesBrowserWindow: View {
     }
 
     /// Bottom-of-sidebar studio footer: brand mark (opens graphicmeat.com) plus feature/bug/
-    /// sibling-app links. Pinned via the `.safeAreaInset` above so it never scrolls away with
+    /// sibling-app links. Pinned under the list in `folderSidebar` so it never scrolls away with
     /// a long folder/board list.
     private var studioFooter: some View {
         VStack(spacing: 8) {
