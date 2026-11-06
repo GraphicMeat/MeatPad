@@ -81,6 +81,15 @@ final class BoardScrollUITests: XCTestCase {
         )
     }
 
+    /// A column builds only the cards near its viewport. Every card is a stack of text views,
+    /// menus and AppKit labels, and every store change re-evaluates all of them: with a
+    /// hundred cards a board edit or delete stalled the window for seconds.
+    func testOffscreenCardsAreNotBuilt() {
+        let titles = app.descendants(matching: .any).matching(identifier: "card.title")
+        XCTAssertTrue(titles.firstMatch.waitForExistence(timeout: 30), "the board never drew a card")
+        XCTAssertLessThan(titles.count, 30, "all 30 seeded cards are built, whatever the column shows")
+    }
+
     // MARK: - Harness
 
     private func addCard(titled title: String) {

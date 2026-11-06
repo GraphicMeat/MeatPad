@@ -784,23 +784,34 @@ struct BoardColumnsView: View {
 
             // Only the cards scroll: the header and the add-card field stay put, and a
             // column taller than the window stops overflowing off both ends of it.
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in
-                        insertionBar(for: column, at: index)
-                        cardRow(ref, in: cardColumn, at: index, visible: items, space: space)
-                            .background {
-                                if scrollToCard == ref.card.id {
-                                    RevealInScrollView { scrollToCard = nil }
+            // Lazy: a card is a deep stack of text, menus and AppKit labels, and every store
+            // change re-evaluates every card that exists — with a hundred of them an edit or a
+            // board delete stalled the window for seconds. Only the cards near the viewport are
+            // built; the reader below builds a new card's row before `RevealInScrollView`
+            // (which only exists once its row does) trims the scroll.
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, ref in
+                            insertionBar(for: column, at: index)
+                            cardRow(ref, in: cardColumn, at: index, visible: items, space: space)
+                                .background {
+                                    if scrollToCard == ref.card.id {
+                                        RevealInScrollView { scrollToCard = nil }
+                                    }
                                 }
-                            }
+                        }
+                        insertionBar(for: column, at: items.count)
+                        dropGhost(for: column)
                     }
-                    insertionBar(for: column, at: items.count)
-                    dropGhost(for: column)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .scrollBounceBehavior(.basedOnSize)
+                .onChange(of: scrollToCard) { _, id in
+                    guard let id, items.contains(where: { $0.card.id == id }) else { return }
+                    proxy.scrollTo(id)
+                }
             }
-            .scrollBounceBehavior(.basedOnSize)
         }
         .frame(width: columnWidth, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .top)
@@ -967,7 +978,7 @@ struct BoardColumnsView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
+                LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(otherCards) { ref in
                         cardRow(ref, in: nil, space: Self.otherSpace)
                     }
