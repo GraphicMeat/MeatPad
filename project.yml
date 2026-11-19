@@ -137,8 +137,8 @@ targets:
         ENABLE_APP_SANDBOX: NO
         SWIFT_VERSION: "5.10"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
-        MARKETING_VERSION: "0.31.6"
-        CURRENT_PROJECT_VERSION: "0.31.6"
+        MARKETING_VERSION: "0.32.0"
+        CURRENT_PROJECT_VERSION: "0.32.0"
   # Finder right-click "New … File" items. Sandboxed (Finder only loads sandboxed Finder Sync
   # extensions), so it never writes files itself: it opens a meatpad:// URL and the app does.
   # Reads the app's `finder.menu` default through the shared-preference read-only exception.
@@ -176,8 +176,8 @@ targets:
         ENABLE_APP_SANDBOX: YES
         SWIFT_VERSION: "5.10"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
-        MARKETING_VERSION: "0.31.6"
-        CURRENT_PROJECT_VERSION: "0.31.6"
+        MARKETING_VERSION: "0.32.0"
+        CURRENT_PROJECT_VERSION: "0.32.0"
   MeatPadUITests:
     type: bundle.ui-testing
     platform: macOS
