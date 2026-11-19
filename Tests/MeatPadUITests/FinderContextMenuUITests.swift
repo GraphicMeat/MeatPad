@@ -115,7 +115,94 @@ final class FinderContextMenuUITests: XCTestCase {
         )
     }
 
+    /// Right-click on a folder item: the new file goes inside that folder, not beside it.
+    func testClickingOnAFolderItemCreatesInsideIt() throws {
+        let sub = try makeSubfolder()
+        let window = try openFolderInFinder()
+        let markdown = finder.menuItems["New Markdown File"]
+        let subItem = finderItem("Sub", in: window)
+        XCTAssertTrue(subItem.waitForExistence(timeout: 10), "no \"Sub\" item in the Finder window")
+
+        let found = rightClick(until: markdown) { self.point(on: subItem, in: window) }
+        attach("sub-item-menu")
+        XCTAssertTrue(found, "\"New Markdown File\" never appeared in the menu of the Sub folder")
+        markdown.click()
+
+        let inside = sub.appendingPathComponent("Untitled.md")
+        let exists = waitForFile(inside, timeout: 30)
+        print("FINDER_E2E item-click: Sub/Untitled.md exists=\(exists)")
+        attach(exists ? "sub-item-after-click" : "sub-item-after-click-no-file")
+        XCTAssertTrue(exists, "clicking \"New Markdown File\" on Sub did not create \(inside.path)")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: folder.appendingPathComponent("Untitled.md").path),
+            "the file was (also) created beside Sub instead of inside it"
+        )
+    }
+
+    /// Blank-area right-click with a folder still selected: the window's folder is the target,
+    /// never the selected folder.
+    func testBlankAreaClickIgnoresASelectedFolder() throws {
+        let sub = try makeSubfolder()
+        let window = try openFolderInFinder()
+        let markdown = finder.menuItems["New Markdown File"]
+        // Wait for Finder to load the extension first, so the menu below is one right-click
+        // made while Sub is selected, not one of several retries.
+        XCTAssertTrue(rightClickBlankArea(of: window, until: markdown), "the extension's items never appeared")
+        finder.typeKey(.escape, modifierFlags: [])
+        sleep(1)
+
+        let subItem = finderItem("Sub", in: window)
+        XCTAssertTrue(subItem.waitForExistence(timeout: 10), "no \"Sub\" item in the Finder window")
+        point(on: subItem, in: window).click()
+        sleep(1)
+        attach("sub-selected")
+
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.8)).rightClick()
+        let found = markdown.waitForExistence(timeout: 5)
+        attach("blank-menu-with-sub-selected")
+        XCTAssertTrue(found, "\"New Markdown File\" missing from the blank-area menu")
+        markdown.click()
+
+        let created = folder.appendingPathComponent("Untitled.md")
+        let exists = waitForFile(created, timeout: 30)
+        let inSub = ((try? FileManager.default.contentsOfDirectory(atPath: sub.path)) ?? [])
+            .filter { $0 != ".DS_Store" }
+        print("FINDER_E2E blank-click-with-selection: parent Untitled.md=\(exists) Sub contents=\(inSub)")
+        attach("blank-after-click")
+        XCTAssertTrue(exists, "the blank-area click did not create \(created.path)")
+        XCTAssertEqual(inSub, [], "the blank-area click created the file inside the selected folder")
+    }
+
     // MARK: - Helpers
+
+    private func makeSubfolder() throws -> URL {
+        let sub = folder.appendingPathComponent("Sub", isDirectory: true)
+        try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+        return sub
+    }
+
+    /// An item in the Finder window by its name, in icon or list view.
+    private func finderItem(_ name: String, in window: XCUIElement) -> XCUIElement {
+        window.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@ OR value == %@", name, name))
+            .firstMatch
+    }
+
+    /// The centre of `element`, addressed through the window: Finder's items can report not
+    /// hittable although a click there lands.
+    private func point(on element: XCUIElement, in window: XCUIElement) -> XCUICoordinate {
+        let frame = element.frame
+        return window.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: frame.midX - window.frame.minX, dy: frame.midY - window.frame.minY))
+    }
+
+    private func waitForFile(_ url: URL, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !FileManager.default.fileExists(atPath: url.path) && Date() < deadline {
+            usleep(250_000)
+        }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
 
     /// Opens `folder` in Finder and returns its window.
     private func openFolderInFinder() throws -> XCUIElement {
@@ -131,13 +218,18 @@ final class FinderContextMenuUITests: XCTestCase {
     /// pass. Finder may load the extension a few seconds after it is enabled: retry the
     /// right-click rather than fail on the first menu built without it.
     private func rightClickBlankArea(of window: XCUIElement, until item: XCUIElement) -> Bool {
+        // Lower half, right of the sidebar: blank space away from the items.
+        rightClick(until: item) { window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.8)) }
+    }
+
+    /// Right-clicks `point()` until `item` shows in the menu (left open) or 90 s pass.
+    private func rightClick(until item: XCUIElement, at point: () -> XCUICoordinate) -> Bool {
         let started = Date()
         var attempts = 0
         var found = false
         while !found && Date().timeIntervalSince(started) < 90 {
             attempts += 1
-            // Lower half, right of the sidebar: blank space away from the one file.
-            window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.8)).rightClick()
+            point().rightClick()
             found = item.waitForExistence(timeout: 5)
             if !found {
                 attach("menu-attempt-\(attempts)")

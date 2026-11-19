@@ -34,15 +34,20 @@ final class FinderSync: FIFinderSync {
     }
 
     override func menu(for menuKind: FIMenuKind) -> NSMenu? {
+        // The kind travels in each item's tag: the click handler is not told which menu it
+        // came from, and a blank-area click must ignore whatever is still selected.
+        let kind: FinderMenu.Kind
         switch menuKind {
-        case .contextualMenuForContainer, .contextualMenuForItems:
-            break
-        default:
-            return nil
+        case .contextualMenuForContainer: kind = .container
+        case .contextualMenuForItems: kind = .items
+        default: return nil
         }
-        let entries = FinderMenu.entries(for: loadConfig())
+        let entries = FinderMenu.entries(for: loadConfig(), kind: kind)
         let target = FIFinderSyncController.default().targetedURL()?.path ?? "<nil>"
         log.notice("menu(for: \(menuKind.rawValue, privacy: .public)) target \(target, privacy: .public) -> \(Self.itemCount(entries), privacy: .public) item(s)")
+        let selectedPaths = Self.paths(FIFinderSyncController.default().selectedItemURLs())
+        let instance = Self.instanceTag(self)
+        log.notice("trace menu: kind \(menuKind.rawValue, privacy: .public) selected \(selectedPaths, privacy: .public) instance \(instance, privacy: .public)")
         guard !entries.isEmpty else { return nil }
 
         let menu = NSMenu(title: "")
@@ -80,9 +85,14 @@ final class FinderSync: FIFinderSync {
         let config = loadConfig()
         let controller = FIFinderSyncController.default()
         let selected = controller.selectedItemURLs() ?? []
-        guard let action = FinderMenu.action(forTag: sender.tag, in: config),
+        let targetedPath = controller.targetedURL()?.path ?? "<nil>"
+        let selectedPaths = Self.paths(selected)
+        let instance = Self.instanceTag(self)
+        log.notice("trace newFile: tag \(sender.tag, privacy: .public) targeted \(targetedPath, privacy: .public) selected \(selectedPaths, privacy: .public) instance \(instance, privacy: .public)")
+        guard let kind = FinderMenu.kind(forTag: sender.tag),
+              let action = FinderMenu.action(forTag: sender.tag, in: config),
               let directory = FinderMenu.targetDirectory(
-                  targeted: controller.targetedURL(), selected: selected, isDirectory: Self.isDirectory
+                  kind: kind, targeted: controller.targetedURL(), selected: selected, isDirectory: Self.isDirectory
               ),
               let request = NewFileRequest(directory: directory, fileExtension: action.fileExtension)
         else {
@@ -98,6 +108,15 @@ final class FinderSync: FIFinderSync {
                 log.error("newFile: \(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    private static func paths(_ urls: [URL]?) -> String {
+        guard let urls else { return "<nil>" }
+        return "[" + urls.map(\.path).joined(separator: ", ") + "]"
+    }
+
+    private static func instanceTag(_ object: AnyObject) -> String {
+        "\(ObjectIdentifier(object).hashValue) pid \(ProcessInfo.processInfo.processIdentifier)"
     }
 
     /// The sandbox may refuse to stat a selected item; then the URL's own trailing slash
