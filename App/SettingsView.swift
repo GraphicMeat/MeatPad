@@ -4,10 +4,10 @@ import MeatPadKit
 /// The Settings tabs, by name — so another window can ask for one (the note editor's link
 /// paste hint sends the user to General, where the setting it describes lives).
 enum SettingsTab: Hashable {
-    case general, boards, themes, snippets, commands, terminal, fileTree, privacy
+    case general, boards, themes, snippets, commands, terminal, fileTree, finder, privacy
 }
 
-/// `Settings` scene: General (font, wrap, links) + Boards (card icon colours) + Themes + Snippets + Commands + Terminal (Git menu) + File Tree + Privacy.
+/// `Settings` scene: General (font, wrap, links) + Boards (card icon colours) + Themes + Snippets + Commands + Terminal (Git menu) + File Tree + Finder + Privacy.
 struct SettingsView: View {
     @EnvironmentObject private var appModel: AppModel
 
@@ -62,6 +62,12 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings-filetree-tab")
                 }
                 .tag(SettingsTab.fileTree)
+            FinderSettingsView()
+                .tabItem {
+                    Label("Finder", systemImage: "folder.badge.plus")
+                        .accessibilityIdentifier("settings-finder-tab")
+                }
+                .tag(SettingsTab.finder)
             PrivacySettingsView()
                 .tabItem {
                     Label("Privacy", systemImage: "hand.raised")

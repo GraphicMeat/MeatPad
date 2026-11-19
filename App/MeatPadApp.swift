@@ -37,6 +37,7 @@ struct MeatPadApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New Note") { createNote() }
                     .keyboardShortcut("n", modifiers: .command)
+                NewFileCommand()
                 Button("Open…") { AppModel.shared.openProjectPanel() }
                     .keyboardShortcut("o", modifiers: .command)
                 Button("All Notes") { openWindow(id: "all-notes") }
@@ -207,6 +208,18 @@ private struct OpenRecentCommands: View {
                 Button("Clear Menu") { appModel.clearRecentProjects() }
             }
         }
+    }
+}
+
+/// ⌃⌘N: New File… — a save panel in the focused project's root (or wherever the panel last
+/// was), an empty file, opened as a tab. Always enabled. Grepped every `.keyboardShortcut` and
+/// key monitor in App/ first: ⌘N, ⇧⌘N and ⌥⌘N are taken, nothing uses N with Control.
+private struct NewFileCommand: View {
+    @FocusedValue(\.projectViewModel) private var project
+
+    var body: some View {
+        Button("New File…") { AppModel.shared.newFilePanel(startingIn: project?.root) }
+            .keyboardShortcut("n", modifiers: [.command, .control])
     }
 }
 
@@ -870,6 +883,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         for (title, action) in [
             (String(localized: "New Note"), #selector(dockNewNote)),
+            (String(localized: "New File…"), #selector(dockNewFile)),
             (String(localized: "All Notes"), #selector(dockAllNotes)),
             (String(localized: "Open…"), #selector(dockOpen)),
         ] {
@@ -883,6 +897,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor @objc private func dockNewNote() {
         guard let note = try? AppModel.shared.noteStore.createNote() else { return }
         AppModel.shared.openWindowAction?(value: note.id)
+    }
+
+    @MainActor @objc private func dockNewFile() {
+        NSApp.activate(ignoringOtherApps: true)
+        AppModel.shared.newFilePanel(startingIn: nil)
     }
 
     @MainActor @objc private func dockAllNotes() {

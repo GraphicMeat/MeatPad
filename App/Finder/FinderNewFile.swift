@@ -26,6 +26,27 @@ extension AppModel {
         }
     }
 
+    /// File ▸ New File… and the Dock menu's New File…: a save panel offering `Untitled.md` in
+    /// `directory` (the focused project's root, when there is one), then an empty file there,
+    /// opened as a tab. The panel has already asked about replacing an existing file.
+    func newFilePanel(startingIn directory: URL?) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Untitled.md"
+        panel.canCreateDirectories = true
+        if let directory { panel.directoryURL = directory }
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try Data().write(to: url)
+            } catch {
+                self.presentNewFileError(error, folder: url.deletingLastPathComponent())
+                return
+            }
+            self.open([url])
+        }
+    }
+
     private func presentNewFileError(_ error: Error, folder: URL) {
         let name = FileManager.default.displayName(atPath: folder.path)
         let alert = NSAlert()

@@ -20,6 +20,8 @@ final class FinderNewFileUITests: XCTestCase {
     /// Where new files are requested — its name is the project window's title.
     private var folder = URL(fileURLWithPath: "/")
     private let fm = FileManager.default
+    /// Set by the tests that edit Settings ▸ Finder, so teardown resets it even after a failure.
+    private var touchesFinderSettings = false
 
     private func launch(extraArguments: [String]) throws {
         continueAfterFailure = false
@@ -48,6 +50,16 @@ final class FinderNewFileUITests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        // The Settings tests write the app's real defaults domain. They press Reset to
+        // Defaults themselves; this repeats it for a test that failed before getting there.
+        if touchesFinderSettings, app?.state == .runningForeground || app?.state == .runningBackground {
+            if openFinderSettings() {
+                element("settings.finder.reset").click()
+                print("FINDER_NEWFILE teardown: pressed Reset to Defaults")
+            } else {
+                print("FINDER_NEWFILE teardown: Settings ▸ Finder not reachable, no reset")
+            }
+        }
         if finder.exists {
             let window = finder.windows[folder.lastPathComponent]
             if window.exists { window.buttons[XCUIIdentifierCloseWindow].click() }
@@ -94,6 +106,11 @@ final class FinderNewFileUITests: XCTestCase {
         try send(request(dir: folder.path, ext: "txt"))
         let created = folder.appendingPathComponent("Untitled.txt")
         XCTAssertTrue(waitForFile(created, timeout: 20), "Untitled.txt was never created")
+        // The Show in Finder branch really ran: Finder has a window on the folder.
+        XCTAssertTrue(
+            finder.windows[folder.lastPathComponent].waitForExistence(timeout: 20),
+            "no Finder window for \(folder.lastPathComponent) — the file was not shown in Finder"
+        )
         // Only meaningful once the file exists: the request was handled, and handled this way.
         sleep(3)
         attach("show-in-finder")
@@ -120,7 +137,141 @@ final class FinderNewFileUITests: XCTestCase {
         attach("malformed-then-valid")
     }
 
+    // MARK: - File ▸ New File… and Settings ▸ Finder
+
+    func testFileMenuNewFileSavesIntoTheFocusedProjectAndOpensATab() throws {
+        try launch(extraArguments: [])
+        // Open With route: the folder becomes a project window.
+        try send(folder)
+        let window = app.windows[folder.lastPathComponent]
+        XCTAssertTrue(window.waitForExistence(timeout: 20), "no project window for the folder")
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.02)).click()
+
+        let fileMenu = app.menuBars.menuBarItems["File"]
+        fileMenu.click()
+        let item = fileMenu.menuItems["New File…"]
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "the File menu has no New File… item")
+        item.click()
+
+        let save = app.buttons["Save"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 10), "New File… showed no save panel")
+        attach("new-file-save-panel")
+        // Accept the panel as offered: the project's root, "Untitled.md".
+        app.typeKey(.return, modifierFlags: [])
+
+        let created = folder.appendingPathComponent("Untitled.md")
+        XCTAssertTrue(waitForFile(created, timeout: 20), "Untitled.md was not saved into the project root")
+        XCTAssertEqual(try Data(contentsOf: created), Data(), "the new file is not empty")
+        XCTAssertTrue(tab("Untitled.md").waitForExistence(timeout: 20), "Untitled.md never opened as a tab")
+        attach("new-file-opened")
+    }
+
+    func testFinderSettingsEditsReachTheNextRequest() throws {
+        // A window in front, so the Settings shortcut has an app to go to. All Notes is not a
+        // project window.
+        try launch(extraArguments: ["-meatpad.revealBoard", "all"])
+        touchesFinderSettings = true
+        XCTAssertTrue(app.buttons["sidebar.newBoard"].firstMatch.waitForExistence(timeout: 20), "the browser never opened")
+        XCTAssertTrue(openFinderSettings(), "Settings has no Finder tab")
+
+        let picker = element("settings.finder.afterCreate")
+        picker.click()
+        let showInFinder = app.menuItems["Show in Finder"].firstMatch
+        XCTAssertTrue(showInFinder.waitForExistence(timeout: 5), "After creating offers no Show in Finder")
+        showInFinder.click()
+        XCTAssertTrue(poll { "\(picker.value ?? "")" == "Show in Finder" }, "the picker did not switch: \(picker.value ?? "nil")")
+        attach("settings-show-in-finder")
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(poll { !picker.exists }, "Settings did not close")
+
+        try send(request(dir: folder.path, ext: "md"))
+        let created = folder.appendingPathComponent("Untitled.md")
+        XCTAssertTrue(waitForFile(created, timeout: 20), "Untitled.md was never created")
+        XCTAssertTrue(
+            finder.windows[folder.lastPathComponent].waitForExistence(timeout: 20),
+            "no Finder window for \(folder.lastPathComponent) — the Settings edit did not reach the request"
+        )
+        sleep(3)
+        XCTAssertFalse(app.windows[folder.lastPathComponent].exists, "a project window opened despite Show in Finder")
+        XCTAssertFalse(tab("Untitled.md").exists, "the file opened as a tab despite Show in Finder")
+
+        XCTAssertTrue(openFinderSettings(), "could not reopen Settings ▸ Finder")
+        element("settings.finder.reset").click()
+        XCTAssertTrue(poll { "\(picker.value ?? "")" == "Open in MeatPad" }, "Reset left After creating at \(picker.value ?? "nil")")
+    }
+
+    func testFinderSettingsAddAndDeleteAFileType() throws {
+        try launch(extraArguments: ["-meatpad.revealBoard", "all"])
+        touchesFinderSettings = true
+        XCTAssertTrue(app.buttons["sidebar.newBoard"].firstMatch.waitForExistence(timeout: 20), "the browser never opened")
+        XCTAssertTrue(openFinderSettings(), "Settings has no Finder tab")
+
+        let status = element("settings.finder.status")
+        XCTAssertTrue(status.exists, "no extension status row")
+        print("FINDER_NEWFILE status label=\(status.label) value=\(status.value ?? "nil")")
+        XCTAssertTrue(element("settings.finder.openSystemSettings").exists, "no Open System Settings… button")
+        XCTAssertEqual(rowTitles(), ["Markdown", "Text"], "the defaults are not Markdown and Text")
+
+        element("settings.finder.add").click()
+        let title = element("settings.finder.action.2.title")
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "Add File Type added no third row")
+        title.click()
+        app.typeText("JSON")
+        let ext = element("settings.finder.action.2.ext")
+        ext.click()
+        app.typeText("json")
+        XCTAssertTrue(poll { self.rowTitles() == ["Markdown", "Text", "JSON"] }, "rows are \(rowTitles())")
+        XCTAssertEqual("\(ext.value ?? "")", "json")
+        attach("settings-finder-pane")
+
+        element("settings.finder.action.2.delete").click()
+        XCTAssertTrue(poll { self.rowTitles() == ["Markdown", "Text"] }, "deleting the third row left \(rowTitles())")
+        // Delete a default too, so Reset has something to restore.
+        element("settings.finder.action.0.delete").click()
+        XCTAssertTrue(poll { self.rowTitles() == ["Text"] }, "deleting Markdown left \(rowTitles())")
+
+        element("settings.finder.reset").click()
+        XCTAssertTrue(poll { self.rowTitles() == ["Markdown", "Text"] }, "Reset to Defaults left \(rowTitles())")
+        attach("settings-finder-after-reset")
+    }
+
     // MARK: - Helpers
+
+    private func element(_ identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    /// The title field of every action row, in order (rows are numbered from 0 with no gaps).
+    private func rowTitles() -> [String] {
+        var titles: [String] = []
+        while titles.count < 20 {
+            let field = element("settings.finder.action.\(titles.count).title")
+            guard field.exists else { break }
+            titles.append("\(field.value ?? "")")
+        }
+        return titles
+    }
+
+    /// ⌘, then the Finder tab. True once the pane's After creating picker is on screen.
+    @discardableResult
+    private func openFinderSettings() -> Bool {
+        app.activate()
+        app.typeKey(",", modifierFlags: .command)
+        let tab = element("settings-finder-tab")
+        let byName = app.toolbars.buttons["Finder"].firstMatch
+        guard tab.waitForExistence(timeout: 10) || byName.waitForExistence(timeout: 2) else { return false }
+        (tab.exists ? tab : byName).click()
+        return element("settings.finder.afterCreate").waitForExistence(timeout: 5)
+    }
+
+    private func poll(timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            usleep(200_000)
+        }
+        return condition()
+    }
 
     private func request(dir: String, ext: String) -> URL {
         var components = URLComponents()
