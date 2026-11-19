@@ -7,7 +7,18 @@ extension AppModel {
     /// `Untitled.<ext>` in the folder (never overwriting — "Untitled 2", "Untitled 3", …), then
     /// opens it as a tab or shows it in Finder, as Settings ▸ Finder says. A folder that is
     /// gone or not writable gets an alert naming it, and no file.
+    ///
+    /// Only a request carrying this install's `finder.token` (what the extension sends) is
+    /// acted on silently. The URL scheme is open to any app or web page, so anything else asks
+    /// first and creates nothing — no file, no project window, no language server — unless
+    /// the user confirms.
     func createFile(for request: NewFileRequest) {
+        switch request.trust(expectedToken: FinderMenuSettings.shared.token) {
+        case .trusted:
+            break
+        case .needsConfirmation:
+            guard confirmUnauthenticatedRequest(request) else { return }
+        }
         let url: URL
         do {
             url = try FileTreeOperations.createUntitledFile(
@@ -45,6 +56,24 @@ extension AppModel {
             }
             self.open([url])
         }
+    }
+
+    /// True only when the user presses Create. Cancel is the first button, so Return cancels.
+    private func confirmUnauthenticatedRequest(_ request: NewFileRequest) -> Bool {
+        let folder = request.directory
+        let name = FileManager.default.displayName(atPath: folder.path)
+        let ext = request.fileExtension
+        let path = folder.path
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = String(localized: "Create a new file in “\(name)”?")
+        alert.informativeText = String(
+            localized: "Another app or a web page asked MeatPad to create an empty “.\(ext)” file in:\n\(path)"
+        )
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.addButton(withTitle: String(localized: "Create"))
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertSecondButtonReturn
     }
 
     private func presentNewFileError(_ error: Error, folder: URL) {

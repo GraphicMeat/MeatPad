@@ -35,6 +35,8 @@ final class FinderContextMenuUITests: XCTestCase {
             to: folder.appendingPathComponent("existing.md"), atomically: true, encoding: .utf8
         )
 
+        // Launched before any Finder click: the launch persists `finder.token` (never passed
+        // here as an argument — the extension reads the stored default, not our arguments).
         app = XCUIApplication()
         app.launchArguments = [
             "-meatpad.storageRootOverride", storageRoot.path,
@@ -102,7 +104,14 @@ final class FinderContextMenuUITests: XCTestCase {
             usleep(250_000)
         }
         let exists = FileManager.default.fileExists(atPath: created.path)
-        print("FINDER_E2E clicked: Untitled.md exists=\(exists)")
+        // The extension sends the token the app persisted at launch (setUp), so the app must
+        // act without asking. An unauthenticated request would sit behind a confirmation.
+        let dialogs = app.dialogs.count, sheets = app.sheets.count
+        let confirm = app.buttons["Create"].exists
+        print("FINDER_E2E clicked: Untitled.md exists=\(exists) dialogs=\(dialogs) sheets=\(sheets) createButton=\(confirm)")
+        XCTAssertEqual(dialogs, 0, "MeatPad showed a dialog after the Finder click — the token was not accepted")
+        XCTAssertEqual(sheets, 0, "MeatPad showed a sheet after the Finder click")
+        XCTAssertFalse(confirm, "MeatPad asked to confirm a request from its own extension")
         attach(exists ? "after-click" : "after-click-no-file")
         XCTAssertTrue(exists, "clicking \"New Markdown File\" did not create \(created.path)")
 

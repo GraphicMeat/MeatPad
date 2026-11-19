@@ -17,7 +17,8 @@ import os
 /// config is read fresh each time (a Settings change applies to the next right-click) and a
 /// bad or missing value is simply the defaults.
 ///
-/// Privacy: nothing here logs a file path, a URL or a folder name. The `finder.menu` read is
+/// Privacy: nothing here logs a file path, a URL, a folder name, or the `finder.token` (nor
+/// its length — whether one was present is all). The `finder.menu` read is
 /// logged once, at init (scripts/finder-read-check.sh waits for that line).
 final class FinderSync: FIFinderSync {
 
@@ -87,13 +88,16 @@ final class FinderSync: FIFinderSync {
               let directory = FinderMenu.targetDirectory(
                   kind: kind, targeted: controller.targetedURL(), selected: selected, isDirectory: Self.isDirectory
               ),
-              let request = NewFileRequest(directory: directory, fileExtension: action.fileExtension)
+              let request = NewFileRequest(
+                  directory: directory, fileExtension: action.fileExtension, token: loadToken()
+              )
         else {
             log.error("newFile: no target or action (tag \(sender.tag, privacy: .public))")
             return
         }
         let url = request.url
         let tag = sender.tag
+        log.notice("newFile: tag \(tag, privacy: .public) token present \(request.token != nil, privacy: .public)")
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = config.afterCreate == .openInMeatPad
         NSWorkspace.shared.open(url, configuration: configuration) { [log] _, error in
@@ -110,6 +114,16 @@ final class FinderSync: FIFinderSync {
     private static func isDirectory(_ url: URL) -> Bool {
         if let value = try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory { return value }
         return url.hasDirectoryPath
+    }
+
+    /// The app's per-install `finder.token`, read like `finder.menu` (fresh, after a
+    /// synchronize). Missing is nil: the app then asks the user before creating anything.
+    /// Privacy: the token, and its length, are never logged.
+    private func loadToken() -> String? {
+        guard let own = Bundle.main.bundleIdentifier, let dot = own.lastIndex(of: ".") else { return nil }
+        let host = String(own[..<dot]) as CFString
+        CFPreferencesAppSynchronize(host)
+        return CFPreferencesCopyAppValue(FinderToken.defaultsKey as CFString, host) as? String
     }
 
     /// Reads the app's `finder.menu` default through the shared-preference read-only

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Finder Sync extension end to end, on the mac mini (run inside a minijob, cwd = clone root):
 #   ~/.claude/bin/testq ~/.claude/bin/minijob --artifacts <dir> bash -c 'TESTQ_SKIP=1 scripts/finder-e2e.sh'
-# Builds, registers + enables MeatPadFinder.appex, seeds `finder.menu`, runs
-# FinderContextMenuUITests, saves screenshots to .artifacts/, prints the extension's logs,
-# then unregisters the extension and removes the seed so the mini is left as found.
+# Builds, registers + enables MeatPadFinder.appex, seeds `finder.menu`, clears `finder.token`
+# (the app under test generates and persists a fresh one at launch, which the extension must
+# then send), runs FinderContextMenuUITests, saves screenshots to .artifacts/, prints the
+# extension's logs, then unregisters the extension and restores both defaults so the mini is
+# left as found. The token's value is never printed.
 set -uo pipefail
 
 EXT_ID=com.thecoldzero.MeatPad.FinderSync
@@ -36,6 +38,8 @@ section "prior state"
 echo "pluginkit before:"; pluginkit -m -v -i "$EXT_ID" 2>&1
 PRIOR_MENU=$(defaults read "$APP_ID" finder.menu 2>/dev/null); PRIOR_RC=$?
 echo "finder.menu before: rc=$PRIOR_RC value=${PRIOR_MENU:-<none>}"
+PRIOR_TOKEN=$(defaults read "$APP_ID" finder.token 2>/dev/null); PRIOR_TOKEN_RC=$?
+echo "finder.token before: present=$([ $PRIOR_TOKEN_RC -eq 0 ] && echo yes || echo no)"
 echo "pluginkit -A -D before:"; pluginkit -m -A -D -v -i "$EXT_ID" 2>&1; echo "(end)"
 ls -d "$HOME/Library/Containers/$EXT_ID" 2>&1
 
@@ -49,8 +53,16 @@ cleanup() {
     else
         defaults delete "$APP_ID" finder.menu 2>&1
     fi
+    if [ $PRIOR_TOKEN_RC -eq 0 ]; then
+        defaults write "$APP_ID" finder.token -string "$PRIOR_TOKEN"
+    else
+        defaults delete "$APP_ID" finder.token 2>/dev/null
+    fi
     echo "pluginkit after cleanup:"; pluginkit -m -v -i "$EXT_ID" 2>&1; echo "(end)"
     echo "finder.menu after cleanup: $(defaults read "$APP_ID" finder.menu 2>&1)"
+    AFTER_TOKEN=$(defaults read "$APP_ID" finder.token 2>/dev/null); AFTER_TOKEN_RC=$?
+    echo "finder.token after cleanup: present=$([ $AFTER_TOKEN_RC -eq 0 ] && echo yes || echo no)" \
+        "same-as-before=$([ $AFTER_TOKEN_RC -eq $PRIOR_TOKEN_RC ] && [ "$AFTER_TOKEN" = "$PRIOR_TOKEN" ] && echo yes || echo no)"
     echo "pluginkit -A -D after cleanup:"; pluginkit -m -A -D -v -i "$EXT_ID" 2>&1; echo "(end)"
     ls -d "$HOME/Library/Containers/$EXT_ID" 2>&1
 }
@@ -59,6 +71,8 @@ trap cleanup EXIT
 section "register + enable"
 # The JSON is text, not a plist dictionary: -string keeps it a string.
 defaults write "$APP_ID" finder.menu -string '{}'
+# No token yet: the app's launch in setUp must create and persist it before the first click.
+defaults delete "$APP_ID" finder.token 2>/dev/null
 pluginkit -a "$APPEX"; echo "pluginkit -a rc=$?"
 pluginkit -e use -i "$EXT_ID"; echo "pluginkit -e use rc=$?"
 sleep 2
@@ -80,6 +94,7 @@ xcodebuild -skipPackagePluginValidation -project MeatPad.xcodeproj -scheme MeatP
 TEST=$?
 grep -E "Test Case|Executed|FINDER_E2E|error:|Testing failed|TEST (EXECUTE )?(SUCCEEDED|FAILED)|XCTAssert|Skipped" build/test.log | tail -60
 echo "test rc=$TEST"
+echo "finder.token after the run: present=$(defaults read "$APP_ID" finder.token >/dev/null 2>&1 && echo yes || echo no)"
 # A skipped or empty run says TEST SUCCEEDED too: only an executed, unskipped pass counts.
 SUMMARY=$(grep -E "Executed [0-9]+ test" build/test.log | tail -1)
 echo "summary: ${SUMMARY:-<none>}"

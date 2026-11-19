@@ -17,11 +17,26 @@ final class FinderMenuSettings: ObservableObject {
         didSet { save() }
     }
 
+    /// The per-install secret the extension adds to each `meatpad://new-file` URL, so the app
+    /// can tell its own extension's clicks from a request any app or web page could send.
+    /// Created once and kept in `finder.token`, where the extension reads it. A usable value
+    /// already there is never rewritten — including one from a launch argument
+    /// (`-finder.token <64 hex>`), which the UI tests use to pin it without persisting it.
+    let token: String
+
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         config = FinderMenuConfig.decode(defaults.string(forKey: Self.defaultsKey).map { Data($0.utf8) })
+        let stored = defaults.string(forKey: FinderToken.defaultsKey)
+        if let stored, FinderToken.isUsable(stored) {
+            token = stored
+        } else {
+            let fresh = FinderToken.generate()
+            defaults.set(fresh, forKey: FinderToken.defaultsKey)
+            token = fresh
+        }
     }
 
     func reset() { config = FinderMenuConfig() }

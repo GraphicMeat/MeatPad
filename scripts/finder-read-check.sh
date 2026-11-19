@@ -6,7 +6,8 @@
 #   ~/.claude/bin/testq ~/.claude/bin/minijob bash -c 'TESTQ_SKIP=1 scripts/finder-read-check.sh'
 # Builds Release (no test action), refuses an appex carrying absolute-path, seeds a value of a
 # known length, enables the extension and waits for its "finder.menu read: <length> chars"
-# line. Then restores the default and the extension's registration exactly as found.
+# line. Then restores the defaults (`finder.menu`, `finder.token`) and the extension's
+# registration exactly as found.
 set -uo pipefail
 
 EXT_ID=com.thecoldzero.MeatPad.FinderSync
@@ -41,6 +42,8 @@ echo "$ENTS" | grep -q "shared-preference.read-only" || { echo "FAIL: no shared-
 section "prior state"
 PRIOR_MENU=$(defaults read "$APP_ID" finder.menu 2>/dev/null); PRIOR_RC=$?
 echo "finder.menu before: rc=$PRIOR_RC value=${PRIOR_MENU:-<none>}"
+PRIOR_TOKEN=$(defaults read "$APP_ID" finder.token 2>/dev/null); PRIOR_TOKEN_RC=$?
+echo "finder.token before: present=$([ $PRIOR_TOKEN_RC -eq 0 ] && echo yes || echo no)"
 echo "pluginkit before:"; pluginkit -m -v -i "$EXT_ID" 2>&1; echo "(end)"
 
 cleanup() {
@@ -52,8 +55,14 @@ cleanup() {
     else
         defaults delete "$APP_ID" finder.menu 2>&1
     fi
+    if [ $PRIOR_TOKEN_RC -eq 0 ]; then
+        defaults write "$APP_ID" finder.token -string "$PRIOR_TOKEN"
+    else
+        defaults delete "$APP_ID" finder.token 2>/dev/null
+    fi
     echo "pluginkit after cleanup:"; pluginkit -m -v -i "$EXT_ID" 2>&1; echo "(end)"
     echo "finder.menu after cleanup: $(defaults read "$APP_ID" finder.menu 2>&1)"
+    echo "finder.token after cleanup: present=$(defaults read "$APP_ID" finder.token >/dev/null 2>&1 && echo yes || echo no)"
 }
 trap cleanup EXIT
 

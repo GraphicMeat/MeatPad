@@ -90,4 +90,96 @@ final class NewFileRequestTests: XCTestCase {
         XCTAssertNil(NewFileRequest(directory: URL(string: "relative/folder")!, fileExtension: "md"))
         XCTAssertNil(NewFileRequest(directory: URL(string: "https://example.com/x")!, fileExtension: "md"))
     }
+
+    // MARK: - Token
+
+    private let token = String(repeating: "0123456789abcdef", count: 4)
+
+    func testTheTokenTravelsInTheURLAndRoundTrips() throws {
+        let request = try XCTUnwrap(NewFileRequest(directory: folder, fileExtension: "md", token: token))
+        let components = try XCTUnwrap(URLComponents(url: request.url, resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "token" })?.value, token)
+        let parsed = try XCTUnwrap(NewFileRequest(url: request.url))
+        XCTAssertEqual(parsed.token, token)
+        XCTAssertEqual(parsed, request)
+    }
+
+    func testAnAwkwardTokenRoundTrips() throws {
+        let odd = "a&b=c+d#e?f%g h"
+        let request = try XCTUnwrap(NewFileRequest(directory: folder, fileExtension: "md", token: odd))
+        XCTAssertEqual(NewFileRequest(url: request.url)?.token, odd, request.url.absoluteString)
+    }
+
+    func testARequestWithoutATokenHasNoTokenItem() throws {
+        for request in [
+            try XCTUnwrap(NewFileRequest(directory: folder, fileExtension: "md")),
+            try XCTUnwrap(NewFileRequest(directory: folder, fileExtension: "md", token: nil)),
+            try XCTUnwrap(NewFileRequest(directory: folder, fileExtension: "md", token: "")),
+        ] {
+            let components = try XCTUnwrap(URLComponents(url: request.url, resolvingAgainstBaseURL: false))
+            XCTAssertEqual(components.queryItems?.map(\.name), ["dir", "ext"], request.url.absoluteString)
+        }
+        XCTAssertNil(NewFileRequest(directory: folder, fileExtension: "md")?.token)
+    }
+
+    func testAMissingOrEmptyTokenParsesAsNil() throws {
+        let missing = try XCTUnwrap(NewFileRequest(url: url("meatpad://new-file?dir=/tmp&ext=md")))
+        XCTAssertNil(missing.token)
+        let empty = try XCTUnwrap(NewFileRequest(url: url("meatpad://new-file?dir=/tmp&ext=md&token=")))
+        XCTAssertNil(empty.token)
+        let present = try XCTUnwrap(NewFileRequest(url: url("meatpad://new-file?dir=/tmp&ext=md&token=\(token)")))
+        XCTAssertEqual(present.token, token)
+    }
+
+    // MARK: - Dot-dot and standardising
+
+    func testADirectoryWithADotDotComponentIsRejected() {
+        for dir in ["/Users/x/../y", "/..", "/a/..", "/a/../", "/../a"] {
+            XCTAssertNil(NewFileRequest(url: handBuilt([
+                URLQueryItem(name: "dir", value: dir), URLQueryItem(name: "ext", value: "md"),
+            ])), "dir \(dir)")
+        }
+    }
+
+    func testAFolderWhoseNameMerelyContainsDotsIsAccepted() throws {
+        for dir in ["/a/..b", "/a/b..", "/a/..."] {
+            let parsed = try XCTUnwrap(NewFileRequest(url: handBuilt([
+                URLQueryItem(name: "dir", value: dir), URLQueryItem(name: "ext", value: "md"),
+            ])), "dir \(dir)")
+            XCTAssertEqual(parsed.directory.path, dir)
+        }
+    }
+
+    func testTheDirectoryIsStoredStandardised() throws {
+        let parsed = try XCTUnwrap(NewFileRequest(url: handBuilt([
+            URLQueryItem(name: "dir", value: "/a/./b//c/"), URLQueryItem(name: "ext", value: "md"),
+        ])))
+        XCTAssertEqual(parsed.directory.path, "/a/b/c")
+    }
+
+    // MARK: - Trust
+
+    private func request(token: String?) -> NewFileRequest {
+        NewFileRequest(directory: folder, fileExtension: "md", token: token)!
+    }
+
+    func testAMatchingUsableTokenIsTrusted() {
+        XCTAssertEqual(request(token: token).trust(expectedToken: token), .trusted)
+    }
+
+    func testEverythingElseNeedsConfirmation() {
+        let other = String(repeating: "f", count: 64)
+        XCTAssertEqual(request(token: nil).trust(expectedToken: token), .needsConfirmation, "no request token")
+        XCTAssertEqual(request(token: other).trust(expectedToken: token), .needsConfirmation, "wrong token")
+        XCTAssertEqual(request(token: token).trust(expectedToken: nil), .needsConfirmation, "expected nil")
+        XCTAssertEqual(request(token: nil).trust(expectedToken: nil), .needsConfirmation, "both nil")
+        XCTAssertEqual(request(token: "").trust(expectedToken: ""), .needsConfirmation, "both empty")
+        XCTAssertEqual(request(token: "abc").trust(expectedToken: "abc"), .needsConfirmation, "too short")
+    }
+
+    func testAParsedRequestWithTheRightTokenIsTrusted() throws {
+        let sent = try XCTUnwrap(NewFileRequest(directory: folder, fileExtension: "md", token: token))
+        let parsed = try XCTUnwrap(NewFileRequest(url: sent.url))
+        XCTAssertEqual(parsed.trust(expectedToken: token), .trusted)
+    }
 }

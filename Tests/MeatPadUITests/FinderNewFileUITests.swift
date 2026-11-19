@@ -12,6 +12,10 @@ import XCTest
 final class FinderNewFileUITests: XCTestCase {
 
     private static let bundleID = "com.thecoldzero.MeatPad"
+    /// Pinned with `-finder.token` (argument domain, never persisted): a request carrying it
+    /// is what the extension sends, so the app acts on it without asking.
+    private static let testToken = String(repeating: "5eed7e57", count: 8)
+    private static let wrongToken = String(repeating: "badc0ffe", count: 8)
 
     private var app: XCUIApplication!
     private let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
@@ -39,6 +43,7 @@ final class FinderNewFileUITests: XCTestCase {
         app.launchArguments = [
             "-meatpad.storageRootOverride", storageRoot.path,
             "-hasSeenFirstRunIntro", "YES",
+            "-finder.token", Self.testToken,
         ] + extraArguments
         app.launch()
 
@@ -65,6 +70,11 @@ final class FinderNewFileUITests: XCTestCase {
             if window.exists { window.buttons[XCUIIdentifierCloseWindow].click() }
         }
         app?.terminate()
+        // A Settings edit or reset is saved to the app's real defaults; don't leave one there.
+        // `finder.token` is left alone: every launch here pins it with `-finder.token` (argument
+        // domain), and the app never rewrites a usable value, so this class persists none — a
+        // stored one belongs to someone else.
+        UserDefaults(suiteName: Self.bundleID)?.removeObject(forKey: "finder.menu")
         try? fm.removeItem(at: sandbox)
     }
 
@@ -137,6 +147,47 @@ final class FinderNewFileUITests: XCTestCase {
         attach("malformed-then-valid")
     }
 
+    // MARK: - Unauthenticated requests
+
+    func testATokenlessRequestAsksAndCancelCreatesNothing() throws {
+        try launch(extraArguments: [])
+        try send(request(dir: folder.path, ext: "md", token: nil))
+        expectConfirmation("tokenless-confirmation")
+        XCTAssertEqual(try folderContents(), [], "a file was created before the user answered")
+
+        alertButton("Cancel").click()
+        XCTAssertTrue(poll { !self.alertButton("Create").exists }, "the confirmation did not close on Cancel")
+        sleep(2)
+        attach("tokenless-cancelled")
+        XCTAssertEqual(try folderContents(), [], "Cancel still created a file")
+        XCTAssertFalse(app.windows[folder.lastPathComponent].exists, "Cancel still opened a project window")
+    }
+
+    func testATokenlessRequestConfirmedCreatesAndOpensTheFile() throws {
+        try launch(extraArguments: [])
+        try send(request(dir: folder.path, ext: "md", token: nil))
+        expectConfirmation("tokenless-confirmation-before-create")
+        XCTAssertEqual(try folderContents(), [], "a file was created before the user answered")
+
+        alertButton("Create").click()
+        let created = folder.appendingPathComponent("Untitled.md")
+        XCTAssertTrue(waitForFile(created, timeout: 20), "Create did not create Untitled.md")
+        XCTAssertTrue(tab("Untitled.md").waitForExistence(timeout: 20), "Untitled.md never opened as a tab")
+        attach("tokenless-created")
+    }
+
+    func testAWrongTokenAsksAndCancelCreatesNothing() throws {
+        try launch(extraArguments: [])
+        try send(request(dir: folder.path, ext: "md", token: Self.wrongToken))
+        expectConfirmation("wrong-token-confirmation")
+
+        alertButton("Cancel").click()
+        XCTAssertTrue(poll { !self.alertButton("Create").exists }, "the confirmation did not close on Cancel")
+        sleep(2)
+        XCTAssertEqual(try folderContents(), [], "Cancel still created a file")
+        XCTAssertFalse(app.windows[folder.lastPathComponent].exists, "Cancel still opened a project window")
+    }
+
     // MARK: - File ▸ New File… and Settings ▸ Finder
 
     func testFileMenuNewFileSavesIntoTheFocusedProjectAndOpensATab() throws {
@@ -156,8 +207,9 @@ final class FinderNewFileUITests: XCTestCase {
         let save = app.buttons["Save"].firstMatch
         XCTAssertTrue(save.waitForExistence(timeout: 10), "New File… showed no save panel")
         attach("new-file-save-panel")
-        // Accept the panel as offered: the project's root, "Untitled.md".
-        app.typeKey(.return, modifierFlags: [])
+        // Accept the panel as offered: the project's root, "Untitled.md". A click, not Return:
+        // the keystroke was once lost before the panel took key focus (1 run in 4 on the mini).
+        save.click()
 
         let created = folder.appendingPathComponent("Untitled.md")
         XCTAssertTrue(waitForFile(created, timeout: 20), "Untitled.md was not saved into the project root")
@@ -273,12 +325,41 @@ final class FinderNewFileUITests: XCTestCase {
         return condition()
     }
 
-    private func request(dir: String, ext: String) -> URL {
+    /// `token` defaults to the pinned one, i.e. a request as the extension sends it; nil sends
+    /// none, as any other app or a web page would.
+    private func request(dir: String, ext: String, token: String? = FinderNewFileUITests.testToken) -> URL {
         var components = URLComponents()
         components.scheme = "meatpad"
         components.host = "new-file"
-        components.queryItems = [URLQueryItem(name: "dir", value: dir), URLQueryItem(name: "ext", value: ext)]
+        var items = [URLQueryItem(name: "dir", value: dir), URLQueryItem(name: "ext", value: ext)]
+        if let token { items.append(URLQueryItem(name: "token", value: token)) }
+        components.queryItems = items
         return components.url!
+    }
+
+    /// The confirmation alert's button `title` (NSAlert runs as an app-modal dialog).
+    private func alertButton(_ title: String) -> XCUIElement {
+        let inDialog = app.dialogs.buttons[title].firstMatch
+        return inDialog.exists ? inDialog : app.buttons[title].firstMatch
+    }
+
+    /// Waits for the confirmation and checks it names the folder. Fails the test otherwise.
+    private func expectConfirmation(_ name: String) {
+        XCTAssertTrue(
+            poll(timeout: 20) { self.alertButton("Create").exists },
+            "no confirmation for an unauthenticated request: \(app.debugDescription)"
+        )
+        XCTAssertTrue(alertButton("Cancel").exists, "the confirmation has no Cancel")
+        let naming = app.staticTexts.matching(NSPredicate(
+            format: "value CONTAINS %@ OR label CONTAINS %@", "“\(folder.lastPathComponent)”", "“\(folder.lastPathComponent)”"
+        )).firstMatch
+        XCTAssertTrue(naming.exists, "the confirmation does not name \(folder.lastPathComponent)")
+        attach(name)
+    }
+
+    /// Folder contents bar Finder's own litter.
+    private func folderContents() throws -> [String] {
+        try fm.contentsOfDirectory(atPath: folder.path).filter { $0 != ".DS_Store" }
     }
 
     /// Hands `url` to the copy of MeatPad this test launched, as Launch Services would.

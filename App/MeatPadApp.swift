@@ -691,6 +691,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Start the login-shell lookup now, off the main thread, so the first project window
         // doesn't wait on it (see `UserShellEnvironment`).
         UserShellEnvironment.warm()
+        // Creates and stores `finder.token` on the first launch, so the Finder extension's very
+        // first click already carries it (it is read from the stored default, not from here).
+        _ = FinderMenuSettings.shared
         ProjectZoomShortcuts.install()
 
         let center = NotificationCenter.default
