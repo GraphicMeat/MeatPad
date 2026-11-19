@@ -52,6 +52,8 @@ targets:
         product: ProcessEnv
       - package: SwiftTerm
         product: SwiftTerm
+      # Finder Sync extension; xcodegen embeds an app-extension into Contents/PlugIns.
+      - target: MeatPadFinder
     preBuildScripts:
       # First phase of every build: keeps the generated project in step with the folder on
       # disk. Xcode resolves the target's file list from the project it loaded BEFORE any
@@ -67,7 +69,7 @@ targets:
           set -eu
           cd "$SRCROOT"
           STAMP=".xcodegen-stamp"
-          FINGERPRINT="$(find App Tests -type f ! -name '.DS_Store' | sort | shasum; shasum project.yml)"
+          FINGERPRINT="$(find App Tests FinderExtension -type f ! -name '.DS_Store' | sort | shasum; shasum project.yml)"
           if [ -f "$STAMP" ] && [ "$FINGERPRINT" = "$(cat "$STAMP")" ] && [ -f App/Info.plist ]; then
             exit 0
           fi
@@ -78,7 +80,7 @@ targets:
           fi
           "$XCODEGEN" generate
           # Re-read: generate writes App/Info.plist, which is itself part of the fingerprint.
-          find App Tests -type f ! -name '.DS_Store' | sort | shasum > "$STAMP"
+          find App Tests FinderExtension -type f ! -name '.DS_Store' | sort | shasum > "$STAMP"
           shasum project.yml >> "$STAMP"
           echo "warning: project regenerated (files added, removed, or project.yml changed) — new files build on the next Run"
     info:
@@ -122,6 +124,10 @@ targets:
             UTTypeDescription: MeatPad Board Column
             UTTypeConformsTo: [public.data]
         NSHumanReadableCopyright: "© 2026 Graphic Meat"
+        # meatpad://new-file?dir=…&ext=… — sent by the Finder Sync extension (MeatPadFinder).
+        CFBundleURLTypes:
+          - CFBundleURLName: com.thecoldzero.MeatPad
+            CFBundleURLSchemes: [meatpad]
         SUFeedURL: https://github.com/GraphicMeat/MeatPad/releases/latest/download/appcast.xml
         SUEnableAutomaticChecks: true
         SUPublicEDKey: "9OobPkT0p5WGp0wf2aSbADivVllEKZaz0gKhElMocU0="
@@ -129,6 +135,41 @@ targets:
       base:
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_APP_SANDBOX: NO
+        SWIFT_VERSION: "5.10"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        MARKETING_VERSION: "0.31.6"
+        CURRENT_PROJECT_VERSION: "0.31.6"
+  # Finder right-click "New … File" items. Sandboxed (Finder only loads sandboxed Finder Sync
+  # extensions), so it never writes files itself: it opens a meatpad:// URL and the app does.
+  # Reads the app's `finder.menu` default through the shared-preference read-only exception.
+  MeatPadFinder:
+    type: app-extension
+    platform: macOS
+    sources: [FinderExtension]
+    info:
+      path: FinderExtension/Info.plist
+      properties:
+        CFBundleDisplayName: MeatPad
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "14.0"
+        NSHumanReadableCopyright: "© 2026 Graphic Meat"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.FinderSync
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).FinderSync
+          NSExtensionAttributes: {}
+    entitlements:
+      path: FinderExtension/MeatPadFinder.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.temporary-exception.shared-preference.read-only:
+          - com.thecoldzero.MeatPad
+    settings:
+      base:
+        PRODUCT_NAME: MeatPadFinder
+        PRODUCT_BUNDLE_IDENTIFIER: com.thecoldzero.MeatPad.FinderSync
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_APP_SANDBOX: YES
         SWIFT_VERSION: "5.10"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         MARKETING_VERSION: "0.31.6"

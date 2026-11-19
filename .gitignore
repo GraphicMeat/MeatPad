@@ -10,6 +10,7 @@ build/
 MeatPadKit/build/
 release/
 App/Info.plist
+FinderExtension/Info.plist
 tmp/
 MeatPadKit/Package.resolved
 .xcodegen-stamp
