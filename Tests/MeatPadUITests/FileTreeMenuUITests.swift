@@ -45,6 +45,11 @@ class FileTreeMenuUITestCase: XCTestCase {
             "-hasSeenFirstRunIntro", "YES",
             "-project.uiScale", "1",
         ] + extraLaunchArguments
+        // The terminal panel runs the user's real shell. With oh-my-zsh due for an update it
+        // opens on "Would you like to update? [Y/n]", which eats the first key a test types.
+        // The app's environment reaches that shell through its login-shell probe, and this
+        // variable turns the check off for the run.
+        app.launchEnvironment["DISABLE_AUTO_UPDATE"] = "true"
         app.launch()
 
         let instances = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundleID)
