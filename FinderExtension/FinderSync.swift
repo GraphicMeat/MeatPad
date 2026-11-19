@@ -9,11 +9,16 @@ import os
 /// outside its container, so a click only opens `meatpad://new-file?dir=…&ext=…`; the
 /// (unsandboxed) app creates the file. Finder forwards an item's title, tag, image and
 /// action across the process boundary but not its `representedObject`, so items are told
-/// apart by `tag` — the index into `FinderMenuConfig.enabledActions`.
+/// apart by `tag`: the index into `FinderMenuConfig.enabledActions`, offset by
+/// `FinderMenu.itemsTagOffset` for the items menu, so the click handler (which Finder does not
+/// tell which menu it came from) knows whether the one-selected-folder rule applies.
 ///
 /// `menu(for:)` runs inside Finder's menu tracking: it must never throw, block or crash. The
 /// config is read fresh each time (a Settings change applies to the next right-click) and a
 /// bad or missing value is simply the defaults.
+///
+/// Privacy: nothing here logs a file path, a URL or a folder name. The `finder.menu` read is
+/// logged once, at init (scripts/finder-read-check.sh waits for that line).
 final class FinderSync: FIFinderSync {
 
     private let log = Logger(subsystem: "com.thecoldzero.MeatPad.FinderSync", category: "finder")
@@ -26,11 +31,7 @@ final class FinderSync: FIFinderSync {
         ) ?? []
         FIFinderSyncController.default().directoryURLs = Set(roots)
         log.notice("init: watching \(roots.count, privacy: .public) root(s)")
-        _ = loadConfig()
-    }
-
-    override func beginObservingDirectory(at url: URL) {
-        log.notice("observing \(url.path, privacy: .public)")
+        _ = loadConfig(logRead: true)
     }
 
     override func menu(for menuKind: FIMenuKind) -> NSMenu? {
@@ -43,11 +44,7 @@ final class FinderSync: FIFinderSync {
         default: return nil
         }
         let entries = FinderMenu.entries(for: loadConfig(), kind: kind)
-        let target = FIFinderSyncController.default().targetedURL()?.path ?? "<nil>"
-        log.notice("menu(for: \(menuKind.rawValue, privacy: .public)) target \(target, privacy: .public) -> \(Self.itemCount(entries), privacy: .public) item(s)")
-        let selectedPaths = Self.paths(FIFinderSyncController.default().selectedItemURLs())
-        let instance = Self.instanceTag(self)
-        log.notice("trace menu: kind \(menuKind.rawValue, privacy: .public) selected \(selectedPaths, privacy: .public) instance \(instance, privacy: .public)")
+        log.notice("menu(for: \(menuKind.rawValue, privacy: .public)) -> \(Self.itemCount(entries), privacy: .public) item(s)")
         guard !entries.isEmpty else { return nil }
 
         let menu = NSMenu(title: "")
@@ -85,10 +82,6 @@ final class FinderSync: FIFinderSync {
         let config = loadConfig()
         let controller = FIFinderSyncController.default()
         let selected = controller.selectedItemURLs() ?? []
-        let targetedPath = controller.targetedURL()?.path ?? "<nil>"
-        let selectedPaths = Self.paths(selected)
-        let instance = Self.instanceTag(self)
-        log.notice("trace newFile: tag \(sender.tag, privacy: .public) targeted \(targetedPath, privacy: .public) selected \(selectedPaths, privacy: .public) instance \(instance, privacy: .public)")
         guard let kind = FinderMenu.kind(forTag: sender.tag),
               let action = FinderMenu.action(forTag: sender.tag, in: config),
               let directory = FinderMenu.targetDirectory(
@@ -100,23 +93,16 @@ final class FinderSync: FIFinderSync {
             return
         }
         let url = request.url
+        let tag = sender.tag
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = config.afterCreate == .openInMeatPad
         NSWorkspace.shared.open(url, configuration: configuration) { [log] _, error in
-            log.notice("newFile: open(\(url.absoluteString, privacy: .public)) -> \(error == nil, privacy: .public)")
+            log.notice("newFile: tag \(tag, privacy: .public) -> opened \(error == nil, privacy: .public)")
             if let error {
-                log.error("newFile: \(error.localizedDescription, privacy: .public)")
+                let nsError = error as NSError
+                log.error("newFile: open failed, \(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)")
             }
         }
-    }
-
-    private static func paths(_ urls: [URL]?) -> String {
-        guard let urls else { return "<nil>" }
-        return "[" + urls.map(\.path).joined(separator: ", ") + "]"
-    }
-
-    private static func instanceTag(_ object: AnyObject) -> String {
-        "\(ObjectIdentifier(object).hashValue) pid \(ProcessInfo.processInfo.processIdentifier)"
     }
 
     /// The sandbox may refuse to stat a selected item; then the URL's own trailing slash
@@ -128,20 +114,21 @@ final class FinderSync: FIFinderSync {
 
     /// Reads the app's `finder.menu` default through the shared-preference read-only
     /// exception — the host app's domain is our own bundle id minus its last component.
-    private func loadConfig() -> FinderMenuConfig {
+    /// `logRead` only at init: a line per right-click is noise.
+    private func loadConfig(logRead: Bool = false) -> FinderMenuConfig {
         guard let own = Bundle.main.bundleIdentifier, let dot = own.lastIndex(of: ".") else {
-            log.error("finder.menu read: no bundle identifier")
+            if logRead { log.error("finder.menu read: no bundle identifier") }
             return FinderMenuConfig()
         }
         let host = String(own[..<dot]) as CFString
         CFPreferencesAppSynchronize(host)
         let value = CFPreferencesCopyAppValue(FinderMenuConfig.defaultsKey as CFString, host)
         if let text = value as? String {
-            log.notice("finder.menu read: \(text.count, privacy: .public) chars from \(host as String, privacy: .public)")
+            if logRead { log.notice("finder.menu read: \(text.count, privacy: .public) chars from \(host as String, privacy: .public)") }
             return FinderMenuConfig.decode(Data(text.utf8))
-        } else if value == nil {
+        } else if logRead, value == nil {
             log.notice("finder.menu read: absent in \(host as String, privacy: .public)")
-        } else {
+        } else if logRead {
             log.notice("finder.menu read: not a string in \(host as String, privacy: .public)")
         }
         return FinderMenuConfig()
