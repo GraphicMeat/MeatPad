@@ -816,7 +816,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // AppKit rebuilds the SwiftUI menu bar in the same pass — opening a project from
         // inside it mutates observable state (recents, windows) mid-update and trips
         // AttributeGraph's precondition, aborting the app (seen in OpenWithUITests).
-        DispatchQueue.main.async { AppModel.shared.open(urls) }
+        //
+        // `meatpad://new-file?…` (the Finder Sync extension) arrives here too. File URLs go to
+        // `open(_:)` as before, a URL that parses as a `NewFileRequest` creates a file, and
+        // anything else is ignored — junk must never reach `open(_:)` as a "file".
+        let files = urls.filter(\.isFileURL)
+        let requests = urls.compactMap(NewFileRequest.init(url:))
+        DispatchQueue.main.async {
+            if !files.isEmpty { AppModel.shared.open(files) }
+            for request in requests { AppModel.shared.createFile(for: request) }
+        }
     }
 
     /// Dock icon click. Returning true would hand it to SwiftUI's default reopen, which can open

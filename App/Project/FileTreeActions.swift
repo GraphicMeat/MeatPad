@@ -205,6 +205,7 @@ extension ProjectViewModel {
         case .invalidName: presentFileTreeMessage(String(localized: "That name isn't valid."))
         case .alreadyExists(let name): presentFileTreeMessage(String(localized: "“\(name)” already exists."))
         case .cannotMoveIntoItself: presentFileTreeMessage(String(localized: "A folder can't be moved into itself."))
+        case .directoryMissing(let name): presentFileTreeMessage(String(localized: "The folder “\(name)” no longer exists."))
         case nil: presentFileTreeMessage(error.localizedDescription)
         }
     }

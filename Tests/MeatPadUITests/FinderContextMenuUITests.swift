@@ -56,32 +56,10 @@ final class FinderContextMenuUITests: XCTestCase {
     }
 
     func testBlankAreaMenuOffersNewFileItems() throws {
-        print("FINDER_E2E folder=\(folder.path)")
-        XCTAssertTrue(NSWorkspace.shared.open(folder), "Finder refused to open \(folder.path)")
-        finder.activate()
-
-        let window = finder.windows[folder.lastPathComponent]
-        XCTAssertTrue(window.waitForExistence(timeout: 20), "no Finder window titled \(folder.lastPathComponent)")
-
-        // Finder may load the extension a few seconds after it is enabled: retry the
-        // right-click rather than fail on the first menu built without it.
+        let window = try openFolderInFinder()
         let markdown = finder.menuItems["New Markdown File"]
         let text = finder.menuItems["New Text File"]
-        let started = Date()
-        var attempts = 0
-        var found = false
-        while !found && Date().timeIntervalSince(started) < 90 {
-            attempts += 1
-            // Lower half, right of the sidebar: blank space away from the one file.
-            window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.8)).rightClick()
-            found = markdown.waitForExistence(timeout: 5)
-            if !found {
-                attach("menu-attempt-\(attempts)")
-                finder.typeKey(.escape, modifierFlags: [])
-                sleep(3)
-            }
-        }
-        print("FINDER_E2E attempts=\(attempts) seconds=\(Int(Date().timeIntervalSince(started))) found=\(found)")
+        let found = rightClickBlankArea(of: window, until: markdown)
 
         attach("menu-open")
         XCTAssertTrue(found, "\"New Markdown File\" never appeared in the blank-area menu")
@@ -105,6 +83,70 @@ final class FinderContextMenuUITests: XCTestCase {
         } else {
             print("FINDER_E2E itemMenu file element not found")
         }
+    }
+
+    /// The whole feature through the real Finder: the click reaches the extension, the
+    /// extension's URL reaches the app, and the app creates the file and opens it as a tab
+    /// in a project window for that folder.
+    func testClickingNewMarkdownFileCreatesAndOpensIt() throws {
+        let window = try openFolderInFinder()
+        let markdown = finder.menuItems["New Markdown File"]
+        let found = rightClickBlankArea(of: window, until: markdown)
+        attach("menu-before-click")
+        XCTAssertTrue(found, "\"New Markdown File\" never appeared in the blank-area menu")
+
+        markdown.click()
+        let created = folder.appendingPathComponent("Untitled.md")
+        let deadline = Date().addingTimeInterval(30)
+        while !FileManager.default.fileExists(atPath: created.path) && Date() < deadline {
+            usleep(250_000)
+        }
+        let exists = FileManager.default.fileExists(atPath: created.path)
+        print("FINDER_E2E clicked: Untitled.md exists=\(exists)")
+        attach(exists ? "after-click" : "after-click-no-file")
+        XCTAssertTrue(exists, "clicking \"New Markdown File\" did not create \(created.path)")
+
+        let tabFound = app.staticTexts["tab-Untitled.md"].waitForExistence(timeout: 20)
+        attach("meatpad-after-click")
+        XCTAssertTrue(tabFound, "Untitled.md never opened as a tab in MeatPad")
+        XCTAssertTrue(
+            app.windows[folder.lastPathComponent].waitForExistence(timeout: 5),
+            "MeatPad has no project window for \(folder.lastPathComponent)"
+        )
+    }
+
+    // MARK: - Helpers
+
+    /// Opens `folder` in Finder and returns its window.
+    private func openFolderInFinder() throws -> XCUIElement {
+        print("FINDER_E2E folder=\(folder.path)")
+        XCTAssertTrue(NSWorkspace.shared.open(folder), "Finder refused to open \(folder.path)")
+        finder.activate()
+        let window = finder.windows[folder.lastPathComponent]
+        XCTAssertTrue(window.waitForExistence(timeout: 20), "no Finder window titled \(folder.lastPathComponent)")
+        return window
+    }
+
+    /// Right-clicks blank space in `window` until `item` shows in the menu (left open) or 90 s
+    /// pass. Finder may load the extension a few seconds after it is enabled: retry the
+    /// right-click rather than fail on the first menu built without it.
+    private func rightClickBlankArea(of window: XCUIElement, until item: XCUIElement) -> Bool {
+        let started = Date()
+        var attempts = 0
+        var found = false
+        while !found && Date().timeIntervalSince(started) < 90 {
+            attempts += 1
+            // Lower half, right of the sidebar: blank space away from the one file.
+            window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.8)).rightClick()
+            found = item.waitForExistence(timeout: 5)
+            if !found {
+                attach("menu-attempt-\(attempts)")
+                finder.typeKey(.escape, modifierFlags: [])
+                sleep(3)
+            }
+        }
+        print("FINDER_E2E attempts=\(attempts) seconds=\(Int(Date().timeIntervalSince(started))) found=\(found)")
+        return found
     }
 
     /// Whole-screen shot: the context menu is its own window, outside Finder's.

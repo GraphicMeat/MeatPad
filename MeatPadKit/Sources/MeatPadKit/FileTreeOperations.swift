@@ -4,6 +4,8 @@ public enum FileTreeError: Error, Equatable, Sendable {
     case invalidName
     case alreadyExists(String)
     case cannotMoveIntoItself
+    /// The folder to create in is gone or is not a folder; carries its name.
+    case directoryMissing(String)
 }
 
 public enum FileTreePaths {
@@ -37,6 +39,34 @@ public enum FileTreeOperations {
         let url = try destination(named: name, in: directory)
         try Data().write(to: url, options: .withoutOverwriting)
         return url
+    }
+
+    /// An empty "Untitled.<ext>" in `directory`, or "Untitled 2.<ext>", "Untitled 3.<ext>", … —
+    /// never overwriting (a dangling symlink counts as taken). An empty extension means no dot.
+    /// Each write is `.withoutOverwriting`, so a name taken between the check and the write
+    /// moves on to the next number rather than clobbering it.
+    @discardableResult
+    public static func createUntitledFile(
+        withExtension ext: String, in directory: URL, baseName: String = "Untitled"
+    ) throws -> URL {
+        var isFolder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isFolder), isFolder.boolValue else {
+            throw FileTreeError.directoryMissing(directory.lastPathComponent)
+        }
+        let suffix = ext.isEmpty ? "" : "." + ext
+        var n = 1
+        while true {
+            let name = n == 1 ? baseName + suffix : "\(baseName) \(n)\(suffix)"
+            n += 1
+            let url = directory.appendingPathComponent(name)
+            if exists(url) { continue }
+            do {
+                try Data().write(to: url, options: .withoutOverwriting)
+                return url
+            } catch let error as CocoaError where error.code == .fileWriteFileExists {
+                continue
+            }
+        }
     }
 
     @discardableResult

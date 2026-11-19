@@ -146,6 +146,10 @@ targets:
     type: app-extension
     platform: macOS
     sources: [FinderExtension]
+    dependencies:
+      # The menu model only — never the whole MeatPadKit (grammars, LSP client).
+      - package: MeatPadKit
+        product: FinderMenuKit
     info:
       path: FinderExtension/Info.plist
       properties:

@@ -4,7 +4,10 @@ import PackageDescription
 let package = Package(
     name: "MeatPadKit",
     platforms: [.macOS(.v14)],
-    products: [.library(name: "MeatPadKit", targets: ["MeatPadKit"])],
+    products: [
+        .library(name: "MeatPadKit", targets: ["MeatPadKit"]),
+        .library(name: "FinderMenuKit", targets: ["FinderMenuKit"]),
+    ],
     dependencies: [
         .package(url: "https://github.com/ChimeHQ/SwiftTreeSitter", from: "0.25.0"),
         .package(url: "https://github.com/tree-sitter/tree-sitter-json", from: "0.24.8"),
@@ -39,6 +42,7 @@ let package = Package(
         .target(
             name: "MeatPadKit",
             dependencies: [
+                "FinderMenuKit",
                 .product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),
                 .product(name: "SwiftTreeSitterLayer", package: "SwiftTreeSitter"),
                 .product(name: "TreeSitterJSON", package: "tree-sitter-json"),
@@ -64,5 +68,9 @@ let package = Package(
             ]
         ),
         .testTarget(name: "MeatPadKitTests", dependencies: ["MeatPadKit"]),
+        // The Finder menu model, on its own so the sandboxed Finder Sync extension links only
+        // this (no grammars, no LSP client). MeatPadKit re-exports it.
+        .target(name: "FinderMenuKit"),
+        .testTarget(name: "FinderMenuKitTests", dependencies: ["FinderMenuKit"]),
     ]
 )

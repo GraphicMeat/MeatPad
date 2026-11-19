@@ -192,4 +192,72 @@ final class FileTreeOperationsTests: XCTestCase {
             XCTAssertEqual($0 as? FileTreeError, .cannotMoveIntoItself)
         }
     }
+
+    // MARK: createUntitledFile (Finder "New … File")
+
+    func testUntitledFileIsUntitledDotExtAndEmpty() throws {
+        let url = try FileTreeOperations.createUntitledFile(withExtension: "md", in: dir)
+        XCTAssertEqual(url.lastPathComponent, "Untitled.md")
+        XCTAssertEqual(url.deletingLastPathComponent().standardizedFileURL.path, dir.standardizedFileURL.path)
+        XCTAssertEqual(try Data(contentsOf: url), Data())
+    }
+
+    func testUntitledFilesCountUpFromTwo() throws {
+        let names = try (0..<3).map { _ in
+            try FileTreeOperations.createUntitledFile(withExtension: "md", in: dir).lastPathComponent
+        }
+        XCTAssertEqual(names, ["Untitled.md", "Untitled 2.md", "Untitled 3.md"])
+    }
+
+    func testAnEmptyExtensionMeansNoDot() throws {
+        let names = try (0..<2).map { _ in
+            try FileTreeOperations.createUntitledFile(withExtension: "", in: dir).lastPathComponent
+        }
+        XCTAssertEqual(names, ["Untitled", "Untitled 2"])
+    }
+
+    func testExistingUntitledFilesKeepTheirBytes() throws {
+        _ = try write("Untitled.md", "first")
+        _ = try write("Untitled 2.md", "second")
+        let url = try FileTreeOperations.createUntitledFile(withExtension: "md", in: dir)
+        XCTAssertEqual(url.lastPathComponent, "Untitled 3.md")
+        XCTAssertEqual(try String(contentsOf: dir.appendingPathComponent("Untitled.md"), encoding: .utf8), "first")
+        XCTAssertEqual(try String(contentsOf: dir.appendingPathComponent("Untitled 2.md"), encoding: .utf8), "second")
+    }
+
+    func testOnlyTheExactExtensionIsTaken() throws {
+        _ = try write("Untitled.txt", "other")
+        let url = try FileTreeOperations.createUntitledFile(withExtension: "md", in: dir)
+        XCTAssertEqual(url.lastPathComponent, "Untitled.md")
+    }
+
+    func testADanglingSymlinkCountsAsTaken() throws {
+        let link = dir.appendingPathComponent("Untitled.md")
+        try fm.createSymbolicLink(atPath: link.path, withDestinationPath: dir.appendingPathComponent("nowhere").path)
+        let url = try FileTreeOperations.createUntitledFile(withExtension: "md", in: dir)
+        XCTAssertEqual(url.lastPathComponent, "Untitled 2.md")
+        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link.path), dir.appendingPathComponent("nowhere").path)
+        XCTAssertFalse(fm.fileExists(atPath: dir.appendingPathComponent("nowhere").path), "the link's target was created through it")
+    }
+
+    func testAMissingDirectoryThrowsDirectoryMissingWithItsName() {
+        let gone = dir.appendingPathComponent("Gone", isDirectory: true)
+        XCTAssertThrowsError(try FileTreeOperations.createUntitledFile(withExtension: "md", in: gone)) {
+            XCTAssertEqual($0 as? FileTreeError, .directoryMissing("Gone"))
+        }
+        XCTAssertFalse(fm.fileExists(atPath: gone.path))
+    }
+
+    func testARegularFileIsNotADirectory() throws {
+        let file = try write("plain.txt", "keep")
+        XCTAssertThrowsError(try FileTreeOperations.createUntitledFile(withExtension: "md", in: file)) {
+            XCTAssertEqual($0 as? FileTreeError, .directoryMissing("plain.txt"))
+        }
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "keep")
+    }
+
+    func testACustomBaseName() throws {
+        let url = try FileTreeOperations.createUntitledFile(withExtension: "txt", in: dir, baseName: "Notes")
+        XCTAssertEqual(url.lastPathComponent, "Notes.txt")
+    }
 }

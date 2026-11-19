@@ -1,4 +1,5 @@
 import AppKit
+import FinderMenuKit
 import FinderSync
 import os
 
@@ -8,13 +9,14 @@ import os
 /// outside its container, so a click only opens `meatpad://new-file?dir=…&ext=…`; the
 /// (unsandboxed) app creates the file. Finder forwards an item's title, tag, image and
 /// action across the process boundary but not its `representedObject`, so items are told
-/// apart by `tag`.
+/// apart by `tag` — the index into `FinderMenuConfig.enabledActions`.
+///
+/// `menu(for:)` runs inside Finder's menu tracking: it must never throw, block or crash. The
+/// config is read fresh each time (a Settings change applies to the next right-click) and a
+/// bad or missing value is simply the defaults.
 final class FinderSync: FIFinderSync {
 
     private let log = Logger(subsystem: "com.thecoldzero.MeatPad.FinderSync", category: "finder")
-
-    /// Tag → file extension. Index-stable; Finder hands the tag back on click.
-    private static let extensions = ["md", "txt"]
 
     override init() {
         super.init()
@@ -24,7 +26,7 @@ final class FinderSync: FIFinderSync {
         ) ?? []
         FIFinderSyncController.default().directoryURLs = Set(roots)
         log.notice("init: watching \(roots.count, privacy: .public) root(s)")
-        logHostMenuConfig()
+        _ = loadConfig()
     }
 
     override func beginObservingDirectory(at url: URL) {
@@ -38,58 +40,91 @@ final class FinderSync: FIFinderSync {
         default:
             return nil
         }
-        logHostMenuConfig()
+        let entries = FinderMenu.entries(for: loadConfig())
+        let target = FIFinderSyncController.default().targetedURL()?.path ?? "<nil>"
+        log.notice("menu(for: \(menuKind.rawValue, privacy: .public)) target \(target, privacy: .public) -> \(Self.itemCount(entries), privacy: .public) item(s)")
+        guard !entries.isEmpty else { return nil }
 
         let menu = NSMenu(title: "")
-        let titles = ["New Markdown File", "New Text File"]
-        for (tag, title) in titles.enumerated() {
-            let item = NSMenuItem(title: title, action: #selector(newFile(_:)), keyEquivalent: "")
-            item.tag = tag
-            menu.addItem(item)
-        }
-        let target = FIFinderSyncController.default().targetedURL()?.path ?? "<nil>"
-        log.notice("menu(for: \(menuKind.rawValue, privacy: .public)) target \(target, privacy: .public) -> \(titles.count, privacy: .public) item(s)")
+        for entry in entries { menu.addItem(makeItem(entry)) }
         return menu
     }
 
+    private func makeItem(_ entry: FinderMenuEntry) -> NSMenuItem {
+        switch entry {
+        case let .item(title, tag):
+            let item = NSMenuItem(title: title, action: #selector(newFile(_:)), keyEquivalent: "")
+            item.tag = tag
+            item.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: nil)
+            return item
+        case let .submenu(title, items):
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: nil)
+            let submenu = NSMenu(title: title)
+            for child in items { submenu.addItem(makeItem(child)) }
+            item.submenu = submenu
+            return item
+        }
+    }
+
+    private static func itemCount(_ entries: [FinderMenuEntry]) -> Int {
+        entries.reduce(0) { count, entry in
+            switch entry {
+            case .item: count + 1
+            case let .submenu(_, items): count + itemCount(items)
+            }
+        }
+    }
+
     @objc private func newFile(_ sender: NSMenuItem) {
-        guard Self.extensions.indices.contains(sender.tag),
-              let directory = FIFinderSyncController.default().targetedURL()
+        let config = loadConfig()
+        let controller = FIFinderSyncController.default()
+        let selected = controller.selectedItemURLs() ?? []
+        guard let action = FinderMenu.action(forTag: sender.tag, in: config),
+              let directory = FinderMenu.targetDirectory(
+                  targeted: controller.targetedURL(), selected: selected, isDirectory: Self.isDirectory
+              ),
+              let request = NewFileRequest(directory: directory, fileExtension: action.fileExtension)
         else {
-            log.error("newFile: no target (tag \(sender.tag, privacy: .public))")
+            log.error("newFile: no target or action (tag \(sender.tag, privacy: .public))")
             return
         }
-        var components = URLComponents()
-        components.scheme = "meatpad"
-        components.host = "new-file"
-        components.queryItems = [
-            URLQueryItem(name: "dir", value: directory.path),
-            URLQueryItem(name: "ext", value: Self.extensions[sender.tag]),
-        ]
-        guard let url = components.url else {
-            log.error("newFile: could not build URL")
-            return
+        let url = request.url
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = config.afterCreate == .openInMeatPad
+        NSWorkspace.shared.open(url, configuration: configuration) { [log] _, error in
+            log.notice("newFile: open(\(url.absoluteString, privacy: .public)) -> \(error == nil, privacy: .public)")
+            if let error {
+                log.error("newFile: \(error.localizedDescription, privacy: .public)")
+            }
         }
-        let opened = NSWorkspace.shared.open(url)
-        log.notice("newFile: open(\(url.absoluteString, privacy: .public)) -> \(opened, privacy: .public)")
+    }
+
+    /// The sandbox may refuse to stat a selected item; then the URL's own trailing slash
+    /// (Finder sends folders with one) is the best answer there is.
+    private static func isDirectory(_ url: URL) -> Bool {
+        if let value = try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory { return value }
+        return url.hasDirectoryPath
     }
 
     /// Reads the app's `finder.menu` default through the shared-preference read-only
     /// exception — the host app's domain is our own bundle id minus its last component.
-    private func logHostMenuConfig() {
+    private func loadConfig() -> FinderMenuConfig {
         guard let own = Bundle.main.bundleIdentifier, let dot = own.lastIndex(of: ".") else {
             log.error("finder.menu read: no bundle identifier")
-            return
+            return FinderMenuConfig()
         }
         let host = String(own[..<dot]) as CFString
         CFPreferencesAppSynchronize(host)
-        let value = CFPreferencesCopyAppValue("finder.menu" as CFString, host)
+        let value = CFPreferencesCopyAppValue(FinderMenuConfig.defaultsKey as CFString, host)
         if let text = value as? String {
             log.notice("finder.menu read: \(text.count, privacy: .public) chars from \(host as String, privacy: .public)")
+            return FinderMenuConfig.decode(Data(text.utf8))
         } else if value == nil {
             log.notice("finder.menu read: absent in \(host as String, privacy: .public)")
         } else {
             log.notice("finder.menu read: not a string in \(host as String, privacy: .public)")
         }
+        return FinderMenuConfig()
     }
 }
