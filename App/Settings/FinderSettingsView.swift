@@ -40,6 +40,7 @@ struct FinderSettingsView: View {
                     Toggle(isOn: $settings.config.groupInSubmenu) {
                         Label("Group under a “New File” submenu", systemImage: "list.bullet.indent")
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(14)
                     .accessibilityIdentifier("settings.finder.submenu")
 
